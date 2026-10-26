@@ -1,0 +1,6 @@
+# Install separately, using the official PyTorch CUDA 12.8 wheel index.
+# Tested locally with Windows x64, Python 3.11 and an RTX 4070 Laptop GPU.
+# Do not combine this index with the common runtime requirements file.
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128

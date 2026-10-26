@@ -1,0 +1,2 @@
+# Install after PyTorch and requirements.txt. See docs/INSTALL.md.
+-e ./resources/sam2

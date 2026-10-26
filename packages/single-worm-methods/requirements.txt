@@ -1,0 +1,6 @@
+# CPU replay and tests. For a packaged installation use: python -m pip install .
+numpy>=1.26,<3
+scipy>=1.11,<2
+scikit-image>=0.23,<0.27
+opencv-python>=4.8,<6
+imageio-ffmpeg>=0.5,<0.7

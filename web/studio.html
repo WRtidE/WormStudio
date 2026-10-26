@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Worm Studio · 线虫分析工作台</title><link rel="stylesheet" href="./studio.css"><link rel="stylesheet" href="./studio-evaluation.css"></head>
+<body>
+<svg class="svg-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="i-worm" viewBox="0 0 24 24"><path d="M5 17c-4-7 6-11 8-5s-8 7-5 0 12-8 12-1"/></symbol>
+<symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></symbol>
+<symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h4m4 0h8M4 12h10m4 0h2M4 18h2m4 0h10"/><circle cx="10" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.5.2-.5 1-.5 1.5M12 17h.01"/></symbol>
+</defs></svg>
+<aside id="library" class="library" aria-label="项目文件">
+  <div class="brand-row"><a class="brand" href="/studio"><span class="brand-mark"><svg><use href="#i-worm"/></svg></span><span>Worm Studio<small>线虫分析工作台</small></span></a><button id="collapse-sidebar" class="icon-button" title="收起文件栏" aria-label="收起文件栏"><svg><use href="#i-panel"/></svg></button></div>
+  <button id="import-files" class="import-button"><svg><use href="#i-plus"/></svg>导入文件<span>Ctrl O</span></button>
+  <button id="import-folder" class="plain-button"><svg><use href="#i-folder"/></svg>打开文件夹</button>
+  <details id="saved-projects"><summary>目标视频与历史任务</summary><div id="target-video-list"></div><div id="saved-run-list"></div><button id="refresh-projects" class="plain-button">刷新任务列表</button></details><div class="library-divider"></div>
+  <div class="section-caption"><span>工作区</span><span class="local-label">LOCAL</span></div>
+  <button id="workspace-home" class="project-row"><svg><use href="#i-folder"/></svg><strong>我的线虫实验</strong><span class="chevron">⌄</span></button>
+  <label class="search-box"><svg><use href="#i-search"/></svg><input id="file-search" placeholder="搜索文件…" aria-label="搜索工作区文件"><kbd>/</kbd></label>
+  <div class="file-filter" role="group" aria-label="文件筛选"><button data-filter="all" class="active" aria-pressed="true">全部<span id="file-total">0</span></button><button data-filter="video" aria-pressed="false">视频</button><button data-filter="other" aria-pressed="false">其他文件</button></div>
+  <div id="file-list" class="file-list" aria-label="文件列表"></div>
+  <div id="evaluation-library" class="evaluation-library" hidden><p class="section-caption">评测标注任务 <span id="eval-task-count">0</span></p><div id="eval-task-list" class="file-list" aria-label="评测任务列表"></div></div>
+  <div id="library-empty" class="library-empty"><svg><use href="#i-file"/></svg><p>还没有文件</p><span>导入视频，开始你的第一次分析</span></div>
+  <div class="library-bottom"><button id="current-analysis" class="plain-button" hidden><span class="status-dot"></span>返回当前分析<svg><use href="#i-arrow"/></svg></button><button id="open-help" class="plain-button"><svg><use href="#i-help"/></svg>使用指南<span>?</span></button><div class="local-footer"><span class="status-dot"></span><span id="connection-label">正在连接本地服务</span><span class="version">STUDIO</span></div></div>
+</aside>
+<main class="main-workspace">
+  <header class="workspace-header"><div class="breadcrumbs"><button id="expand-sidebar" class="icon-button" title="展开文件栏" aria-label="展开文件栏" hidden><svg><use href="#i-panel"/></svg></button><span>我的线虫实验</span><span class="slash">/</span><strong id="current-name">工作台</strong></div><div class="header-right"><button id="cancel-run" class="small-button" hidden>取消当前处理</button><span id="session-badge" class="session-badge">本地工作区</span><button id="path-import" class="small-button"><svg><use href="#i-plus"/></svg>通过路径打开</button></div></header>
+  <nav class="workspace-tabs" aria-label="工作区视图"><div class="view-tabs"><button data-view="preview" class="active" aria-current="page"><svg><use href="#i-video"/></svg>文件预览</button><button data-view="annotation" disabled><svg><use href="#i-sliders"/></svg>标注与识别</button><button data-view="progress" disabled>处理进度</button><button data-view="results" disabled>分析结果</button><button data-view="evaluation">评测标注 · 可选</button></div><span id="tab-note">从一个视频开始</span></nav>
+  <section id="local-file-notice" class="local-file-notice" aria-label="本地文件启动提示" hidden><div><strong>当前为文件预览模式</strong><p>请双击 WormStudio 文件夹中的 <b>start.bat</b>，等待浏览器自动打开工作台。此页可预览素材，标注、评测与保存需要本地服务。</p></div><button id="local-file-help" class="small-button">查看启动步骤</button></section>
+  <div id="preview-workspace" class="preview-workspace">
+    <section class="preview-main" aria-label="文件预览区域">
+      <div id="welcome" class="welcome"><div class="welcome-icon"><svg><use href="#i-worm"/></svg></div><p class="eyebrow">YOUR LOCAL RESEARCH WORKSPACE</p><h1>从一段视频，<br>看见线虫的每一次运动。</h1><p class="welcome-copy">导入实验素材，完成虫体标注、运动跟踪与表型分析。<br>你的文件和计算，始终留在本机。</p><button id="welcome-import" class="primary"><svg><use href="#i-plus"/></svg>导入实验文件<svg><use href="#i-arrow"/></svg></button><button id="drop-area" class="drop-area"><svg><use href="#i-upload"/></svg><strong>也可以把文件拖到这里</strong><span>视频、图片、CSV 或 JSON · 支持多选</span></button><div class="welcome-foot"><span><i></i>本地处理</span><span>逐帧复核</span><span>结果可导出</span></div></div>
+      <div id="media-workspace" class="media-workspace" hidden><div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b id="media-kind">视频预览</b></span><span id="media-resolution">原始画面</span></div><div id="media-stage" class="media-stage"><video id="source-video" controls playsinline preload="metadata" hidden></video><img id="source-image" alt="所选实验图片" hidden><pre id="source-text" hidden></pre><div id="unavailable-preview" class="unavailable-preview" hidden><svg><use href="#i-file"/></svg><p id="unavailable-message"></p></div></div><div class="media-caption"><span id="media-description">原始文件 · 尚未进行处理</span><span id="media-size"></span></div></div>
+      <div id="drop-overlay" class="drop-overlay" hidden><svg><use href="#i-upload"/></svg><strong>松开鼠标，将文件加入工作区</strong></div>
+    </section>
+    <aside class="inspector" aria-label="处理工具"><div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>处理面板</h2><span>准备</span></div><div class="inspector-content"><p class="section-label">当前素材</p><div id="selected-empty" class="selected-empty">从左侧选择一个视频<br><span>这里会显示文件信息与处理选项</span></div><div id="selected-details" hidden><div class="selected-file"><svg><use href="#i-video"/></svg><strong id="selected-name"></strong></div><dl class="file-facts"><div><dt>文件类型</dt><dd id="selected-type">—</dd></div><div><dt>文件大小</dt><dd id="selected-size">—</dd></div><div><dt>画面尺寸</dt><dd id="selected-resolution">—</dd></div><div><dt>视频时长</dt><dd id="selected-duration">—</dd></div></dl></div><div class="panel-divider"></div><div class="section-label">分析流程<span>4 个步骤</span></div><ol class="pipeline-steps"><li><span>01</span><div><strong>准备画面</strong><p>选择分析区域与测量单位</p></div></li><li><span>02</span><div><strong>识别与标注</strong><p>点选虫体，修正轮廓与头尾</p></div></li><li><span>03</span><div><strong>追踪与中线</strong><p>跟踪整段视频，提取身体姿态</p></div></li><li><span>04</span><div><strong>表型与结果</strong><p>查看逐帧指标，导出分析结果</p></div></li></ol><div class="panel-tip"><svg><use href="#i-help"/></svg><p>建议选择虫体清晰、彼此分离的画面作为标注帧。</p></div></div><div class="inspector-action"><p id="start-hint">导入视频后即可开始</p><button id="start-analysis" class="primary" disabled>开始标注<svg><use href="#i-arrow"/></svg></button></div></aside>
+  </div>
+  <section id="analysis-workspace" class="analysis-workspace" hidden aria-label="分析工作区"><iframe id="analysis-frame" title="线虫标注与分析"></iframe></section>
+  <section id="results-workspace" class="results-workspace" hidden aria-label="结果与质量工作台">
+    <div class="results-main">
+      <div class="results-heading"><div><p class="eyebrow">FRAME REVIEW</p><h1>观察虫体，查看测量结果。</h1></div><button id="result-summary" class="small-button">整段表型汇总 <svg><use href="#i-arrow"/></svg></button></div>
+      <p id="results-notice" class="results-notice" hidden></p>
+      <div class="result-player">
+        <div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b>分析画面</b><label><input id="result-original" type="checkbox">原始画面</label></span><span id="result-frame-label">正在读取结果…</span></div>
+        <div class="result-view-tools" role="group" aria-label="视频观察工具"><button id="result-play" class="small-button" aria-pressed="false">播放</button><button id="result-full" class="small-button">完整画面</button><button id="result-focus" class="small-button" aria-pressed="false">只看虫体</button><button id="result-zoom-out" class="small-button" aria-label="缩小视频">−</button><output id="result-zoom-level">100%</output><button id="result-zoom-in" class="small-button" aria-label="放大视频">＋</button><button id="result-fit" class="small-button">复位视图</button></div>
+        <div class="result-screen"><video id="studio-result-video" playsinline preload="metadata" aria-label="分析结果视频" class="result-video-source"></video><canvas id="result-canvas" tabindex="0" aria-label="结果画面，可拖动平移、滚轮或双指缩放"></canvas><p id="result-video-message" hidden></p></div>
+        <div class="result-transport"><button id="result-prev" class="small-button" aria-label="上一帧">←</button><div class="result-scrubber"><div id="result-quality-track" class="result-quality-track" aria-hidden="true"></div><input id="result-frame" type="range" min="0" max="0" value="0" aria-label="结果视频帧" disabled></div><button id="result-next" class="small-button" aria-label="下一帧">→</button><label>帧 <input id="result-frame-number" type="number" min="0" max="0" value="0" aria-label="跳转到帧" disabled></label></div>
+        <div class="media-caption"><span id="result-focus-note">滚轮或双指缩放 · 拖动平移 · 双击复位</span><span><i class="review-dot"></i> 色带：当前筛选的问题帧</span></div>
+      </div>
+      <div class="result-metrics-heading"><h2>当前帧指标</h2><span id="result-metric-note">不可用的指标显示为 —</span></div>
+      <div id="studio-metric-cards" class="studio-metric-cards"></div>
+      <details id="result-summary-panel" class="result-summary-panel"><summary>整段表型汇总</summary><p class="summary-help">按各指标有效帧汇总，缺少头尾确认的指标显示 —。单位随本次标定设置显示。</p><section id="phenotype-panel" class="progress-card phenotype-panel" hidden>
+<div class="section-title"><div><p class="eyebrow">PHENOTYPE METRICS</p><h2>线虫表型指标</h2></div><span class="tag">依据用户 PPT</span></div><p class="help">体长、面积与体积按有效帧取中位数，速度取平均值。成虫前 / 成虫后由实验记录确定，本程序不自动判龄。</p>
+<div id="phenotype-worms" class="worm-tabs" role="group" aria-label="选择要查看指标的线虫"></div><p id="phenotype-context" class="phenotype-context"></p>
+<h3>生长发育</h3><div id="growth-metrics" class="metric-grid"></div><h3>运动指标</h3><div id="motion-metrics" class="metric-grid"></div>
+<h3>头尾与活动分类</h3><div class="behavior-grid"><article class="metric-card"><span class="metric-label">头尾判断</span><strong id="head-result" class="behavior-value"></strong><p id="head-note"></p><p class="metric-definition">PPT 特征：头部较圆、可见咽部；尾部较尖。A/B 端点不是已确认的头尾。</p></article><article class="metric-card"><span class="metric-label">运动分类 A / B / C</span><strong id="activity-result" class="behavior-value"></strong><p id="activity-note"></p><details class="metric-definitions"><summary>查看 A / B / C 定义</summary><p>A：活跃，在培养池内较快爬行。<br>B：速度较慢，在部分微柱间爬行。<br>C：无明显位移，仅头部左右点动。</p><p>当前分类使用暂定速度、活动范围及头摆规则，尚未用人工真值验证。</p></details></article></div>
+<h3>运动形态</h3><div id="movement-metrics" class="metric-grid"></div><p class="help">以下帧比例以整段视频总帧数为分母，包括无效 / 未知帧；帧数不等于独立行为事件次数。</p><div id="movement-states" class="movement-states"></div>
+<details class="metric-definitions reference-note"><summary>定义与参考值说明</summary><p>头摆幅度采用头部 0–10% 中轴与颈部 10–30% 中轴的夹角，汇总为绝对角度 95 分位数；该分段比例是当前实现的操作性定义。</p><p>头摆频率按 PPT 的“单次向一个方向弯曲”计数，单位为次/min，不与完整往返周期的 Hz 混用。体积按分段圆台估算。</p><p>PPT 中爬行约 135° / 0.5 Hz、游泳约 45° / 1.7 Hz 是芯片外文献参考值，不能据此直接判断本视频的游泳 / 爬行状态。</p></details>
+</section>
+<button id="result-run-log" class="small-button">查看处理流程与运行日志</button></details>
+      <div id="results-load-state" class="results-load-state" role="status"><span id="results-load-message">正在读取逐帧指标…</span><button id="results-retry" class="small-button" hidden>重新读取</button></div>
+    </div>
+    <aside class="inspector result-inspector" aria-label="质量与身份复核">
+      <div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>质量与身份</h2><span id="result-quality-badge">逐帧检查</span></div>
+      <div class="inspector-content">
+        <label class="section-label" for="result-worm">当前个体<span id="result-worm-count"></span></label><select id="result-worm" class="result-select" disabled></select>
+        <div id="result-identity" class="identity-card"><strong id="result-identity-title">等待结果</strong><p id="result-identity-note">选择线虫，查看当前帧的身份状态。</p></div>
+        <button id="identity-open" class="small-button" disabled>片段身份关联与复核</button>
+        <dialog id="identity-dialog" style="width:min(1150px,95vw);max-height:94vh;overflow:auto;border:1px solid #cad7ce;border-radius:12px;padding:24px">
+          <div style="display:flex;justify-content:space-between;gap:20px"><h2>片段身份关联与复核</h2><button id="identity-close" class="small-button">关闭</button></div>
+          <p>绿色为跟踪轮廓，白色为候选中线。下方同步播放关联前后的原图片段；匹配评分属于工程依据。</p>
+          <label>片段 <select id="identity-edge" class="result-select"></select></label><p id="identity-edge-state"></p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><figure style="margin:0"><figcaption id="identity-before-label"></figcaption><img id="identity-before-image" alt="关联前原图与轮廓" style="width:100%"></figure><figure style="margin:0"><figcaption id="identity-after-label"></figcaption><img id="identity-after-image" alt="关联后原图与轮廓" style="width:100%"></figure></div>
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0"><button id="identity-play" class="small-button">同步播放</button><label>片段内帧 <input id="identity-offset" type="range" min="0" max="3" value="0"></label></div>
+          <details><summary>查看关联依据与失败项</summary><pre id="identity-evidence" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre></details>
+          <label>复核人 <input id="identity-reviewer" class="eval-input" autocomplete="name"></label><label>判断依据 <textarea id="identity-review-evidence" class="eval-input" placeholder="请记录从前后原图观察到的身份依据"></textarea></label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button id="identity-same" class="small-button">同一条虫</button><button id="identity-different" class="small-button">不同目标</button><button id="identity-unknown" class="small-button">无法判断</button><button id="identity-undo" class="small-button" disabled>撤销此片段复核</button></div><p id="identity-message" role="status"></p><p>提交或撤销会创建新结果。身份关联成功后，速度和头摆仍按连续有效区间计算。</p>
+        </dialog>
+        <section class="head-status-card" aria-label="头尾判断"><h3 id="result-head-status">正在读取头尾状态</h3><p id="result-head-explanation"></p><p id="result-head-evidence"></p><button id="head-first" class="small-button">到首帧指定头端</button><button id="head-auto" class="small-button" hidden>改用首帧 / 尖锐程度初始化</button><p id="head-auto-message" role="status"></p>
+          <details id="head-correction"><summary>人工指定或纠正头端（可选）</summary><p id="head-choice-note"></p><div class="head-choice-buttons"><button id="head-a" class="small-button">A 端是头</button><button id="head-b" class="small-button">B 端是头</button></div><p>选择一次会应用于当前连续可靠片段，并另存结果；无需逐帧重复确认。初始化模式可跨明确的短缺口延续为候选；长缺口或身份边界需重新判断。</p><p id="head-review-message" role="status"></p></details>
+        </section>
+        <details class="identity-card"><summary>全片可用性分解</summary><p id="result-gate-audit"></p><div id="result-gate-triggers"></div></details>
+        <details><summary>头部锚点与撤销</summary><p>同一可靠片段内意见冲突时，暂停该片段头摆。撤销会创建新结果。</p><div id="head-anchor-list"></div></details>
+        <div class="review-navigation"><div class="section-label"><label for="result-issue-filter">问题帧导航</label><span id="result-issue-count">—</span></div><select id="result-issue-filter" class="result-select" disabled><option value="identity">个体身份</option><option value="all">所有质量维度</option><option value="source">源帧</option><option value="mask">掩膜</option><option value="pose">姿态</option><option value="head">头尾</option><option value="scale">尺度</option></select><div class="review-buttons"><button id="result-prev-issue" class="small-button" disabled>← 上个问题段</button><button id="result-next-issue" class="small-button" disabled>下个问题段 →</button></div><p id="result-issue-note">按连续帧归为问题段，点击即可定位。</p></div>
+        <div class="panel-divider"></div><div class="section-label">六项质量检查<span>展开查看证据</span></div><div id="result-dimensions" class="result-dimensions"></div>
+        <details class="result-exports"><summary>导出结果与质量记录</summary><div id="studio-artifacts"></div></details>
+      </div>
+      <div class="inspector-action"><p id="result-review-hint">身份存疑时，面积仅作为匿名轮廓参考。</p><button id="result-reannotate" class="primary" hidden>重新选择标注帧 <svg><use href="#i-arrow"/></svg></button></div>
+    </aside>
+  </section>
+  <section id="evaluation-workspace" class="evaluation-workspace" aria-label="独立评测标注工作台" hidden>
+    <div class="eval-main">
+      <div class="eval-heading"><div><p class="eyebrow">INDEPENDENT ANNOTATION</p><h1 id="eval-title">建立可复核的真实标注</h1></div><span id="eval-save-badge">未开始</span></div>
+      <div class="eval-purpose"><div><strong>可选 · 用于检验算法准确率</strong><p>人工标出虫体轮廓、中线和身份，作为比较算法的参考答案。日常视频分析可跳过此页，直接查看分析结果。</p><p>要参与评测：左侧选任务 → 填写署名并加载记录 → 逐帧标注 → 提交复核。</p></div><button id="eval-return" class="small-button">返回当前分析</button></div>
+      <details class="eval-dataset-details"><summary>评测任务与数据范围</summary><p id="eval-dataset-status" class="eval-notice">正在读取冻结任务清单…</p></details>
+      <div class="eval-viewer"><div class="media-toolbar"><b id="eval-frame-label">从左侧选择任务</b><select id="eval-overlay" aria-label="裁决对照图层" hidden><option value="current">本人裁决草稿</option><option value="0">查看标注 A</option><option value="1">查看标注 B</option></select><select id="eval-zoom" aria-label="评测画面缩放"><option value="fit">适应窗口</option><option value="1">原图 100%</option><option value="2">放大 200%</option></select></div><div id="eval-viewport"><canvas id="eval-canvas" aria-label="原始视频帧与人工标注画布" width="640" height="360"></canvas></div><div class="eval-frame-controls"><button id="eval-prev" class="small-button" disabled>← 上一帧</button><input id="eval-frame-index" type="range" min="0" max="0" value="0" aria-label="评测任务帧序号" disabled><button id="eval-next" class="small-button" disabled>下一帧 →</button></div></div>
+      <p id="eval-feedback" class="eval-feedback" role="status">画面仅显示原始视频及当前人工标注，不加载算法预测。</p>
+      <details class="eval-comparisons" id="eval-comparisons" hidden><summary>查看两份独立标注及差异</summary><pre id="eval-comparison-text"></pre></details>
+    </div>
+    <aside class="inspector eval-inspector" aria-label="人工标注工具">
+      <div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>独立人工标注</h2><span id="eval-role-badge">草稿</span></div>
+      <div class="inspector-content">
+        <label class="eval-label" for="eval-author">标注者署名</label><input id="eval-author" class="eval-input" placeholder="填写真实署名" autocomplete="off">
+        <label class="eval-label" for="eval-role">标注角色</label><select id="eval-role" class="eval-input"><option value="annotator_a">标注者 A</option><option value="annotator_b">标注者 B（独立）</option><option value="adjudicator">第三人裁决</option></select>
+        <button id="eval-load" class="small-button eval-full">加载本人记录</button>
+        <div id="eval-editor" hidden>
+          <div class="panel-divider"></div><label class="eval-label" for="eval-source">源帧状态</label><select id="eval-source" class="eval-input"><option value="unknown">尚未判断</option><option value="usable">可观察</option><option value="corrupt">损坏，无法标注</option></select>
+          <div class="eval-object-row"><label for="eval-object">当前目标</label><button id="eval-add-object" class="small-button">＋ 添加</button></div><select id="eval-object" class="eval-input" aria-label="当前标注目标"></select>
+          <div class="eval-tools" role="group" aria-label="标注工具"><button data-eval-tool="mask">轮廓多边形</button><button data-eval-tool="centerline">可见中线</button><button data-eval-tool="a">端点 A</button><button data-eval-tool="b">端点 B</button><button data-eval-tool="unknown">未知区域</button><button data-eval-tool="crossing">自交连接</button><button data-eval-tool="hole">轮廓内孔</button></div>
+          <div class="eval-draw-actions"><button id="eval-finish" class="small-button">完成当前路径</button><button id="eval-undo" class="small-button">撤销一步</button></div><p class="eval-help" id="eval-tool-hint">逐点绘制；不可见部分保留未知。</p>
+          <details class="eval-fields"><summary>几何状态与端点可见性</summary><label for="eval-mask-state">掩膜状态</label><select id="eval-mask-state" class="eval-input"><option value="unknown">未知</option><option value="visible">完整可见</option><option value="partial">部分可见</option><option value="absent">目标缺失</option></select><label for="eval-line-state">中线状态</label><select id="eval-line-state" class="eval-input"><option value="unknown">未知</option><option value="visible">完整可见</option><option value="partial">部分可见</option><option value="absent">目标缺失</option></select><label for="eval-a-state">端点 A</label><select id="eval-a-state" class="eval-input"><option value="unknown">未知</option><option value="visible">可见</option><option value="occluded">遮挡</option><option value="out_of_frame">画面外</option></select><label for="eval-b-state">端点 B</label><select id="eval-b-state" class="eval-input"><option value="unknown">未知</option><option value="visible">可见</option><option value="occluded">遮挡</option><option value="out_of_frame">画面外</option></select><button id="eval-clear-geometry" class="small-button eval-full">清空当前目标几何（可撤销）</button></details>
+          <details class="eval-fields"><summary>身份、头尾与自交依据</summary><label for="eval-identity-state">个体身份</label><select id="eval-identity-state" class="eval-input"><option value="unknown">未知</option><option value="ambiguous">存在歧义</option><option value="confirmed">独立证据确认</option></select><input id="eval-individual" class="eval-input" aria-label="独立个体编号" placeholder="确认时填写个体编号"><textarea id="eval-identity-evidence" class="eval-input" aria-label="身份确认依据" placeholder="记录独立身份依据"></textarea><label for="eval-head">头端</label><select id="eval-head" class="eval-input"><option value="unknown">头尾未知</option><option value="a">A 为头</option><option value="b">B 为头</option></select><textarea id="eval-head-evidence" class="eval-input" aria-label="头尾确认依据" placeholder="例如清晰可见的咽部"></textarea><label for="eval-crossing-state">自交状态</label><select id="eval-crossing-state" class="eval-input"><option value="unknown">尚未判断</option><option value="none">无自交</option><option value="present">存在自交</option></select><textarea id="eval-crossing-evidence" class="eval-input" aria-label="自交连接依据" placeholder="连接判断依据；虫间接触不作为单虫自交"></textarea></details>
+          <label class="eval-label" for="eval-notes">本帧备注</label><textarea id="eval-notes" class="eval-input" placeholder="可记录无法判断的原因"></textarea>
+          <label class="eval-complete"><input id="eval-complete" type="checkbox">本帧已完成（未知处已明确保留）</label>
+          <label id="eval-adjudication-label" class="eval-label" for="eval-adjudication" hidden>分歧裁决依据</label><textarea id="eval-adjudication" class="eval-input" placeholder="说明如何处理两份标注的分歧" hidden></textarea>
+        </div>
+      </div>
+      <div class="inspector-action"><p>独立版本保存；不修改原视频、实验标注或算法结果。</p><div class="eval-draw-actions"><button id="eval-save" class="small-button" disabled>保存草稿</button><button id="eval-submit" class="primary" disabled>提交本任务</button></div></div>
+    </aside>
+  </section>
+  <footer class="workspace-status"><span><i class="status-dot"></i><span id="status-text" role="status" aria-live="polite">正在连接本地工作台…</span></span><span id="status-meta">文件仅在本机处理</span></footer>
+</main>
+<input id="files-input" type="file" multiple accept="video/*,image/*,.mkv,.avi,.csv,.json,.txt,.tif,.tiff" hidden><input id="folder-input" type="file" webkitdirectory multiple hidden>
+<dialog id="path-dialog"><form id="path-form"><div class="dialog-header"><h2>打开本机视频</h2><button type="button" class="icon-button" data-close="path-dialog" aria-label="关闭">×</button></div><p>输入完整路径，直接读取原始视频，无需复制文件。</p><label for="path-value">视频完整路径</label><input id="path-value" placeholder="C:\实验数据\video.mp4" required autocomplete="off"><p id="path-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="path-dialog">取消</button><button class="primary" type="submit">打开并标注<svg><use href="#i-arrow"/></svg></button></div></form></dialog>
+<dialog id="help-dialog"><div class="dialog-header"><h2>在一个工作台完成分析</h2><button class="icon-button" data-close="help-dialog" aria-label="关闭">×</button></div><ol class="help-list"><li><b>启动工作台</b><p>在文件资源管理器中打开 WormStudio 文件夹，双击 start.bat，保持启动窗口开启。浏览器会自动打开 http://127.0.0.1:端口/studio；若未自动打开，请复制启动窗口显示的完整地址。直接打开 web/studio.html 仅提供文件预览。</p></li><li><b>导入素材</b><p>左侧支持多选文件、选择文件夹或拖放。视频可进入分析流程，图片与数据文件可预览。本次导入列表在刷新后清空，已保存的分析结果不受影响。</p></li><li><b>在右侧完成标注</b><p>先选择像素单位或填写真实标定，再逐条点选线虫并确认掩膜，最后选择中线提取方法。</p></li><li><b>查看结果与评测</b><p>保存标注后自动处理，切换到分析结果可查看视频、逐帧指标及下载文件。独立人工标注请使用顶部“评测标注”。当前任务结束后可开始下一个视频。</p></li></ol><p class="help-shortcuts"><kbd>Ctrl O</kbd> 导入文件 <kbd>/</kbd> 搜索文件 <kbd>Esc</kbd> 关闭弹窗</p></dialog>
+<script src="./result-viewport.js"></script><script src="./result-player.js"></script><script src="./phenotype-results.js"></script><script src="./studio-results.js"></script><script src="./studio-evaluation.js"></script><script src="./studio.js"></script>
+<script src="/workspace-controls.js"></script></body></html>

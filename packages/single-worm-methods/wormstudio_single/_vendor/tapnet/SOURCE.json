@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/google-deepmind/tapnet",
+  "commit": "730cda1c730877cfedbe01bf87fb1cadb78a565d",
+  "files": [
+    "LICENSE",
+    "tapnet/__init__.py",
+    "tapnet/tapnext/pscan.py",
+    "tapnet/tapnext/tapnext_lru_modules.py",
+    "tapnet/tapnext/tapnext_torch.py",
+    "tapnet/tapnextpp/votsp2026/model.py",
+    "tapnet/tapnextpp/votsp2026/utils.py"
+  ],
+  "modifications": "None. Official inference subset."
+}

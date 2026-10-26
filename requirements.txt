@@ -1,0 +1,23 @@
+# Common runtime packages for Worm Studio (Windows, Python 3.11).
+# Versions recorded from the working environment on 2026-09-29.
+# Install requirements-cuda.txt FIRST, then this file, then local SAM2.
+# See docs/INSTALL.md; this file alone is not a complete installation.
+
+# Images, video, centerlines and phenotype calculations
+numpy==2.4.6
+scipy==1.17.1
+opencv-python==5.0.0.93
+scikit-image==0.26.0
+matplotlib==3.11.2
+imageio-ffmpeg==0.6.0
+PyYAML==6.0.3
+
+# SAM2 / WormTracer runtime dependencies
+Pillow==12.3.0
+tqdm==4.70.1
+hydra-core==1.3.7
+omegaconf==2.3.1
+iopath==0.1.10
+
+# TAPNext++ optional adapter (normal environment, no validation/deps fallback)
+einops==0.8.1

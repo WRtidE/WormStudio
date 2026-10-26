@@ -1,0 +1,17 @@
+{
+  "head_angle_threshold_deg": 20,
+  "minimum_bend_interval_s": 0.15,
+  "speed_smoothing_s": 0.42,
+  "stationary_speed_bl_s": 0.01,
+  "active_speed_bl_s": 0.1,
+  "active_range_bl": 1.0,
+  "localized_range_bl": 0.2,
+  "circling_window_s": 5,
+  "circling_angle_deg": 270,
+  "circling_closure_bl": 0.5,
+  "circling_min_compactness": 0.025,
+  "circling_min_direction_coherence": 0.8,
+  "head_points_crop_xy": {},
+  "scale_um_per_px": {},
+  "threshold_status": "provisional_not_experimentally_validated"
+}
