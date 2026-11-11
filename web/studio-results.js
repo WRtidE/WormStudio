@@ -24,7 +24,7 @@ window.StudioResults = (() => {
   let controller = null, revision = 0, ranges = [], visible = false, headAnchors = {};
   let identityReport={edges:[]},identityEdge=null,identityTimer=null;
   const controls = ['result-frame','result-frame-number','result-prev','result-next','result-worm','result-issue-filter','result-prev-issue','result-next-issue'];
-  function text(id, value) { el(id).textContent = value; }
+  function text(id, value) { el(id).textContent = AnalysisPresentation.text(value); }
   const rowAt = frame => timeline?.frames[frame]?.find(row => row.worm_id === worm);
   const translate = value => String(value || '').split(';').map(reason => reasons[reason] || reason).filter(Boolean).join('；');
   const needsReview = (row, dimension) => dimension==='scale' && row?.measurement_mode==='pixels' ? false : !row || (dimension === 'all'
@@ -56,6 +56,7 @@ window.StudioResults = (() => {
     frame = Math.max(0, Math.min(timeline.frame_count - 1, frame));
     if (frame === position && !force) return;
     position = frame;
+    el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
     el('result-frame').value = el('result-frame-number').value = frame;
     text('result-frame-label', `第 ${frame} / ${timeline.frame_count - 1} 帧 · ${(frame / timeline.fps).toFixed(3)} s`);
     el('result-prev').disabled = frame === 0;
@@ -89,6 +90,7 @@ window.StudioResults = (() => {
     for(const trigger of audit?.triggers||[]){const b=document.createElement('button');b.className='small-button';b.textContent=`定位第 ${trigger.frame} 帧：${statuses[trigger.status]||trigger.status}`;b.onclick=()=>seek(trigger.frame);el('result-gate-triggers').append(b);}
     renderAnchors();
     el('identity-open').disabled=!(identityReport.edges||[]).some(e=>e.worm_id===worm&&e.reference_end_frame!==null);
+    el('identity-open').hidden=el('identity-open').disabled;
     if(audit?.tracklet_pose_valid!==undefined) el('result-gate-audit').textContent+=` 匿名片段姿态 ${audit.tracklet_pose_valid} 帧，额外提供 ${audit.tracklet_additional_pose} 帧局部结果；不合并为已确认个体。`;
     if(audit?.identity_auto_reassociated!==undefined) el('result-gate-audit').textContent+=` 自动关联 ${audit.identity_auto_reassociated} 帧；人工确认 ${audit.identity_human_confirmed} 帧。`;
     const legacy = row.quality?.legacy;
@@ -100,7 +102,7 @@ window.StudioResults = (() => {
     text('result-identity-title', legacy ? '身份尚未评估' : excluded ? '源帧无效，身份不作判断' : unverified ? (row.tracklet_status==='stable_anonymous'?'局部片段可用 · 跨段身份未确认':'身份待复核') : statuses[identity?.status] || '身份状态已记录');
     text('result-identity-note', legacy ? '此结果未按新质量规则评估。请重新运行后再作质量判断。' : excluded ? '本帧不用于测量；已有的身份复核状态继续保留。' : row.identity_note);
     text('result-metric-note', legacy ? '旧版指标 · 质量尚未重新评估' : unverified ? '个体指标暂停 · 可用面积仅作匿名参考' : '仅显示通过质量规则的测量值');
-    el('studio-metric-cards').replaceChildren();
+    el('studio-metric-cards').replaceChildren();el('studio-extra-metrics').replaceChildren();
     for (const [metric, label, unit] of metrics) {
       const pixel = row.measurement_mode === 'pixels';
       const value = row[pixel ? metric.replace('_um','_px') : metric], available = typeof value === 'number' && Number.isFinite(value);
@@ -109,14 +111,14 @@ window.StudioResults = (() => {
       name.textContent = metric === 'area_um2' && unverified && !legacy ? '匿名轮廓面积' : label;
       const number = document.createElement('strong'); number.textContent = available ? value.toLocaleString('zh-CN', {maximumFractionDigits:2}) : '—';
       const suffix = document.createElement('small'); suffix.textContent = pixel ? unit.replace('μm','px') : unit;
-      card.append(name, number, suffix); el('studio-metric-cards').append(card);
+      card.append(name, number, suffix); el(['volume_um3','mean_width_um'].includes(metric)?'studio-extra-metrics':'studio-metric-cards').append(card);
     }
     if(row.tracklet_status==='stable_anonymous') {
       for(const [field,label,unit] of [['tracklet_length_px','片段局部体长','px'],['tracklet_speed_px_s','片段局部速度','px/s']]) {
         const card=document.createElement('article');card.className='studio-metric';
         const labelNode=document.createElement('span'),valueNode=document.createElement('strong'),note=document.createElement('small');
         labelNode.textContent=label;valueNode.textContent=Number.isFinite(row[field])?row[field].toFixed(2):'—';
-        note.textContent=`${unit} · ${row.tracklet_id} · 匿名`;card.append(labelNode,valueNode,note);el('studio-metric-cards').append(card);
+        note.textContent=`${unit} · ${row.tracklet_id} · 匿名`;card.append(labelNode,valueNode,note);el('studio-extra-metrics').append(card);
       }
     }
     // Keep expanded evidence open while stepping through the same worm.
@@ -131,8 +133,8 @@ window.StudioResults = (() => {
       summary.append(title, state);
       const note = document.createElement('p'); note.textContent = translate(q?.reason) || '本项通过当前规则。';
       const evidence = document.createElement('pre');
-      try { evidence.textContent = JSON.stringify(JSON.parse(q?.evidence), null, 2); }
-      catch { evidence.textContent = q?.evidence || '没有记录证据。'; }
+      try { evidence.textContent = AnalysisPresentation.text(JSON.stringify(JSON.parse(q?.evidence), null, 2)); }
+      catch { evidence.textContent = AnalysisPresentation.text(q?.evidence || '没有记录证据。'); }
       details.append(summary, note, evidence); el('result-dimensions').append(details);
     }
   }
@@ -228,8 +230,13 @@ window.StudioResults = (() => {
     text('result-video-message', '视频暂时无法播放。仍可用下方帧控件查看质量和指标，或导出视频到本机播放。');
   });
   el('result-frame').oninput = event => seek(Number(event.target.value));
-  el('result-frame-number').oninput = event => { if (event.target.value !== '') seek(Number(event.target.value)); };
-  el('result-frame-number').onchange = () => { el('result-frame-number').value = position; };
+  el('result-frame-number').oninput = event => {
+    const value=event.target.value, frame=Number(value), max=timeline?.frame_count-1;
+    const invalid=value==='' || !Number.isInteger(frame) || frame<0 || frame>max;
+    el('result-frame-error').hidden=!invalid;event.target.setAttribute('aria-invalid',String(invalid));
+    text('result-frame-error',invalid?`请输入 0–${max} 之间的整数帧号。`:'');
+    if(!invalid)seek(frame);
+  };
   el('result-prev').onclick = () => seek(position - 1);
   el('result-next').onclick = () => seek(position + 1);
   el('result-prev-issue').onclick = () => { const range = ranges.filter(range => range.start < position).at(-1); if (range) seek(range.start); };
@@ -241,14 +248,14 @@ window.StudioResults = (() => {
     const version = ++revision; controller?.abort(); controller = new AbortController();
     const activeController = controller;
     timeline = null; pending = null; position = 0; ranges = [];headAnchors={};
-    stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;
+    stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;el('identity-open').hidden=true;
     el('result-original').checked=false;
     window.ResultPlayer.reset();
     renderPhenotypes(data.phenotypes,data.sample);
-    text('head-review-message','');
+    text('head-review-message','');el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
     video.pause(); video.removeAttribute('src'); video.load();
     controls.forEach(id => el(id).disabled = true);
-    ['studio-metric-cards','result-dimensions','result-quality-track','result-worm','studio-artifacts'].forEach(id => el(id).replaceChildren());
+    ['studio-metric-cards','studio-extra-metrics','studio-extra-artifacts','result-dimensions','result-quality-track','result-worm','studio-artifacts'].forEach(id => el(id).replaceChildren());
     text('result-frame-label', '正在读取结果…'); text('result-identity-title', '正在读取质量记录');
     text('result-identity-note', '逐帧指标与质量状态使用同一份记录。');
     text('result-quality-badge', '逐帧检查'); text('result-issue-count', '—');
@@ -258,13 +265,16 @@ window.StudioResults = (() => {
     el('result-frame').value = el('result-frame-number').value = 0;
     el('results-load-state').hidden = false; el('results-retry').hidden = true;
     text('results-load-message', '正在读取逐帧指标…');
-    text('results-notice', data.notice || ''); el('results-notice').hidden = !data.notice;
+    text('results-notice', data.notice || ''); el('results-notice').hidden = !data.notice || !!data.history_reopened;
     el('result-reannotate').hidden = !data.can_reannotate;
+    el('result-more').hidden = !data.can_reannotate;
+    el('result-export-empty').hidden = !!data.artifacts?.length;
+    el('result-worm-picker').hidden = true;
     text('result-review-hint', data.can_reannotate ? '重新标注会创建新结果，保留已有记录。身份确认需要独立复核证据。' : '身份存疑时，面积仅作为匿名轮廓参考。');
     for (const artifact of data.artifacts || []) {
       const link = document.createElement('a');
       link.href = '/artifact?key=' + encodeURIComponent(artifact.key) + '&run=' + encodeURIComponent(data.sample);
-      link.textContent = '↓ ' + artifact.label; el('studio-artifacts').append(link);
+      link.textContent = '↓ ' + artifact.label; el(['video','metrics','summary'].includes(artifact.key)?'studio-artifacts':'studio-extra-artifacts').append(link);
     }
     el('result-video-message').hidden = true;
     if (data.artifacts?.some(item => item.key === 'video')) {
@@ -298,9 +308,10 @@ window.StudioResults = (() => {
         el('result-worm').append(option);
       }
       text('result-worm-count', result.worm_ids.length + ' 条');
+      el('result-worm-picker').hidden=result.worm_ids.length<2;
       controls.forEach(id => el(id).disabled = false);
       el('result-frame').max = el('result-frame-number').max = result.frame_count - 1;
-      el('result-issue-filter').value = 'identity';
+      el('result-issue-filter').value = 'all';
       issueRanges(); draw(0, true); el('results-load-state').hidden = true;
     } catch (error) {
       if (version !== revision) return;

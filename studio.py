@@ -13,6 +13,8 @@ def main(open_browser=True):
     from worm_pipeline import _main, video_config
 
     progress = PipelineProgress()
+    from batch_queue import BatchQueue
+    progress.batch = BatchQueue(Path(__file__).resolve().parent / 'config/batch.local.json')
     progress.data.update(status='ready', detail='选择一个视频，开始新的分析')
     server = create_server(progress=progress)
     server.studio_defaults = video_config()
@@ -31,6 +33,11 @@ def main(open_browser=True):
             except Exception as exc:
                 progress.fail(exc, cancelled=progress.cancel_requested.is_set())
                 print(f'处理停止：{exc}', file=sys.stderr, flush=True)
+            finally:
+                with progress.lock:
+                    progress.batch.finish(progress.data['status'], progress.data.get('error'),
+                                          cancelled=progress.cancel_requested.is_set(),
+                                          result_sample=progress.data.get('sample'))
     finally:
         progress.close()
 

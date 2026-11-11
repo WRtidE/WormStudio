@@ -7,8 +7,10 @@ import uuid
 
 import numpy as np
 
+from compute_device import selected_device
 from analyze_phenotypes import ROOT, load_sample
 from pipeline_progress import report_progress
+from live_preview import enabled as preview_enabled, report_geometry
 from tapnext_support import VERSION, resources, signature, validate_single_worm, prepare_runtime
 
 
@@ -72,8 +74,10 @@ def run(sample, worm_filter=None):
     report_progress(detail='选择可靠姿态与双向跟踪锚点', force=True)
     masks, baseline, base_quality, meta = fresh_inputs(config, np.asarray(masks, bool), source['fps'])
     report_progress(detail='TAPNext++ 双向点跟踪与时序融合；详细窗口进度见运行日志', force=True)
+    def preview_frame(frame, image, mask, line, check):
+        report_geometry(mask,line,frame,len(masks),'TAPNext 窗口融合候选 · 尚未完成最终质量检查',image=image,accepted=False)
     curves, checks, timings = solve_fresh(config, masks, baseline, base_quality, meta,
-        evidence, checkpoint, 'cuda', solver='auto')
+        evidence, checkpoint, selected_device(), solver='auto', on_preview=preview_frame if preview_enabled() else None)
     rows = calculate_metrics(curves, masks, base_quality, checks, baseline, meta)
     if source.get('measurement_mode') == 'pixels':
         from measurement_units import pixel_fields

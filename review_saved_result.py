@@ -21,11 +21,16 @@ def main():
     base=(PROJECT_ROOT/'outputs'/args.sample).resolve()
     if not base.is_relative_to((PROJECT_ROOT/'outputs').resolve()):raise ValueError('Invalid sample')
     config=json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
+    saved_method=config['centerline_method']
     args.method=args.method or config['centerline_method']
     config['centerline_method']=args.method
     cap=cv2.VideoCapture(config['video'])
     info=dict(frames=int(cap.get(7)),fps=cap.get(5),ids=[w['id'] for g in config['groups'] for w in g['worms']]);cap.release()
     progress=PipelineProgress()
+    from workspace_sessions import restore_saved_timing
+    restore_saved_timing(progress,base,config['sample'])
+    if args.method != saved_method:
+        progress.data.update(saved_elapsed_seconds=None,saved_finished_at=None)
     stages=[dict(name='metrics',phase='metrics'),dict(name='export',phase='export')]
     # The review server keeps no path for persist(), so saved runs remain unchanged.
     from centerline_methods import METHODS

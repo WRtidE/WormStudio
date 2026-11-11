@@ -1,0 +1,24 @@
+name: Mac development smoke test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: arm64
+      - run: python -m pip install -r tools/macos/pins.txt
+      - name: Verify native imports and local workspace without downloading models
+        run: |
+          python -m pip check
+          python -c "import platform; assert platform.machine() == 'arm64'; import AppKit, WebKit, webview, cv2, torch, torchvision"
+          python tools/check_environment.py --code-only
+          python -m unittest discover -s tests -p 'test_macos_portability.py'
+        env:
+          PYTHONPATH: src

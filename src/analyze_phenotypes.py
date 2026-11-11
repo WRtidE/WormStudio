@@ -9,6 +9,7 @@ Coordinates are within the saved cropped first frame, not the full video.
 """
 import argparse
 from pipeline_progress import report_progress
+from live_preview import report_preview
 import csv
 import json
 import math
@@ -152,7 +153,8 @@ def smooth_valid(values,valid,window):
     return result
 
 
-def bend_events(angles,valid,fps,threshold,min_interval):
+def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None):
+    if timestamps is None:timestamps=np.arange(len(valid))/fps
     events=[]; cycles=0
     for idx in runs(valid):
         if len(idx)<3:continue
@@ -167,9 +169,9 @@ def bend_events(angles,valid,fps,threshold,min_interval):
                 if abs(signal[i])>abs(signal[selected[-1][0]]):selected[-1]=(i,sign)
             else:selected.append((i,sign))
         cycles+=max(0,len(selected)-1)//2
-        events.extend(dict(frame=int(idx[i]),time_s=float(idx[i]/fps),direction=sign,
+        events.extend(dict(frame=int(idx[i]),time_s=float(timestamps[idx[i]]),direction=sign,
                            angle_deg=float(signal[i])) for i,sign in selected)
-    duration=sum(max(0,len(idx)-1)/fps for idx in runs(valid))
+    duration=sum(timestamps[idx[-1]]-timestamps[idx[0]] for idx in runs(valid))
     return events,cycles,duration
 
 
@@ -233,9 +235,10 @@ def fitted_mask_source(sample,source_name):
     return json.loads(manifest.read_text(encoding='utf-8'))['mask_source'] if manifest.exists() else None
 
 
-def is_circle_path(path,body_length,fps,config):
+def is_circle_path(path,body_length,fps,config,timestamps=None):
     d=np.diff(path,axis=0);step=np.linalg.norm(d,axis=1)
-    keep=step>config['stationary_speed_bl_s']*body_length/fps
+    intervals=np.diff(timestamps) if timestamps is not None else 1/fps
+    keep=step>config['stationary_speed_bl_s']*body_length*intervals
     if keep.sum()<.8*len(step):return False
     orientation=np.unwrap(np.arctan2(d[keep,1],d[keep,0]));changes=np.diff(orientation)
     rotation=abs(np.degrees(orientation[-1]-orientation[0]))
@@ -262,6 +265,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     fps=source['fps'];n=source['frames'];all_rows=[];all_summaries=[];all_events=[];lines={}
     from video_timing import verify_timebase
     timebase=verify_timebase(source['video'],n,fps)
+    fps=timebase['fps']
+    times=np.asarray(timebase['timestamps_s'])
     snapshot=ROOT/'outputs'/sample/'pipeline-config.json'
     video_config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
     from quality_stage import load_guards
@@ -436,7 +441,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             smoothed[idx]=local
         velocity=np.full_like(smoothed,np.nan)
         for idx in trajectory_runs:
-            if len(idx)>=2:velocity[idx]=np.gradient(smoothed[idx],axis=0)*fps
+            if len(idx)>=2:velocity[idx]=np.gradient(smoothed[idx],times[idx],axis=0)
             if rows[idx[0]].get('identity_link_source') in ('auto_reassociated','human_same'):
                 velocity[idx[0]]=np.nan
         speeds=np.linalg.norm(velocity,axis=1);bl_s=speeds/median_length
@@ -447,14 +452,14 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         for segment in sorted({r['head_segment'] for r in rows if r['head_metrics_valid']}):
             accepted=angle_valid & np.array([r['head_segment']==segment for r in rows])
             sm=smooth_valid(angles,accepted,5);angle_smooth[accepted]=sm[accepted]
-            ev,cy,du=bend_events(sm,accepted,fps,config['head_angle_threshold_deg'],config['minimum_bend_interval_s'])
+            ev,cy,du=bend_events(sm,accepted,fps,config['head_angle_threshold_deg'],config['minimum_bend_interval_s'],times)
             events.extend(ev);cycles+=cy;duration+=du
         all_events.extend(dict(sample=sample,worm_id=worm,head_status=rows[e['frame']]['head_status'],**e) for e in events)
         circle=np.zeros(n,bool);circle_window=max(3,round(config['circling_window_s']*fps))
         for idx in trajectory_runs:
             for j in range(circle_window,len(idx)+1):
                 sub=idx[j-circle_window:j]
-                if is_circle_path(smoothed[sub],median_length,fps,config):
+                if is_circle_path(smoothed[sub],median_length,fps,config,times[sub]):
                     circle[sub]=True
         for i,row in enumerate(rows):
             row['speed_um_s']=float(speeds[i]);row['speed_bl_s']=float(bl_s[i])
@@ -506,7 +511,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             for row in rows: pixel_fields(row)
             pixel_fields(all_summaries[-1])
         from local_tracklets import measure as measure_tracklets
-        tracklet_report=measure_tracklets(rows,fps,scale)
+        tracklet_report=measure_tracklets(rows,fps,scale,timestamps=times)
         tracklet_reports.append(tracklet_report)
         all_summaries[-1].update(tracklet_pose_frames=sum(r['tracklet_pose_valid'] for r in rows),
             tracklet_additional_pose_frames=sum(r['tracklet_pose_valid'] and not r['identity_valid'] for r in rows))
@@ -633,6 +638,7 @@ def render(sample,source,output,ids,rows,lines):
         for worm, row in zip(ids,current_rows):
             draw_worm(image,get_mask(worm,frame),lines.get((worm,frame)),row)
         draw_hud(image,current_rows,frame,fps)
+        report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准')
         writer.write(cv2.copyMakeBorder(image,0,height%2,0,width%2,cv2.BORDER_CONSTANT))
         if frame in (0,source['frames']//2,source['frames']-1):write_png(output/f'preview-{frame:04d}.png',image)
     writer.release();cap.release();shutil.copy2(temp,output/'phenotypes-overlay.mp4');temp.unlink()

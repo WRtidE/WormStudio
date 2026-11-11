@@ -34,6 +34,37 @@ class ManualAnnotationTests(unittest.TestCase):
     def tearDown(self):
         self.patch.stop(); self.temp.cleanup()
 
+    def test_current_profile_overrides_legacy_choices_without_changing_masks(self):
+        annotation=manual.Annotation(dict(self.settings,analysis_profile='current'))
+        self.assertEqual(annotation.initial_state()['analysis_method'],'tapnext')
+        with patch('tapnext_support.resources'),patch('tapnext_support.dependency_path'):
+            annotation.save(dict(self.body,centerline_method='niu',head_detection='twardis'))
+        self.assertEqual(annotation.result['centerline_method'],'tapnext')
+        self.assertEqual(annotation.result['head_detection'],'taper_seed')
+        saved=cv2.imread(annotation.result['groups'][0]['worms'][0]['mask_path'],0)
+        np.testing.assert_array_equal(saved,self.mask[5:55,5:95])
+
+    def test_current_profile_cannot_submit_multiple_worms_from_legacy_draft(self):
+        annotation=manual.Annotation(self.settings)
+        body=dict(self.body,analysis_profile='current',centerline_method='niu',
+                  worms=[self.body['worms'][0],dict(self.body['worms'][0],id=10)])
+        with self.assertRaisesRegex(ValueError,'仅支持单虫'):annotation.save(body)
+        self.assertFalse(annotation.output.exists())
+
+    def test_corrupt_video_is_not_reported_as_an_out_of_range_frame(self):
+        bad=self.root/'broken.mp4';bad.write_bytes(b'not a video')
+        with self.assertRaisesRegex(ValueError,'无法打开此视频'):
+            manual.Annotation(dict(self.settings,video=str(bad)))
+
+    def test_short_video_and_invalid_frame_have_separate_recovery_messages(self):
+        with self.assertRaisesRegex(ValueError,'0–4'):
+            manual.Annotation(self.settings,frame=9)
+        short=self.root/'short.mp4'
+        writer=cv2.VideoWriter(str(short),cv2.VideoWriter_fourcc(*'mp4v'),12,(128,80))
+        writer.write(np.zeros((80,128,3),np.uint8));writer.release()
+        with self.assertRaisesRegex(ValueError,'至少需要 5 帧'):
+            manual.Annotation(dict(self.settings,video=str(short)))
+
     def test_saved_mask_geometry_scale_and_reuse(self):
         annotation = manual.Annotation(self.settings)
         result = annotation.save(self.body)

@@ -170,7 +170,7 @@ def solve_cached(masks, baseline, quality, meta, cache, solver='auto'):
 
 
 def solve_fresh(config, masks, baseline, quality, meta, out, checkpoint, device, solver='auto',
-                support_count=0,support_mode='local',support_radius=32.):
+                support_count=0,support_mode='local',support_radius=32.,on_preview=None):
     from .inference import load_tracker, track
     from .evidence import SCHEMA
     from .support import support_points
@@ -221,6 +221,13 @@ def solve_fresh(config, masks, baseline, quality, meta, out, checkpoint, device,
         meta['tapnext_support']['windows'].append(dict(first=int(ids[0]),last=int(ids[-1]),forward_count=len(fs),backward_count=len(bs)))
         stamp=time.perf_counter();p,checks=run_fusion(data,z,solver);timings['fusion_seconds']+=time.perf_counter()-stamp
         for i,points,q in zip(ids,p,checks):curves[i]=points+offset;qa[i]=q
+        if on_preview is not None:
+            for i in ids:
+                # Preview consumers cannot alter the arrays used for measurement.
+                try:
+                    on_preview(int(i), frames[i].copy(), masks[i].copy(), curves[i].copy(), dict(qa[i]))
+                except Exception:
+                    pass
         _SKELETON_CACHE.clear()
     if device=='cuda':meta['tapnext_support']['peak_torch_allocated_mib']=torch.cuda.max_memory_allocated()/2**20
     del model

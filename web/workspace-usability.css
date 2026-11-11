@@ -1,0 +1,178 @@
+/* Shared last-layer typography for the workspace and embedded annotation. */
+:root { --muted: #606d55; }
+.inspector,.workspace .sidebar { font-size:13px; line-height:1.65; }
+.inspector-heading h2,.section-title h2 { font-size:14px; color:#35442d; }
+.inspector .section-label,.sidebar .section-title h2,.sidebar .field-label { font-size:13px; color:#43543a; }
+.inspector p,.inspector .file-facts,.inspector .file-facts dd,.inspector .file-facts dt,
+.inspector .pipeline-steps p,.inspector .panel-tip p,.inspector-action p,
+.sidebar .intro,.sidebar .help,.sidebar .note,.sidebar .method-card small,
+.sidebar .review-card dl>div,.sidebar .review-card dt,.sidebar .review-card dd,
+.review-navigation>p,.result-dimensions details>p,.result-exports a {
+  font-size:12px; line-height:1.75; color:#58654d;
+}
+.inspector .small-button,.result-select,.review-buttons .small-button,
+.sidebar .segmented button,.sidebar .tool b,.sidebar .method-card b,
+.sidebar .add-button,.sidebar .readiness-row { font-size:12px; }
+.sidebar .method-card em,.sidebar .tool small { font-size:11px; color:#59674f; }
+.inspector strong,.sidebar .method-card b { color:#35452d; }
+.result-dimensions summary { font-size:12px; color:#43543a; }
+.result-dimensions summary b { font-size:11px; color:#4f653e; }
+.result-dimensions pre { font-size:12px; color:#49563f; }
+.result-dimensions { display:block; }
+.result-dimensions details { margin-top:6px; }
+.result-inspector .identity-card { margin:12px 0; }
+.result-inspector .head-status-card { margin:18px 0; padding-top:16px; border-top:1px solid #e1e7d9; }
+.result-inspector details { margin-top:10px; }
+.result-inspector summary,.advanced-note summary { color:#43543a; cursor:pointer; font-size:12px; line-height:1.65; }
+.advanced-note { margin:12px 0; border:1px solid #e0e6d9; border-radius:8px; padding:10px 12px; background:#f7f9f3; }
+.advanced-note>p { margin:8px 0 0; font-size:12px; line-height:1.75; color:#58654d; }
+.file-history { margin-top:20px; }
+.linked-run { margin-top:10px; padding:12px; border:1px solid #dfe6d6; border-radius:8px; background:#f8faf5; }
+.linked-run>strong { display:block; font-size:12px; overflow-wrap:anywhere; }
+.linked-run>p { margin:6px 0 10px; }
+.linked-run button { margin:3px 5px 0 0; min-height:34px; }
+#selected-runs { max-height:300px; overflow-y:auto; }
+#selected-runs>p { padding:12px 0; }
+.file-facts dd { overflow-wrap:anywhere; }
+#saved-run-list>div { padding:8px 0; border-bottom:1px solid #e1e7d9; }
+#saved-run-list p { margin:0; font-size:12px; color:#43543a; overflow-wrap:anywhere; }
+.file-label small { font-size:11px; color:#5b684f; line-height:1.7; }
+#draft-status { font-size:12px; line-height:1.6; color:#4d683c; }
+#draft-status[data-state=pending],#draft-status[data-state=saving] { color:#72551e; }
+#draft-status[data-state=error] { color:#a13729; font-weight:600; }
+.workflow .step b { font-size:12px; }.workflow .step small { font-size:11px; }
+.status-line,.viewer-footer { font-size:12px; color:#536149; }
+.annotation-footer .primary,.annotation-footer .secondary { font-size:12px; }
+button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible { outline:2px solid #496b37; outline-offset:3px; }
+@media(min-width:1181px) {
+  .preview-workspace,.results-workspace { grid-template-columns:minmax(0,1fr) 310px; }
+  .workspace .sidebar { width:310px; min-width:310px; padding:22px; }
+}
+@media(max-width:600px) {
+  .workspace .sidebar { width:100%; min-width:0; }
+  .workflow .step b { font-size:11px; }.workflow .step small { display:none; }
+  .review-buttons { flex-wrap:wrap; }
+}
+
+.library-error { margin:10px 0; padding:10px; color:#9f3528; background:#fff2ec; border-radius:6px; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+
+/* Reserve vertical space for the image, not the surrounding application chrome. */
+.studio-page .workspace-header { height:48px; min-height:48px; padding:0 20px; gap:12px; flex-shrink:0; }
+.studio-page .workspace-tabs { height:40px; min-height:40px; padding:0 20px; flex-shrink:0; }
+.studio-page .workspace-status { height:24px; min-height:24px; padding:0 16px; flex-shrink:0; }
+.studio-page .header-right { gap:10px; }
+.studio-page .header-right .small-button { padding:6px 10px; }
+.studio-page .library { padding:16px 12px 0; }
+.studio-page .brand-row { margin:0 2px 16px; flex-shrink:0; }
+.studio-page .brand { font-size:15px; }
+.studio-page .brand small { letter-spacing:.5px; }
+.studio-page .import-button { padding:8px 10px; flex-shrink:0; }
+.studio-page #import-folder { padding:7px 10px; margin-top:4px; flex-shrink:0; }
+.studio-page #saved-projects { margin:6px 0 0; padding:8px 6px; }
+.studio-page #saved-projects[open] { max-height:180px; overflow:auto; scrollbar-width:thin; }
+.studio-page #saved-run-list { max-height:none; }
+.studio-page .library-divider { margin:10px 0 12px; flex-shrink:0; }
+.studio-page .section-caption { margin-bottom:6px; }
+.studio-page .project-row { padding:7px 8px; flex-shrink:0; }
+.studio-page .search-box { margin:8px 4px; flex-shrink:0; }
+.studio-page .file-filter { margin-bottom:6px; padding:0 6px; flex-shrink:0; }
+.studio-page #file-list { flex:1 1 0; min-height:0; }
+.studio-page #file-list:empty { flex:0; }
+.studio-page .library-empty:not([hidden]) { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:12px 4px; }
+.studio-page .file-row { padding:7px 8px; margin-bottom:2px; }
+.studio-page .file-row small { margin-top:2px; }
+.studio-page .library-bottom { padding-top:8px; flex-shrink:0; }
+.studio-page .library-bottom .plain-button { padding:8px; }
+.studio-page .library-bottom #current-analysis { margin-bottom:4px; }
+.studio-page .local-footer { padding:10px 6px; margin-top:4px; }
+.studio-page .inspector-heading { height:44px; min-height:44px; padding:0 16px; }
+.studio-page .inspector-content { padding:16px; }
+.studio-page .inspector-action { padding:10px 16px 12px; }
+.studio-page .inspector-action p { margin-bottom:7px; }
+.studio-page .panel-divider { margin:16px 0; }
+.studio-page .pipeline-steps { margin-top:16px; gap:16px; }
+.studio-page .pipeline-steps li:not(:last-child):after { height:14px; }
+.studio-page .selected-file { margin:12px 0; }
+.studio-page .file-facts { gap:8px; }
+.studio-page .media-workspace { margin:12px; }
+.studio-page .media-toolbar { height:36px; min-height:36px; }
+.studio-page .media-caption { min-height:28px; padding:6px 12px; }
+.studio-page .media-stage { padding:12px; }
+
+.annotation-page .workflow { min-height:44px; padding:5px 12px; gap:8px; justify-content:flex-start; }
+.annotation-page .workflow .step { padding:3px 5px; gap:7px; flex-shrink:0; }
+.annotation-page .workflow .step-number { width:24px; height:24px; border-radius:6px; }
+.annotation-page .workflow .step small { margin-top:2px; font-size:10px; }
+.annotation-page .workflow .step-link { width:14px; flex-shrink:1; }
+.annotation-page .viewer { min-height:0; }
+.annotation-page .viewer-toolbar { min-height:36px; padding:5px 10px; gap:8px; flex-shrink:0; flex-direction:row; }
+.annotation-page .viewer-toolbar>div { display:flex; align-items:center; gap:6px; min-width:0; }
+.annotation-page .viewer-toolbar button,.annotation-page .viewer-toolbar select { min-height:28px; padding:4px 8px; font-size:12px; white-space:nowrap; }
+.annotation-page .annotation-tools { justify-content:flex-start; flex-wrap:wrap; }
+.annotation-page .annotation-tools>div { flex-wrap:nowrap; }
+.annotation-page .annotation-tools>div:last-child { margin-left:auto; }
+.annotation-page .annotation-tools label { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.annotation-page #anchor-frame { width:64px!important; min-width:0; height:28px; border:1px solid #dbe2d3; border-radius:5px; padding:3px 5px; font-size:12px; }
+.annotation-page #viewport { flex:1 1 0; min-height:0; padding:12px; }
+.annotation-page .viewer-footer { min-height:28px; padding:4px 10px; flex-shrink:0; gap:6px; }
+.annotation-page .viewer-footer .canvas-actions { gap:8px; }
+.annotation-page .viewer-footer .confirm-button { padding:4px 8px; min-height:26px; }
+.annotation-page .status-line { min-height:26px; max-height:52px; overflow:auto; padding:4px 10px; line-height:1.5; flex-shrink:0; }
+.annotation-page .workspace .sidebar { padding:16px; }
+.annotation-page .sidebar h1 { font-size:17px; }
+.annotation-page .sidebar .eyebrow { margin-bottom:4px; }
+.annotation-page .sidebar .intro { margin:5px 0 14px; line-height:1.65; }
+.annotation-page .sidebar .divider { margin:14px 0; }
+.annotation-page .sidebar .section-title { margin-bottom:8px; }
+.annotation-page .sidebar .segmented { padding:3px; }
+.annotation-page .sidebar .segmented button { padding:6px; }
+.annotation-page .sidebar .field-label { margin:10px 0 6px; }
+.annotation-page .sidebar .input-unit input { padding:8px 10px; }
+.annotation-page .sidebar .readiness-card { padding:10px; margin-bottom:14px; }
+.annotation-page .sidebar .readiness-row { padding:8px 0; }
+.annotation-page .sidebar .tool { padding:8px; gap:5px; }
+.annotation-page .sidebar .method-list { gap:7px; }
+.annotation-page .sidebar .method-card { padding:10px; }
+.annotation-page .sidebar .method-card small { margin:3px 0; line-height:1.6; }
+.annotation-page .sidebar .review-card { margin-top:16px; }
+.annotation-page .annotation-footer { display:grid; grid-template-columns:minmax(0,1fr) auto; min-height:64px; padding:8px 14px; gap:14px; }
+.annotation-page .annotation-footer>div.action-guidance:first-child { min-width:0; font-size:12px; line-height:1.45; }
+.annotation-page .action-guidance strong { font-size:13px; line-height:1.4; }
+.annotation-page .action-guidance p { font-size:12px; line-height:1.45; margin:2px 0; }
+.annotation-page .save-summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 12px; }
+.annotation-page .save-summary #draft-status { font-size:11px; line-height:1.4; }
+.annotation-page .annotation-footer .footer-actions { gap:6px; margin:0; flex-wrap:nowrap; justify-content:flex-end; }
+.annotation-page .annotation-footer .primary { min-width:150px; min-height:36px; padding:8px 12px; gap:14px; }
+.annotation-page .annotation-footer .secondary,.annotation-page .annotation-footer .repair-button { min-height:36px; padding:8px 10px; white-space:nowrap; }
+
+@media(min-width:941px) {
+  .studio-page:not(.sidebar-collapsed) { --side:220px; }
+  .studio-page .preview-workspace,.studio-page .results-workspace { grid-template-columns:minmax(0,1fr) 280px; }
+}
+@media(min-width:601px) {
+  .annotation-page .workspace { flex-direction:row; min-height:0; overflow:hidden; padding:0; gap:0; }
+  .annotation-page .workspace .viewer { order:1; flex:1 1 0; height:auto; min-height:0; margin:10px; }
+  .annotation-page .workspace .sidebar { order:2; flex:0 0 260px; width:260px; min-width:260px; min-height:0; overflow-y:auto; border-radius:0; border-left:1px solid var(--border); border-top:0; }
+}
+@media(min-width:1356px) {
+  .annotation-page .workspace .sidebar { flex-basis:280px; width:280px; min-width:280px; }
+}
+@media(min-width:601px) and (max-width:850px) {
+  .annotation-page .workspace .sidebar { flex-basis:230px; width:230px; min-width:230px; padding:12px; }
+  .annotation-page .workflow .step small { display:none; }
+  .annotation-page .workflow .step-link { width:8px; }
+  .annotation-page .workflow .step { gap:5px; }
+  .annotation-page .annotation-footer .primary { min-width:130px; }
+  .annotation-page .annotation-footer .footer-actions { flex-wrap:wrap; max-width:270px; }
+}
+@media(max-width:600px) {
+  .annotation-page .workflow { min-height:38px; overflow-x:auto; gap:4px; }
+  .annotation-page .workflow .step small,.annotation-page .workflow .step-link { display:none; }
+  .annotation-page .workspace .viewer { min-height:300px; height:60dvh; margin:8px; }
+  .annotation-page .annotation-footer { grid-template-columns:minmax(0,1fr); gap:6px; padding:8px 10px; }
+  .annotation-page .annotation-footer .footer-actions { width:100%; flex-wrap:wrap; }
+  .annotation-page .save-summary #footer-status { display:none; }
+  .studio-page .workspace-header,.studio-page .workspace-tabs { padding-left:12px; padding-right:12px; }
+  .studio-page .library { padding-left:8px; padding-right:8px; }
+  .studio-page .brand { font-size:12px; }
+}

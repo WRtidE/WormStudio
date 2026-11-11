@@ -6,6 +6,7 @@ records and are excluded from measurements. This is a project adaptation.
 """
 import argparse
 from pipeline_progress import report_progress
+from live_preview import report_geometry
 import json
 import time
 from pathlib import Path
@@ -65,6 +66,7 @@ def run(sample, method, worm_filter=None):
                     quality_reasons=['tracking_contact_or_area_outlier'],topology='mask_excluded',
                     selected_candidate='none',branch_score_margin=None))
                 previous=previous_center=None
+                report_geometry(mask,None,frame,count,f'线虫 {worm} · 轮廓待复核，未生成可靠中线')
                 continue
             niu=extract_niu(mask)
             metric=line_metrics(niu['ordered'],mask,niu['raw_xy'],niu['radius'])
@@ -97,6 +99,7 @@ def run(sample, method, worm_filter=None):
                 quality_reasons=list(dict.fromkeys(reasons)),topology=topology,
                 selected_candidate=selected,branch_score_margin=None,niu_topology=niu['topology'],
                 niu_path_fraction=niu['path_fraction'],**extra))
+            report_geometry(mask,points[frame],frame,count,f'线虫 {worm} · '+('中线通过当前检查' if not reasons else '候选中线待复核'),accepted=not reasons)
         report_progress(count,count,'中线提取完成，保存路径和质量记录',force=True)
         target=folder/f'worm-{worm}';target.mkdir(exist_ok=True)
         np.save(target/'centerlines.npy',points)

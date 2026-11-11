@@ -15,12 +15,12 @@ function annotationReadiness({scale, pixelMode = false, calibrationPending = fal
     });
     if (!masksReady) blockers.push({
         key: 'masks', step: 2, title: '虫体掩膜还需确认',
-        detail: `已确认 ${confirmed} / ${worms.length} 条。检查绿色轮廓后，点击画面下方“确认这条虫的掩膜”。头部标记不能代替掩膜确认。`,
+        detail: `已确认 ${confirmed} / ${worms.length} 条。检查绿色轮廓后，点击底部操作栏的“确认虫体”。头部标记不能代替掩膜确认。`,
         action: '去确认虫体掩膜'
     });
     if (!methodReady) blockers.push({
-        key: 'method', step: 3, title: '当前分析方法不可用',
-        detail: tapnextIssue || '请选择一种可用的中线提取方法。', action: '去选择可用方法'
+        key: 'method', step: 3, title: '分析准备尚未完成',
+        detail: tapnextIssue || '分析组件暂不可用，请检查本地安装后重试。', action: '查看分析准备'
     });
     return {scaleReady, masksReady, methodReady, confirmed, blockers, ready: blockers.length === 0};
 }

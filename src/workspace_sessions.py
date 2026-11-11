@@ -19,10 +19,16 @@ def catalog(root):
             state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
             runs.append(dict(sample=config_path.parent.name, video=config['video'],
                 method=config.get('centerline_method','topology'),
-                complete=state.get('completed_through')=='export', updated=config_path.stat().st_mtime))
+                complete=state.get('completed_through')=='export',
+                has_metrics=state.get('stages',{}).get('metrics',{}).get('status')=='complete',
+                updated=config_path.stat().st_mtime))
         except (OSError,ValueError,KeyError): continue
     targets_path=root/'config/target_videos.json'
     targets=json.loads(targets_path.read_text(encoding='utf-8')) if targets_path.exists() else []
+    from workspace_library import register
+    for run in runs:
+        try: run['file']=register(root,run['video'],auto=True)
+        except (ValueError,OSError): pass  # Saved results remain available if a source was moved.
     return dict(runs=sorted(runs,key=lambda r:r['updated'],reverse=True)[:100], targets=targets)
 
 
@@ -173,6 +179,25 @@ def derive_geometry_run(root,sample,config=None):
     return config
 
 
+def restore_saved_timing(progress,base,sample):
+    # Historical durations must come from the completed record, never the active
+    # session's clock (which may belong to a different video).
+    import math
+    saved = {}
+    try:
+        record = json.loads((base/'pipeline-progress.json').read_text(encoding='utf-8'))
+        if isinstance(record, dict) and record.get('sample') == sample and record.get('status') == 'complete':
+            saved = record
+    except (OSError, ValueError):
+        pass
+    def recorded_number(key):
+        value = saved.get(key)
+        return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+    progress.started=progress.ended=progress.active_started=None
+    progress.data.update(history_reopened=True, saved_elapsed_seconds=recorded_number('elapsed_seconds'),
+                         saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
+
+
 def reopen(progress,root,sample):
     base,config=load_config(root,sample)
     from centerline_methods import method_source, METHODS
@@ -183,6 +208,8 @@ def reopen(progress,root,sample):
     completed=[(k,v) for k,v in state.get('stages',{}).items() if v.get('status')=='complete']
     if not any(k=='metrics' for k,_ in completed): raise ValueError('指标阶段尚未完成')
     progress.path=progress.event_path=progress.log_path=None
+    restore_saved_timing(progress,base,sample)
+    progress.preview_dir=None
     progress.artifacts={};progress.frame_metrics=None;progress.config=config
     progress.data.update(sample=sample,video_name=Path(config['video']).name,
         frames=summary['worms'][0]['frames'],fps=summary['fps'],worm_count=len(summary['worms']),
@@ -196,16 +223,24 @@ def reopen(progress,root,sample):
 
 def save_draft(annotation,body):
     folder=draft_folder(annotation);folder.mkdir(parents=True,exist_ok=True)
-    record=dict(identity=annotation.identity,body=body)
-    path=folder/f'{time.time_ns()}-{secrets.token_hex(3)}.json'
-    path.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
+    # One atomic latest snapshot; old manually saved revisions remain untouched.
+    record=dict(identity=annotation.identity,body=body,saved_at=time.time())
+    path=folder/'latest.json'
+    temp=folder/f'.{secrets.token_hex(8)}.tmp'
+    try:
+        temp.write_text(json.dumps(record,ensure_ascii=False),encoding='utf-8')
+        temp.replace(path)
+    finally: temp.unlink(missing_ok=True)
     return dict(saved=True,revision=path.name)
 
 
 def get_draft(annotation):
-    for path in sorted(draft_folder(annotation).glob('*.json'),reverse=True):
-        record=json.loads(path.read_text(encoding='utf-8'))
-        if record.get('identity')==annotation.identity: return record
+    for path in sorted(draft_folder(annotation).glob('*.json'),key=lambda p:p.stat().st_mtime_ns,reverse=True):
+        try: record=json.loads(path.read_text(encoding='utf-8'))
+        except (ValueError,OSError): continue
+        if record.get('identity')==annotation.identity:
+            if record.get('body',{}).get('submitted'): return dict(body=None)
+            return record
     return dict(body=None)
 
 

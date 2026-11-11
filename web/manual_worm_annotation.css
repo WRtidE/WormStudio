@@ -30,7 +30,7 @@ ol.calibration-guide{padding-left:20px}
 .readiness-row.complete:disabled{opacity:1;color:#526747;background:transparent}
 .readiness-row.incomplete:hover{background:#f3eedf}
 .readiness-card .calibration-guide{font-size:11px;margin:5px 0 0}
-.annotation-footer{gap:18px;flex-wrap:wrap;padding:14px 24px}
+.annotation-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:10px 16px}
 .annotation-footer>div.action-guidance:first-child{display:block;flex:1;min-width:200px;color:#536047;font-size:12px;line-height:1.6}
 .action-guidance strong{font-size:13px;font-weight:600;color:#35462d}
 .action-guidance p{margin:3px 0;color:#59634f;font-size:12px;max-width:760px}
@@ -40,7 +40,7 @@ ol.calibration-guide{padding-left:20px}
 .annotation-footer .footer-actions{align-items:center;flex-wrap:wrap;margin-left:auto;gap:8px}
 .footer-actions .repair-button{color:#5f461a;border-color:#cfb780;background:#fff5dd;font-size:12px;padding:11px 14px;font-weight:600}
 .repair-button:hover{background:#f6e8c6;border-color:#ad8843}
-@media(max-width:1100px){.annotation-footer{gap:9px}.annotation-footer>div.action-guidance:first-child{flex-basis:100%}.annotation-footer .action-guidance p{max-width:none}}
+@media(max-width:560px){.annotation-footer{grid-template-columns:minmax(0,1fr);gap:8px}.annotation-footer .action-guidance p{max-width:none}}
 @media(max-width:600px){.annotation-footer{padding:10px 12px}.annotation-footer>div.action-guidance:first-child{min-width:0}.action-guidance p{font-size:11px}.annotation-footer .footer-actions{width:100%;justify-content:flex-end}.footer-actions .repair-button{font-size:11px;padding:9px}}
 
 #viewport{display:block} #stage{width:max-content;margin:auto} .viewer-toolbar button{padding:6px 9px;font-size:12px} #anchor-frame{font-size:13px} .calibration-guide{font-size:13px} #saved-projects{padding:10px}

@@ -12,10 +12,10 @@ if __name__ == '__main__':
 VIDEO_PATH = str(ROOT / 'input_videos' / 'example.mp4')
 SAMPLE_NAME = "experiment-01"  # 新视频或新参数建议使用新名字
 
-# True：外部浏览器中点击虫体分割、人工修正，再选择中心线方法。
+# True：外部浏览器中点击虫体分割、人工修正，再确认并开始分析。
 # False：使用下方 GROUPS 中的点标记或已有掩膜。
 MANUAL_ANNOTATION = True
-CENTERLINE_METHOD = "tapnext"  # 本轮单虫默认路线；可在界面切换已有方法
+CENTERLINE_METHOD = "tapnext"  # 工作台新分析统一采用当前单虫路线
 SAM2_MODEL = "large"            # 点选分割和全视频跟踪统一使用：large / tiny
 ANNOTATION_FRAME = 0            # 选择较容易区分线虫的一帧，帧号从 0 开始
 HEAD_DETECTION = 'taper_seed'  # 首帧人工优先，否则按起始形状初始化；正式头摆仍需人工
@@ -358,6 +358,9 @@ def run_stage(stage, log, progress=None):
     env = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUNBUFFERED='1')
     env['PYTHONPATH'] = str(ROOT / 'src') + os.pathsep + env.get('PYTHONPATH', '')
     if progress and progress.event_path: env['WORM_PROGRESS_FILE'] = str(progress.event_path)
+    if progress and progress.preview_dir:
+        env['WORM_PREVIEW_DIR'] = str(progress.preview_dir)
+        env['WORM_PREVIEW_STAGE'] = progress.data['stages'][progress.data['active']]['label']
     started = time.monotonic()
     with log.open('w', encoding='utf-8') as handle:
         process = subprocess.Popen(stage['command'], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
@@ -406,13 +409,14 @@ def _main(progress, raw_override=None):
         if args.sample: raw['sample'] = args.sample
     if not args.dry_run:
         import torch
-        if not torch.cuda.is_available(): raise RuntimeError('本流程需要 CUDA，请检查 Conda WormStudio 中的 GPU 版 PyTorch')
+        from compute_device import selected_device, device_label
+        device = selected_device()
         checkpoint=model_spec(raw.get('sam2_model','large'))['checkpoint']
         required = sam2_checkpoint(checkpoint)
         if not required.is_file(): raise RuntimeError(f'缺少 SAM2 模型：{required}；请参阅 docs/INSTALL.md')
         import imageio_ffmpeg
         print(f'Python: {sys.executable}', flush=True)
-        print(f'GPU: {torch.cuda.get_device_name()}；FFmpeg: {imageio_ffmpeg.get_ffmpeg_version()}', flush=True)
+        print(f'计算设备: {device_label(device)}；FFmpeg: {imageio_ffmpeg.get_ffmpeg_version()}', flush=True)
     resume_saved = raw.pop('_resume_saved', False)
     if (raw_override and not resume_saved) or args.annotate or (not args.config and MANUAL_ANNOTATION and not resume_saved):
         from manual_worm_annotation import collect_annotation
@@ -467,9 +471,9 @@ def _main(progress, raw_override=None):
         for stage in stages: print(subprocess.list2cmdline(stage['command']))
         return
     if args.check or CHECK_ONLY:
-        print('配置、视频、GPU 和编码依赖检查通过。')
+        print('配置、视频、计算设备和编码依赖检查通过。')
         return
-    progress.configure(config, info, stages, base, torch.cuda.get_device_name())
+    progress.configure(config, info, stages, base, device_label(device))
     progress.data['notice'] = notice
     if not args.no_progress_ui and progress.server is None:
         import webbrowser

@@ -8,7 +8,7 @@ import threading
 import time
 
 
-PHASE_LABELS = dict(tracking='SAM2 掩膜跟踪', cleanup='掩膜检查与清理', quality='多虫接触与身份检查', fit='中线提取',
+PHASE_LABELS = dict(tracking='虫体识别与跟踪', cleanup='轮廓检查与清理', quality='身份与接触检查', fit='姿态分析',
                     repair='交叉分支修正', temporal='前后帧时序修正', metrics='表型指标计算', export='视频导出与校验')
 _last_event = 0.
 
@@ -60,10 +60,6 @@ def report_progress(current=None, total=None, detail='', unit='帧', *, fraction
 def stage_label(stage):
     name = stage['name']
     label = PHASE_LABELS[stage['phase']]
-    if name.startswith('niu-'): label = 'NIU 骨架提取'
-    elif name.startswith('tapnext-'): label = 'TAPNext++ 双向点跟踪与时序融合'
-    elif name.startswith('topology-'): label = '自交分支检查与保守恢复'
-    elif name.startswith('hybrid-'): label = 'NIU / WormTracer 路径选择'
     if '-worm-' in name: label += ' · 线虫 ' + name.rsplit('-', 1)[1]
     return label
 
@@ -87,6 +83,8 @@ class PipelineProgress:
                          output_dir='', detail='正在检查配置并准备处理…', logs='', notice='', results=[], quality=None, phenotypes=None)
         self.artifacts = {}
         self.frame_metrics = None
+        self.preview_dir = None
+        self.batch = None
 
     def bind_server(self, server):
         self.server = server
@@ -101,15 +99,19 @@ class PipelineProgress:
         from centerline_methods import METHODS
         base.mkdir(parents=True, exist_ok=True)
         with self.lock:
-            self.cancel_requested.clear()
+            if not (self.batch and self.batch.active):
+                self.cancel_requested.clear()
             self.config = copy.deepcopy(config)
             self.started = time.time()
             self.ended = None
             self.artifacts = {}
             self.frame_metrics = None
+            self.run_id = secrets.token_hex(8)
+            self.preview_dir = base / 'live-preview' / self.run_id
             self.path = base / 'pipeline-progress.json'
             self.data.update(status='running', sample=config['sample'], video_name=Path(config['video']).name,
-                method=METHODS[config['centerline_method']]['label'], device=device,
+                history_reopened=False, saved_elapsed_seconds=None, saved_finished_at=None,
+                method='自动分析', device=device,
                 frames=info['frames'], fps=info.get('fps'), worm_count=len(info['ids']), output_dir=str(base.resolve()),
                 active=None, error=None, artifacts=[], results=[], quality=None, phenotypes=None, logs='', notice='',
                 stages=[dict(name=s['name'], label=stage_label(s), phase=s['phase'], status='pending',
@@ -228,9 +230,11 @@ class PipelineProgress:
             return dict(self.frame_metrics, sample=sample, crop_xyxy=self.config.get('crop_xyxy') if self.config else None,
                         head_detection_mode=self.config.get('head_detection','twardis') if self.config else None)
 
-    def queue_video(self, annotation):
+    def queue_video(self, annotation, deferred=False):
         """Accept a validated next video while keeping the local server alive."""
         with self.lock:
+            if self.batch and self.batch.running:
+                raise ValueError('请先等待批处理完成或停止批处理')
             if self.data['status'] not in ('ready', 'complete', 'failed', 'cancelled') or self.next_ready.is_set():
                 raise ValueError('当前处理尚未结束，请等待完成后选择新视频')
             self.path = self.event_path = self.log_path = None
@@ -238,13 +242,18 @@ class PipelineProgress:
             self.run_id = secrets.token_hex(8)
             self.artifacts = {}
             self.frame_metrics = None
+            self.preview_dir = None
             self.config = copy.deepcopy(annotation.settings)
             self.data.update(status='preparing', sample=annotation.settings['sample'], video_name=Path(annotation.video).name,
+                             history_reopened=False, saved_elapsed_seconds=None, saved_finished_at=None,
                              stages=[], active=None, error=None, artifacts=[], results=[], quality=None, phenotypes=None, logs='', notice='',
                              frames=annotation.n, worm_count=0, output_dir='', detail='请完成新视频的标注')
             self.server.annotation = annotation
-            self.next_settings = annotation.settings
-            self.next_ready.set()
+            annotation.batch_deferred = deferred
+            self.cancel_requested.clear()
+            if not deferred:
+                self.next_settings = annotation.settings
+                self.next_ready.set()
 
     def fail(self, error, cancelled=False):
         with self.lock:
@@ -258,13 +267,32 @@ class PipelineProgress:
     def snapshot(self):
         with self.lock:
             result = copy.deepcopy(self.data)
-            result['elapsed_seconds'] = round((self.ended or time.time())-self.started, 1) if self.started else 0
+            result['batch'] = self.batch.snapshot() if self.batch else dict(running=False, items=[])
+            historical = result.get('history_reopened', False)
+            result['elapsed_seconds'] = (result.get('saved_elapsed_seconds') if historical else
+                                         round((self.ended or time.time())-self.started, 1) if self.started else 0)
+            result['finished_at'] = result.get('saved_finished_at') if historical else self.ended
             rows = result['stages']
             result['completed_stages'] = sum(s['status'] in ('complete', 'reused') for s in rows)
             result['percent'] = round(100*sum(s['fraction'] for s in rows)/len(rows), 1) if rows else 0
             result['token'] = self.token
+            result['preview_run'] = self.run_id if self.preview_dir else None
+            result['video_path'] = self.config.get('video') if self.config else None
             result['can_reannotate'] = bool(self.config and self.config.get('video') and not self.data.get('read_only'))
+            result['can_edit_preview_masks'] = bool(result['can_reannotate'] and self.preview_dir)
             return result
+
+    def preview(self, run, after=0, sequence=None):
+        from live_preview import preview_batch, latest_sequence
+        with self.lock:
+            if not self.preview_dir or run != self.run_id:
+                raise ValueError('预览任务已切换，请重新读取进度')
+            if sequence is None:
+                return dict(preview_batch(self.preview_dir, after), run=self.run_id,
+                            status=self.data['status'])
+            if not 1 <= sequence <= latest_sequence(self.preview_dir):
+                raise ValueError('预览帧尚未生成')
+            return (self.preview_dir / f'{sequence:09d}.jpg').read_bytes()
 
     def persist(self):
         if self.path:
@@ -281,6 +309,18 @@ class PipelineProgress:
         print(f'结果与进度：{self.url}；页面点击“完成并退出”，或终端按 Ctrl+C 结束。', flush=True)
         try:
             while not self.closed.wait(.2):
+                with self.lock:
+                    if self.batch and self.batch.running and not self.next_ready.is_set():
+                        settings = self.batch.take()
+                        if settings:
+                            self.path = None
+                            self.server.annotation = None
+                            self.cancel_requested.clear()
+                            self.config = copy.deepcopy(settings)
+                            self.data.update(status='preparing', sample=settings['sample'],
+                                video_name=Path(settings['video']).name, active=None, stages=[], error=None,
+                                detail='正在启动队列任务')
+                            return settings
                 if self.next_ready.is_set():
                     settings = self.next_settings
                     self.next_settings = None

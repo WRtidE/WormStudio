@@ -16,7 +16,10 @@ def store(server):
             configured = json.loads(setting.read_text(encoding='utf-8'))['dataset']
         if not configured: raise ValueError('尚未配置评测任务。请先建立数据盘点、划分和任务清单。')
         path = Path(configured)
-        server.evaluation_store = DatasetStore(path if path.is_absolute() else PROJECT_ROOT/path)
+        try:
+            server.evaluation_store = DatasetStore(path if path.is_absolute() else PROJECT_ROOT/path)
+        except FileNotFoundError as exc:
+            raise ValueError('找不到已配置的评测数据集。请连接原数据盘，或更新 config/evaluation_dataset.json 中的数据集位置。日常视频分析不受影响。') from exc
     return server.evaluation_store
 
 

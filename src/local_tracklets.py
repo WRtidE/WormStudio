@@ -14,7 +14,7 @@ VERSION = 'anonymous-tracklets-v1'
 MIN_SPAN_S = .25
 
 
-def measure(rows, fps, scale_um_per_px=None):
+def measure(rows, fps, scale_um_per_px=None, timestamps=None):
     if not math.isfinite(fps) or fps <= 0:
         raise ValueError('Tracklets require a positive frame rate')
     minimum = max(3, math.ceil(MIN_SPAN_S * fps) + 1)
@@ -42,9 +42,12 @@ def measure(rows, fps, scale_um_per_px=None):
         for j, chunk in enumerate(chunks):
             tid = f'w{worm}-t{j+1}'
             stable = len(chunk) >= minimum
+            times = (timestamps[[int(r['frame']) for r in chunk]] if timestamps is not None
+                     else np.arange(len(chunk))/fps)
+            stable = stable and bool(times[-1]-times[0] >= MIN_SPAN_S-1e-9)
             centers = np.array([[r['centroid_x_source_px'], r['centroid_y_source_px']] for r in chunk])
             # Backward differences: first sample is null, never bridge missing frames/jumps.
-            speeds = [None] + (np.linalg.norm(np.diff(centers, axis=0), axis=1) * fps).tolist()
+            speeds = [None] + (np.linalg.norm(np.diff(centers, axis=0), axis=1) / np.diff(times)).tolist()
             for i, r in enumerate(chunk):
                 pose = stable and flag(r, 'pose_valid')
                 r.update(tracklet_id=tid, tracklet_status='stable_anonymous' if stable else 'short_candidate',

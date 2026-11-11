@@ -1,6 +1,7 @@
 """Export full-frame H.264 video and verify any configured worm sample."""
 import argparse
 from pipeline_progress import report_progress
+from live_preview import report_preview
 import csv
 import json
 import shutil
@@ -136,6 +137,7 @@ def main():
                 if not ok or not ok2 or overlay.shape[:2] != (crop_h+crop_h%2,crop_w+crop_w%2):
                     raise RuntimeError(f'Missing frame or crop mismatch at frame {f}')
                 im[y0:y1, x0:x1] = overlay[:crop_h,:crop_w]
+                report_preview(im,f,source['frames'],'正在合成完整画面')
                 if f in samples:
                     write_png(folder / f'full-preview-{f:04d}.png', im)
                     previews.append(preview(im))

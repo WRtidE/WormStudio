@@ -7,6 +7,7 @@ const renderPhenotypes=(()=>{
  function draw(){
   const worm=current.worms.find(w=>w.worm_id===selected)||current.worms[0];selected=worm.worm_id;
   el('phenotype-worms').replaceChildren();for(const item of current.worms){const button=add(el('phenotype-worms'),'button','worm-tab',`线虫 ${number(item.worm_id,0)}`);button.type='button';button.setAttribute('aria-pressed',String(item.worm_id===selected));button.onclick=()=>{selected=item.worm_id;draw()}}
+  el('phenotype-worms').hidden=current.worms.length<2;
   el('phenotype-context').textContent=`线虫 ${number(worm.worm_id,0)} · 共 ${number(worm.frames,0)} 帧 · 有效姿态 ${number(worm.valid_frames,0)} 帧 · 有效掩膜 ${number(worm.mask_valid_frames,0)} 帧${current.scale_um_per_px===null?'':` · ${number(current.scale_um_per_px,5)} μm/px`}`;
   el('growth-metrics').replaceChildren();el('motion-metrics').replaceChildren();
   for(const metric of worm.metrics){const card=add(el(metric.group==='growth'?'growth-metrics':'motion-metrics'),'article',`metric-card ${metric.status}`,'');add(card,'span','metric-label',metric.label);const value=add(card,'div','metric-value','');add(value,'strong','',number(metric.value));add(value,'span','metric-unit',metric.unit);if(metric.status==='missing')add(card,'span','metric-status','暂不可用');if(metric.status==='candidate')add(card,'span','metric-status','头端候选结果');if(metric.note)add(card,'p','metric-note',metric.note);add(card,'p','metric-definition',metric.definition)}

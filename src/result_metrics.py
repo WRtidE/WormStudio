@@ -58,7 +58,7 @@ def phenotype_results(folder):
             head_note+=(' 自动候选比较两端渐细程度，并结合端点运动；形状不足时回退运动候选，证据冲突时保留 A/B。' if row.get('head_detection_method')=='head-tail-v4-taper-motion' else '' if row.get('head_detection_method') in ('head-tail-v5-appearance-relative-motion','head-tail-v6-temporal-block-orientation','head-tail-v7-initialized-orientation') else ' 此历史结果采用旧版头尾规则；算法细节见该运行记录。')
             if row.get('head_detection_method') in ('head-tail-v5-appearance-relative-motion','head-tail-v6-temporal-block-orientation'):head_note+=' 当前算法结合灰度外观、相对中体的端部摆动与片段内方向一致性；外观模板由已有定向片段建立，仍可能整体反向。'
             if row.get('head_detection_method')=='head-tail-v6-temporal-block-orientation':head_note+=' 短缺口经整条骨架匹配后共用固定方向种子，局部摆动分歧不会重新选头。'
-            head_note+=' H?/T? 表示候选，H/T 表示人工确认；无需逐帧重复确认。'
+            head_note+=' 画面使用 H/T 表示显示方向，是否已确认请以头尾状态为准；自动候选不等于人工确认。'
             if row.get('head_manual_requested') and not manual:
                 head_note+=' 人工点未能匹配可靠端点，请在清晰帧重新标记头端。'
             reasons=row.get('head_reason_counts',{})

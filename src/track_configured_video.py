@@ -1,7 +1,9 @@
 """Track configured objects from separated anchor frames, on CUDA in both directions."""
 import argparse
+from compute_device import selected_device, inference_context, device_label
 from resource_paths import RESOURCE_ROOT, sam2_checkpoint
 from pipeline_progress import report_progress
+from live_preview import report_tracking
 import csv
 import gc
 import json
@@ -48,11 +50,12 @@ def main():
             for row in csv.DictReader(handle):
                 for k in ('frame','worm_id','area_px','ambiguous_overlap_px'):row[k]=int(row[k])
                 if row['worm_id'] not in changed:rows.append(row)
+    device=selected_device()
     checkpoint=sam2_checkpoint(spec['checkpoint'])
-    print(f'视频跟踪模型：{spec["label"]}；权重：{checkpoint.name}；设备：CUDA',flush=True)
-    model=build_sam2_video_predictor(spec['config'],str(checkpoint),device='cuda',
+    print(f'视频跟踪模型：{spec["label"]}；权重：{checkpoint.name}；设备：{device_label(device)}',flush=True)
+    model=build_sam2_video_predictor(spec['config'],str(checkpoint),device=device,
         hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
-    amp_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    amp_dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
     colors={w:worm_color(w) for w in ids}
     for group_index,group in enumerate(config['groups']):
         report_progress(detail=f'准备分组 {group_index+1}/{len(config["groups"])} 的跟踪数据',force=True)
@@ -61,7 +64,7 @@ def main():
         capture.set(cv2.CAP_PROP_POS_FRAMES,anchor);ok,frame=capture.read()
         if not ok:raise RuntimeError('Missing anchor frame')
         im=frame[y:y1,x:x1];image_predictor=SAM2ImagePredictor(model)
-        with torch.inference_mode(),torch.autocast('cuda',dtype=amp_dtype):
+        with torch.inference_mode(),inference_context(device):
             if any('mask_path' not in worm for worm in group['worms']):
                 image_predictor.set_image(cv2.cvtColor(im,cv2.COLOR_BGR2RGB))
             for worm in group['worms']:
@@ -114,7 +117,7 @@ def main():
             path.write_bytes(cv2.imencode('.jpg',frame[y:y1,x:x1],[cv2.IMWRITE_JPEG_QUALITY,94])[1].tobytes())
         report_progress(detail='视频帧准备完成，正在初始化 SAM2',fraction=(group_index+.15)/len(config['groups']),force=True)
         predictions={}
-        with torch.inference_mode(),torch.autocast('cuda',dtype=amp_dtype):
+        with torch.inference_mode(),inference_context(device):
             state=model.init_state(str(frames),offload_video_to_cpu=True,offload_state_to_cpu=True)
             for w,mask in initial.items():model.add_new_mask(state,frame_idx=anchor,obj_id=w,mask=mask)
             for f,objects in extra_masks.items():
@@ -137,7 +140,9 @@ def main():
                             centroid_x_px=float(xx.mean()+x-cx) if len(xx) else None,
                             centroid_y_px=float(yy.mean()+y-cy) if len(yy) else None,
                             ambiguous_overlap_px=int((mask&other).sum()))
-                    report_progress(len(predictions),n,f'分组 {group_index+1}/{len(config["groups"])} · '+('反向跟踪' if reverse else '正向跟踪'),fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
+                    detail=f'分组 {group_index+1}/{len(config["groups"])} · '+('反向跟踪' if reverse else '正向跟踪')
+                    report_tracking(frames/f'{f:06d}.jpg',current,f,n,detail)
+                    report_progress(len(predictions),n,detail,fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
             del state
         for f in sorted(predictions):rows.extend(predictions[f].values())
         gc.collect();torch.cuda.empty_cache()
@@ -155,8 +160,8 @@ def main():
         measurement_mode=config.get('measurement_mode','physical'),
         sam2_model=spec['size'],model_config=spec['config'],checkpoint=spec['checkpoint'],
         inference_precision=str(amp_dtype).removeprefix('torch.'),
-        mask_overlap_allowed=True,initialization=config['groups'],review_intervals=config.get('review_intervals',[]),device=torch.cuda.get_device_name(),
-        cuda_peak_memory_mb=torch.cuda.max_memory_allocated()/2**20)
+        mask_overlap_allowed=True,initialization=config['groups'],review_intervals=config.get('review_intervals',[]),device=device_label(device),
+        cuda_peak_memory_mb=torch.cuda.max_memory_allocated()/2**20 if device=='cuda' else 0)
     (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(summary,ensure_ascii=False,indent=2),flush=True)
 

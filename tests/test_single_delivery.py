@@ -29,6 +29,18 @@ from video_timing import verify_timebase
 
 
 class SingleDeliveryTests(unittest.TestCase):
+    def test_short_opening_interval_preserves_pts_but_interior_jumps_fail(self):
+        with patch('video_timing.cv2.VideoCapture') as capture:
+            def check(milliseconds):
+                capture.return_value.read.side_effect = [(True,None)]*len(milliseconds)+[(False,None)]
+                capture.return_value.get.side_effect = milliseconds
+                return verify_timebase('clip',len(milliseconds),30)
+            result=check([0,22,55.333333,88.666666,122])
+            self.assertEqual(result['status'],'decoded_pts_short_first_interval')
+            np.testing.assert_allclose(result['timestamps_s'],[0,.022,.055333333,.088666666,.122])
+            for times in ([0,33.333,55.333,88.666,122], [0,80,113.333,146.666,180]):
+                with self.assertRaisesRegex(ValueError,'跳变'): check(times)
+
     def test_explicit_pixels_have_no_physical_calibration(self):
         config=dict(measurement_mode='pixels',scale_um_per_px=99)
         validate_scale(config)

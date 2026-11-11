@@ -1,6 +1,7 @@
 """Optional neural inference; CPU replay does not import torch or SAM2."""
 from pathlib import Path
 import gc
+from contextlib import nullcontext
 import os
 import sys
 import tempfile
@@ -24,7 +25,7 @@ def load_tracker(checkpoint,device):
     from tapnet.tapnextpp.votsp2026.model import TAPNextPP
     torch.manual_seed(0)
     if device=='cuda' and not torch.cuda.is_available():
-        raise RuntimeError('CUDA is unavailable. Cached replay is available on CPU.')
+        raise RuntimeError('CUDA is unavailable. Select device=cpu for CPU inference.')
     model=TAPNextPP.from_checkpoint(path,device=device)
     if device=='cuda':torch.cuda.synchronize()
     return model
@@ -65,13 +66,12 @@ def track(model,frames,points,with_evidence=False,support=None,diagnostics=None)
 
 def segment(config,checkpoint,device):
     path=require_checkpoint(checkpoint)
-    if device!='cuda':
-        raise ValueError('Fresh SAM2 inference currently requires CUDA; use replay for CPU.')
+    if device not in ('cpu','cuda','mps'):raise ValueError('device must be cpu, cuda or mps')
     if os.environ.get('WORMSTUDIO_SAM2_ROOT'):
         sys.path.insert(0,os.environ['WORMSTUDIO_SAM2_ROOT'])
     import torch
     from sam2.build_sam import build_sam2_video_predictor
-    if not torch.cuda.is_available():raise RuntimeError('CUDA is unavailable.')
+    if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDA is unavailable.')
     seed_path=config.get('seed_mask')
     if seed_path is None or not seed_path.is_file():
         raise ValueError('Fresh inference requires a seed_mask PNG in the config.')
@@ -81,7 +81,7 @@ def segment(config,checkpoint,device):
         raise ValueError('seed_mask must be a nonempty binary image matching crop dimensions.')
     model=build_sam2_video_predictor('configs/sam2/sam2_hiera_l.yaml',path,device=device,
         hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
-    dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
     try:
         with tempfile.TemporaryDirectory(prefix='wormstudio-frames-') as temp:
             cap=cv2.VideoCapture(str(config['video']));n=0
@@ -94,7 +94,7 @@ def segment(config,checkpoint,device):
                     (Path(temp)/f'{n:06d}.jpg').write_bytes(encoded.tobytes());n+=1
             finally:cap.release()
             predictions={};anchor=config.get('anchor_frame',0)
-            with torch.inference_mode(),torch.autocast('cuda',dtype=dtype):
+            with torch.inference_mode(),(torch.autocast('cuda',dtype=dtype) if device=='cuda' else nullcontext()):
                 state=model.init_state(temp,offload_video_to_cpu=True,offload_state_to_cpu=True)
                 model.add_new_mask(state,frame_idx=anchor,obj_id=1,mask=seed>0)
                 for reverse in ([False,True] if anchor else [False]):

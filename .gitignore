@@ -30,6 +30,13 @@ local-archive/
 *.npy
 *.npz
 *.zip
+*.whl
+*.dmg
+*.app/
+*.tar.gz
+.DS_Store
+logs/
+.mac-build/
 config/python_path.txt
 config/target_videos.json
 config/evaluation_dataset.json
@@ -52,3 +59,9 @@ docs/*
 !docs/RELEASE.md
 !docs/VALIDATION.md
 !docs/models.json
+
+!docs/FIRST_ANALYSIS.html
+!docs/MAC_FIRST_ANALYSIS.html
+!docs/MACOS.md
+!docs/PORTABLE_RELEASE.md
+!docs/CPU_OPTIMIZATION.md

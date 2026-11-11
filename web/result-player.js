@@ -22,7 +22,7 @@ window.ResultPlayer=(()=>{
     if(!video.videoWidth||!vw||!vh)return;
     box=focus?bounds():null;transform=math.fit(...dimensions(),vw,vh,box);
     el('result-focus-note').textContent=focus?(box?'跟随当前虫体 · 仅调整观察窗口':'本帧无可靠虫体轮廓，显示完整画面'):'滚轮或双指缩放 · 拖动平移 · 双击复位';
-    el('result-focus').setAttribute('aria-pressed',String(focus));apply();
+    el('result-focus').setAttribute('aria-pressed',String(focus));el('result-full').setAttribute('aria-pressed',String(!focus));apply();
   }
   function paint(){
     if(!visible||!transform||video.readyState<2)return;
@@ -69,7 +69,7 @@ window.ResultPlayer=(()=>{
   });
   el('result-zoom-in').onclick=()=>zoom(1.25);el('result-zoom-out').onclick=()=>zoom(.8);
   el('result-fit').onclick=fit;
-  el('result-full').onclick=()=>{focus=false;fit();};el('result-focus').onclick=()=>{focus=!focus;fit();};
+  el('result-full').onclick=()=>{focus=false;fit();};el('result-focus').onclick=()=>{focus=true;fit();};
   el('result-play').onclick=async()=>{if(video.paused){if(video.ended)video.currentTime=0;try{await video.play();}catch{el('result-focus-note').textContent='视频未能播放，请重新读取结果或下载视频。';}}else video.pause();};
   const playLabel=()=>{el('result-play').textContent=video.paused?'播放':'暂停';el('result-play').setAttribute('aria-pressed',String(!video.paused));};
   for(const name of ['play','pause','ended'])video.addEventListener(name,playLabel);

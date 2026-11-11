@@ -1,4 +1,7 @@
-"""Shared public choices for annotation, pipeline routing and result folders."""
+"""Internal routing and legacy result compatibility; Studio has one current profile."""
+CURRENT_METHOD = 'tapnext'
+CURRENT_HEAD_DETECTION = 'taper_seed'
+
 METHODS = {
     'tapnext': {'label': 'SAM2 + TAPNext++（单虫）', 'source': 'centerlines-tapnext'},
     'topology': {'label': '自交保守模式', 'source': 'centerlines-topology'},

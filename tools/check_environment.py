@@ -18,9 +18,10 @@ def main():
     if importlib.util.find_spec('sam2') is None:missing.append('SAM2 source');print('SAM2 source is not installed; see docs/INSTALL.md')
     try:
         import torch
-        if not torch.cuda.is_available():missing.append('CUDA');print('CUDA is unavailable; full inference requires a supported NVIDIA setup')
-        else:print('GPU:',torch.cuda.get_device_name(0))
+        from compute_device import selected_device, device_label
+        print('Device:',device_label(selected_device()))
     except ImportError:pass
+    except RuntimeError as exc:missing.append('device');print(str(exc))
     from tapnext_support import availability
     status=availability();print('TAPNext++:',status['detail'])
     if not status['available']:missing.append('TAPNext++')

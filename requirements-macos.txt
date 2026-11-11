@@ -1,0 +1,5 @@
+# Native Apple Silicon, Python 3.11. Install from PyPI, not the CUDA/CPU wheel index.
+# Candidate Mac environment; native wheel availability and inference require Mac validation.
+torch==2.7.0
+torchvision==0.22.0
+-r requirements.txt

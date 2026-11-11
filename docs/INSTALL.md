@@ -14,7 +14,7 @@ python -m pip install -r requirements.txt
 
 也可自行创建 Python 3.11 虚拟环境。运行包版本保留本机回归所用版本；它不是全平台、带哈希的完整依赖锁。PyTorch 2.7.0 / torchvision 0.22.0 / CUDA 12.8 的组合来源于[官方历史版本表](https://pytorch.org/get-started/previous-versions/)。不同驱动环境需使用相互匹配的官方包并重新验证。
 
-仅运行CPU测试时，用 `requirements-cpu.txt` 替代 CUDA 文件。CPU测试不会证明GPU模型推理可用。
+仅运行CPU测试时，用 `requirements-cpu.txt` 替代 CUDA 文件。CPU 与 GPU 的真实模型推理需分别验证。
 
 ## 2. SAM2源码
 

@@ -80,7 +80,7 @@ class ResultSessionTests(unittest.TestCase):
         with self.post('/api/new-video', {'video_path':str(self.video)}) as response:
             self.assertEqual(json.load(response)['annotation_url'], '/')
         self.assertEqual(self.progress.snapshot()['status'], 'preparing')
-        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'topology')
+        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'tapnext')
         with self.assertRaises(urllib.error.HTTPError) as error:
             self.post('/api/new-video', {'video_path':str(self.video)})
         self.assertEqual(error.exception.code,409)
@@ -123,6 +123,44 @@ class ResultSessionTests(unittest.TestCase):
         self.assertEqual(row['valid_frames'],0)
         self.assertIsNone(row['median_length_um'])
         self.assertIsNone(row['mean_speed_um_s'])
+
+    def test_reopened_result_uses_saved_duration_without_changing_history(self):
+        from workspace_sessions import reopen
+        base=self.root/'outputs'/'saved';folder=base/'phenotypes-centerlines-niu'
+        folder.mkdir(parents=True)
+        (folder/'summary.json').write_text(json.dumps({'worms':[{'frames':6}], 'fps':12}),encoding='utf-8')
+        (base/'pipeline-state.json').write_text(json.dumps({'stages':{'metrics':{'status':'complete'}}}),encoding='utf-8')
+        config=dict(sample='saved',video=str(self.video),centerline_method='niu')
+        record=base/'pipeline-progress.json'
+        cases=[({'sample':'saved','status':'complete','elapsed_seconds':125.5,'finished_at':123456,'device':'saved GPU'},125.5),
+               ({'sample':'other','status':'complete','elapsed_seconds':900},None),
+               ({'sample':'saved','status':'running','elapsed_seconds':40},None),
+               ({'sample':'saved','status':'complete','elapsed_seconds':-1},None),
+               ({'sample':'saved','status':'complete','elapsed_seconds':True},None),
+               ({},None)]
+        for saved,expected in cases:
+            with self.subTest(saved=saved):
+                record.write_text(json.dumps(saved),encoding='utf-8');before=record.read_bytes()
+                self.progress.started=1  # An unrelated previous session must not leak into history.
+                self.progress.data['device']='old GPU'
+                with patch('workspace_sessions.load_config',return_value=(base,config)):
+                    reopen(self.progress,self.root,'saved')
+                result=self.progress.snapshot()
+                self.assertTrue(result['history_reopened'])
+                self.assertEqual(result['elapsed_seconds'],expected)
+                self.assertIsNone(result['preview_run'])
+                self.assertEqual(result['status'],'complete')
+                self.assertEqual(record.read_bytes(),before)
+                self.assertEqual(result['device'],'saved GPU' if expected else '')
+        record.unlink()
+        with patch('workspace_sessions.load_config',return_value=(base,config)):
+            reopen(self.progress,self.root,'saved')
+        self.assertIsNone(self.progress.snapshot()['elapsed_seconds'])
+        self.progress.configure(config,dict(frames=6,ids=[1]),[],base)
+        current=self.progress.snapshot()
+        self.assertFalse(current['history_reopened'])
+        self.assertIsNotNone(current['elapsed_seconds'])
+        self.assertIsNone(current['finished_at'])
 
     def test_changed_mask_gets_new_run_and_keeps_previous_files(self):
         outputs=self.root/'outputs';base=outputs/'same-video';seed=base/'manual-initialization/worm-1.png'

@@ -43,7 +43,8 @@ def draw_hud(image, rows, frame, fps):
     width = image.shape[1]
     scale = min(.55, max(.28, width/1750))
     step = max(16, int(32*scale/.55))
-    lines = [f'Frame {frame} | {frame/fps:.3f}s | green: contour | white: measured | amber dashed: review pose']
+    seconds = rows[0].get('time_s', frame/fps) if rows else frame/fps
+    lines = [f'Frame {frame} | {seconds:.3f}s | green: contour | white: measured | amber dashed: review pose']
     def fmt(value, digits=1):
         return '--' if value is None else f'{value:.{digits}f}'
     for row in rows:
