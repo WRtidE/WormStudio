@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -163,7 +164,7 @@ class ManualAnnotationTests(unittest.TestCase):
         candidates[1, 5:20, 8:25] = True
         predictor.predict.return_value = (candidates, np.array([0.2, 0.9, 0.3]), None)
         annotation.predictor = predictor
-        with patch('torch.cuda.is_available', return_value=True):
+        with patch.dict(os.environ, WORMSTUDIO_DEVICE='cpu'):
             result = annotation.predict(dict(roi=[20, 10, 60, 40],
                 points=[dict(x=30, y=20, label=1)], box=[22, 12, 58, 38]))
         self.assertEqual(result['candidate'], 1)

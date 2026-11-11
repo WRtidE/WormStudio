@@ -769,7 +769,9 @@ def create_server(annotation=None, progress=None):
                         self.respond(409, dict(error='请先停止批处理')); return
                     if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled'):
                         self.respond(409, dict(error='处理仍在进行，请等待完成')); return
-                    self.respond(200, dict(closed=True)); progress.closed.set(); return
+                    progress.closed.set()
+                    self.respond(200, dict(closed=True))
+                    return
                 if annotation is None: self.respond(404, {}); return
                 if self.path not in ('/save', '/predict'): self.respond(404, {}); return
                 if self.headers.get('X-Annotation-Token') != annotation.token:
