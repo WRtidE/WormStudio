@@ -7,7 +7,7 @@ class DeviceTests(unittest.TestCase):
             self.assertEqual(selected_device(),'cpu')
             with inference_context('cpu'):pass
     def test_auto_falls_back(self):
-        with patch.dict(os.environ,WORMSTUDIO_DEVICE='auto'), patch('torch.cuda.is_available',return_value=False):
+        with patch.dict(os.environ,WORMSTUDIO_DEVICE='auto'), patch('torch.cuda.is_available',return_value=False), patch('torch.backends.mps.is_available',return_value=False):
             self.assertEqual(selected_device(),'cpu')
     def test_auto_selects_cuda(self):
         with patch.dict(os.environ,WORMSTUDIO_DEVICE='auto'), patch('torch.cuda.is_available',return_value=True):

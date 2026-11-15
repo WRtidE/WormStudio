@@ -4,12 +4,13 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
 from manual_worm_annotation import create_server
 from pipeline_progress import PipelineProgress
-from worm_pipeline import run_stage
+from worm_pipeline import check_memory_pressure, run_stage
 
 
 class ProgressTests(unittest.TestCase):
@@ -53,6 +54,37 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(state['completed_stages'], 0)
         self.assertIn('expected test failure', state['error'])
         self.assertEqual(state['artifacts'], [])
+
+    def test_memory_pressure_stops_running_stage(self):
+        log = self.base/'pressure.log'
+        self.progress.begin(0, log)
+        command = [sys.executable, '-c', "print('started', flush=True); import time; time.sleep(60)"]
+        with patch('worm_pipeline.check_memory_pressure', side_effect=[None, RuntimeError('内存压力')]):
+            with self.assertRaisesRegex(RuntimeError, '内存压力'):
+                run_stage(dict(name='tracking', command=command), log, self.progress)
+        self.assertIn('started', log.read_text())
+
+    def test_mac_pressure_levels(self):
+        def set_level(name, result, *unused):
+            result._obj.value = level
+            return 0
+
+        with patch('worm_pipeline.sys.platform', 'darwin'), patch('ctypes.CDLL') as library:
+            library.return_value.sysctlbyname.side_effect = set_level
+            for level, warning in [(1, False), (2, True)]:
+                self.assertEqual(check_memory_pressure(), warning)
+            level = 4
+            with self.assertRaisesRegex(RuntimeError, '严重'):
+                check_memory_pressure()
+
+    def test_warning_allows_stage_to_finish(self):
+        log = self.base/'warning.log'
+        self.progress.begin(0, log)
+        command = [sys.executable, '-c', "import time; time.sleep(1.5); print('finished')"]
+        with patch('worm_pipeline.check_memory_pressure', return_value=True):
+            run_stage(dict(name='tracking', command=command), log, self.progress)
+        self.assertEqual(log.read_text().count('警告级别'), 1)
+        self.assertIn('finished', log.read_text())
 
     def test_stale_or_incomplete_event_does_not_break_tracking(self):
         self.progress.begin(0, self.base/'one.log')

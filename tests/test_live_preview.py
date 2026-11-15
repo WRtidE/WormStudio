@@ -12,7 +12,7 @@ import urllib.error
 import cv2
 import numpy as np
 
-from live_preview import report_preview, report_geometry, preview_batch
+from live_preview import report_preview, report_geometry, report_tracking, preview_batch
 from pipeline_progress import PipelineProgress
 from manual_worm_annotation import create_server
 from worm_pipeline import run_stage
@@ -68,6 +68,42 @@ class LivePreviewTests(unittest.TestCase):
         with patch('cv2.imencode', side_effect=OSError('disk/encoder unavailable')):
             self.assertFalse(report_preview(image, 0, 3))
         self.assertEqual(self.progress.preview(self.progress.run_id)['latest'], 1)
+
+    def test_tracking_focus_preserves_raw_pixels_and_aligns_with_nested_crop(self):
+        raw = np.full((120, 200, 3), 110, np.uint8)
+        masks = {1: np.zeros((30, 40), bool), 2: np.zeros((30, 40), bool)}
+        masks[2][10:, 25:] = True
+        reader = unittest.mock.Mock()
+        reader.read.return_value = raw
+        self.assertTrue(report_tracking(None, masks, 2, 3, '', reader=reader, offset=(160, 90)))
+        reader.read.assert_called_once_with(2)
+        record = self.progress.preview(self.progress.run_id)['frames'][0]
+        self.assertEqual(record['focus']['worm'], 2)
+        x, y, w, h = record['focus']['rect']
+        self.assertAlmostEqual(x + w, 1)
+        self.assertAlmostEqual(y + h, 1)
+        self.progress.bind_server(create_server(progress=self.progress))
+        url = self.progress.url.removesuffix('/progress') + '/api/live-preview?run=' + self.progress.run_id
+        def image(suffix):
+            with urllib.request.urlopen(url + '&sequence=1' + suffix) as response:
+                return cv2.imdecode(np.frombuffer(response.read(), np.uint8), cv2.IMREAD_COLOR)
+        overview, tiles = image(''), image('&view=focus')
+        self.assertEqual(overview.shape, raw.shape)
+        clean, outlined = np.hsplit(tiles, 2)
+        self.assertEqual(clean.shape[:2], (round(h*120), round(w*200)))
+        np.testing.assert_allclose(clean, 110, atol=2)
+        self.assertGreater(np.abs(clean.astype(int) - outlined).max(), 50)
+        self.assertTrue(np.all(raw == 110))
+
+    def test_empty_mask_or_unavailable_focus_still_publishes_current_overview(self):
+        image = np.zeros((60, 40, 3), np.uint8)
+        mask = np.zeros(image.shape[:2], bool)
+        self.assertTrue(report_geometry(mask, None, 0, 3, image=image))
+        with patch('live_preview.focus_patch', side_effect=OSError('missing mask')):
+            self.assertTrue(report_preview(image, 1, 3, raw=image))
+        items = self.progress.preview(self.progress.run_id)['frames']
+        self.assertEqual([item['frame'] for item in items], [0, 1])
+        self.assertTrue(all('focus' not in item for item in items))
 
     def test_sequence_continues_across_real_stage_processes(self):
         for stage in range(2):

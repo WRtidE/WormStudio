@@ -17,7 +17,7 @@ from pipeline_progress import PipelineProgress
 class BatchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.queue = BatchQueue(self.root / 'batch.json')
 
     def tearDown(self):

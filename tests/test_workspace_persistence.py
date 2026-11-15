@@ -17,7 +17,7 @@ from pipeline_progress import PipelineProgress
 class WorkspacePersistenceTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='worm-library-')
-        self.root=Path(self.temp.name)
+        self.root=Path(self.temp.name).resolve()
 
     def tearDown(self): self.temp.cleanup()
 
@@ -56,6 +56,22 @@ class WorkspacePersistenceTests(unittest.TestCase):
         folder=self.root/'config';folder.mkdir();index=folder/'workspace.local.json';index.write_text('{broken')
         with self.assertRaises(ValueError): library.upload(self.root,io.BytesIO(b'x'),1,'a.txt')
         self.assertEqual(index.read_text(),'{broken')
+
+    def test_remove_history_only_hides_the_selected_row_after_refresh(self):
+        from workspace_sessions import catalog, remove_history_entry
+        video = self.root/'sample.mp4'
+        video.write_bytes(b'video')
+        for sample in ('first', 'second'):
+            output = self.root/'outputs'/sample
+            output.mkdir(parents=True)
+            (output/'pipeline-config.json').write_text(json.dumps(dict(sample=sample, video=str(video))))
+        remove_history_entry(self.root, 'first')
+        remove_history_entry(self.root, 'first')
+        data = catalog(self.root)
+        self.assertEqual([r['sample'] for r in data['history']], ['second'])
+        self.assertEqual({r['sample'] for r in data['runs']}, {'first', 'second'})
+        self.assertEqual(library.listing(self.root)['files'][0]['path'], str(video))
+        self.assertEqual(video.read_bytes(), b'video')
 
     def test_draft_latest_is_atomic_bounded_and_frame_specific(self):
         annotation=SimpleNamespace(identity={'video':'v.mp4','frame':3},output=self.root/'outputs/run/manual-initialization')

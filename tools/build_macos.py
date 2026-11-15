@@ -53,6 +53,9 @@ def build(output, models):
         path = models/item['filename']
         if not path.is_file() or digest(path) != item['sha256']:
             raise ValueError('模型缺失或校验失败：'+str(path))
+    sys.path.insert(0, str(ROOT/'src'))
+    from electron_desktop import runtime_dir
+    desktop_runtime = runtime_dir()
     from export_source import source_files
     files = source_files()
     output.mkdir(parents=True)
@@ -61,6 +64,7 @@ def build(output, models):
         target = app/source.relative_to(ROOT)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    shutil.copytree(desktop_runtime, app/desktop_runtime.relative_to(ROOT), symlinks=True)
     (app/'models').mkdir()
     for item in manifest.values():
         shutil.copy2(models/item['filename'], app/'models'/item['filename'])

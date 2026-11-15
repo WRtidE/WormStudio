@@ -14,6 +14,12 @@ def present_frame(row):
     confirmed = head and flag(row, 'head_identity_confirmed')
     method=row.get('head_detection_status',row.get('head_status',''))
     candidate=posture and (method in ('unconfirmed_twardis_motion_candidate','unconfirmed_taper_candidate','unconfirmed_relative_motion_candidate','unconfirmed_appearance_candidate','unconfirmed_temporal_candidate','candidate') or (head and not confirmed))
+    if (row.get('head_reason') in ('two_sided_contact_orientation', 'loop_review_temporal_endpoint') and flag(row,'identity_valid')
+            and row.get('display_source')=='diagnostic_candidate'):
+        candidate=True
+    if (row.get('head_reason') in ('tracked_endpoint_order', 'appearance_temporal_reference') and row.get('endpoint_order_block') not in (None,'') and flag(row, 'mask_valid')
+            and flag(row, 'identity_valid') and flag(row, 'display_valid')):
+        candidate = True
     def value(key, valid):
         return number(row.get(key)) if valid else None
     result = dict(
@@ -28,6 +34,8 @@ def present_frame(row):
         length_um=value('length_um', posture), area_um2=value('area_um2', mask),
         volume_um3=value('volume_estimate_um3', allowed['volume']),
         mean_width_um=value('mean_width_um', posture), speed_um_s=value('speed_um_s', allowed['motion']),
+        length_width_ratio=value('length_width_ratio', posture), speed_bl_s=value('speed_bl_s', allowed['motion']),
+        body_extension=value('body_extension', posture),
         head_angle_deg=value('head_candidate_angle_smoothed_deg', head),
         head_status='人工已确认 · 当前可靠片段' if confirmed else '自动候选 · 可选复核' if candidate else '无法自动判断',
         head_candidate=candidate,head_method=method,
@@ -39,10 +47,22 @@ def present_frame(row):
         head_temporal_conflict=flag(row,'head_temporal_conflict'),head_temporal_changed=flag(row,'head_temporal_changed'),
         head_local_reason=row.get('head_local_reason',''),
         head_segment=number(row.get('head_segment')),
+        endpoint_order_block=number(row.get('endpoint_order_block')),
+        endpoints_unlinked=('endpoint_order_block' in row and row['endpoint_order_block'] in ('',None)),
         head_review_allowed=posture and row.get('centerline_topology','simple')=='simple' and not flag(row,'endpoint_a_inferred') and not flag(row,'endpoint_b_inferred'),
         endpoint_labels=['H','T'] if confirmed else ['H?','T?'] if candidate else ['A','B'],
         head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown')
+    result['self_contact_state'] = row.get('self_contact_state')
+    refs = row.get('head_trajectory_frames')
+    if isinstance(refs, str):
+        refs = json.loads(refs) if refs else []
+    result['head_trajectory_frames'] = refs or []
     result['measurement_mode'] = row.get('measurement_mode','physical')
+    from measurement_units import metric_key
+    curvature_key = metric_key('midbody_abs_curvature_per_um', row)
+    result[curvature_key] = value(curvature_key, posture)
+    if row.get('contact_bridge'):
+        result['contact_bridge']=json.loads(row['contact_bridge'])
     result.update(display_valid=flag(row,'display_valid'),display_source=row.get('display_source','legacy'),
         display_inside_fraction=number(row.get('display_inside_fraction')),display_reason=row.get('display_reason',''))
     try:

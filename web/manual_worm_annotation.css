@@ -21,8 +21,6 @@
 ol.calibration-guide{padding-left:20px}
 .calibration summary{font-size:12px;font-weight:600;color:var(--ink);line-height:1.7}
 .required-tag{color:#795316;background:#fff2d6}
-.scale-feedback{font-size:12px;line-height:1.7;margin-top:10px;color:#815614}
-.scale-feedback.complete{color:#47643b}
 .readiness-card{border:1px solid #dce3d1;background:#f8faf4;border-radius:10px;padding:13px;margin-bottom:24px}
 .readiness-card .section-title{margin-bottom:8px}
 .readiness-row{display:flex;width:100%;align-items:center;justify-content:space-between;gap:8px;text-align:left;border:0;border-top:1px solid #e3e8db;border-radius:0;background:transparent;padding:11px 0;font-size:12px;line-height:1.5;color:#704e1c}
@@ -34,7 +32,6 @@ ol.calibration-guide{padding-left:20px}
 .annotation-footer>div.action-guidance:first-child{display:block;flex:1;min-width:200px;color:#536047;font-size:12px;line-height:1.6}
 .action-guidance strong{font-size:13px;font-weight:600;color:#35462d}
 .action-guidance p{margin:3px 0;color:#59634f;font-size:12px;max-width:760px}
-.action-guidance #footer-status{font-size:10px;color:#737a6b}
 .annotation-footer.needs-attention{background:#fffcf5;border-top-color:#e3d6b6}
 .annotation-footer.needs-attention .action-guidance strong{color:#795316}
 .annotation-footer .footer-actions{align-items:center;flex-wrap:wrap;margin-left:auto;gap:8px}

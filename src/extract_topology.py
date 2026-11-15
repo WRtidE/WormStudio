@@ -4,11 +4,12 @@ import numpy as np
 from analyze_phenotypes import ROOT,load_sample,json_safe
 from crossing_centerline import resolve_sequence,VERSION,DEFAULTS
 from pipeline_progress import report_progress
-from live_preview import report_geometry
+from live_preview import PreviewCrop, report_geometry
 
 
 def run(sample,worm_filter=None):
     data,source,ids,get_mask,bad=load_sample(sample)
+    preview_crop = PreviewCrop(source)
     folder=ROOT/'outputs'/sample/'centerlines-topology';folder.mkdir(exist_ok=True)
     (folder/'mask-source.json').write_text(json.dumps(dict(mask_source=str(data.resolve()))),encoding='utf-8')
     for worm in ids:
@@ -21,7 +22,7 @@ def run(sample,worm_filter=None):
         report_progress(detail='比较交叉遍历顺序、前后姿态与候选差距',fraction=.2,force=True)
         points,quality,diagnostic=resolve_sequence(masks,valid,source['fps'])
         for frame, (mask, line, check) in enumerate(zip(masks, points, quality)):
-            report_geometry(mask,line,frame,len(masks),'序列求解完成 · 可靠中线' if check['centerline_valid'] else '序列求解完成 · 中线待复核',accepted=check['centerline_valid'])
+            report_geometry(mask,line,frame,len(masks),'序列求解完成 · 可靠中线' if check['centerline_valid'] else '序列求解完成 · 中线待复核',accepted=check['centerline_valid'], reader=preview_crop, worm=worm)
         target=folder/f'worm-{worm}';target.mkdir(exist_ok=True)
         np.save(target/'centerlines.npy',points)
         np.save(target/'diagnostic-candidates.npy',diagnostic)

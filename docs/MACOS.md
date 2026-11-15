@@ -1,6 +1,6 @@
 # Apple 芯片 macOS 适配
 
-这里是 GitHub 源码仓库。桌面开发和 Finder 应用共用同一个 WebKit 窗口入口，识别仍由本地 Python 后端完成。离线版包含权重和运行环境；Git 仓库不包含它们。当前已在 Windows 校验 Mac 分发组件，并验证练习视频的 CPU 后端；Mac 上的 GUI 和端到端流程仍待验收。
+这里是 GitHub 源码仓库。桌面开发和 Finder 应用共用同一套 Electron 窗口与菜单，识别仍由本地 Python 后端完成。离线版包含权重和运行环境；Git 仓库不包含它们。源码开发入口和本机 Finder 启动器使用当前项目的 Python 环境。
 
 ## 从 GitHub 克隆后开始开发
 
@@ -29,23 +29,30 @@ python -c "from tools.create_practice_video import create; create('input_videos/
 python tools/macos/run_dev.py
 ```
 
+开发入口和 Finder 桌面应用默认自动选择计算设备。在 Apple 芯片 Mac 上，PyTorch 能使用 MPS 时，SAM2 和 TAPNext++ 会使用 Apple GPU，否则使用 CPU。进度页会显示本次选择的设备。桌面入口允许个别缺少 MPS 实现的算子回到 CPU；骨架、时序融合、指标和视频导出继续使用原有实现。需要整段使用 CPU 时，在源码目录运行 `WORMSTUDIO_DEVICE=cpu .venv/bin/python tools/macos/run_dev.py`。
+
 用文件导入选择 `input_videos/practice/practice.avi`；选择完整画面和像素单位，在深色虫体内点一下，确认轮廓并开始处理。重复开发时只需激活环境并运行桌面入口，不要重复生成同名练习视频。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
 
 | 要改的部分 | 入口 |
 | --- | --- |
-| 窗口、菜单与启动 | [desktop.py](../tools/macos/desktop.py)、[开发入口](../tools/macos/run_dev.py) |
+| 窗口、菜单与启动 | [Electron 主进程](../tools/electron/main.cjs)、[开发入口](../tools/macos/run_dev.py) |
 | 工作台页面和交互 | [web 目录](../web) |
 | 分析流程与子进程 | [worm_pipeline.py](../worm_pipeline.py)、[src 目录](../src) |
 | 单虫跟踪和指标 | [single-worm-methods](../packages/single-worm-methods) |
 
-运行 `python run_tests.py`。单虫子包测试另用 `PYTHONPATH=packages/single-worm-methods python -m unittest discover -s packages/single-worm-methods/tests`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务只检查依赖、原生模块和平台路由，不下载权重，不能代替实际视频验收。
+运行 `python run_tests.py`。单虫子包测试另用 `PYTHONPATH=packages/single-worm-methods python -m unittest discover -s packages/single-worm-methods/tests`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务只检查依赖、原生模块和平台路由，不下载模型权重，不能代替实际视频验收。
+
+## 为当前项目安装 Finder 启动器
+
+安装 Python 环境后，使用下节下载的 Electron arm64 ZIP 运行 `python tools/macos/build_desktop_app.py .mac-build/electron/electron-v45.3.0.zip`。生成的 `~/Applications/WormStudio.app` 使用当前项目的视频、配置和结果。修改 Electron 主进程后重新运行构建命令，修改网页或 Python 代码后重启应用即可。
 
 ## 重建 Finder 离线应用
 
 以下在已完成上述准备的 Mac 上执行。从固定上游发布下载 CPython，打包器会再次验证其 SHA-256。wheel 获取脚本按清单选取支持 macOS 14 arm64 的文件，并校验 PyPI 摘要。纯 Python 源码包在构建机上生成 wheel。
 
 ```bash
-mkdir -p .mac-build/wheels dist
+mkdir -p .mac-build/wheels .mac-build/electron dist
+curl -fL --retry 3 'https://github.com/electron/electron/releases/download/v45.3.0/electron-v45.3.0-darwin-arm64.zip' -o .mac-build/electron/electron-v45.3.0.zip
 curl -fL --retry 3 'https://github.com/astral-sh/python-build-standalone/releases/download/20260325/cpython-3.11.15%2B20260325-aarch64-apple-darwin-install_only_stripped.tar.gz' -o .mac-build/python.tar.gz
 python tools/macos/fetch_wheels.py tools/macos/pins.txt .mac-build/wheels
 python tools/macos/package_app.py .mac-build models resources/sam2 input_videos/practice/practice.avi dist/WormStudio-Mac-arm64.zip
@@ -78,12 +85,12 @@ python tools/build_macos.py --models models --output ../WormStudio-Mac-arm64
 
 ## 实机验收后再交付
 
-把构建目录复制到一个包含空格/中文的新路径，退出 Conda，然后双击启动软件.command。首次启动修复便携环境路径；将目录放到最终位置后再首次运行。无需让实验人员安装 Python 或运行安装命令。默认 CPU；试验性Metal加速.command 是显式 MPS 入口，不会被 auto 自动启用。MPS 使用 float32，启用 PyTorch 不支持算子的 CPU 回退；这不能保证所有算子或整段流程兼容。
+把 Conda 便携目录复制到一个包含空格/中文的新路径，退出 Conda，然后双击启动软件.command。首次启动修复便携环境路径；将目录放到最终位置后再首次运行。此便携包的“启动软件.command”显式选择 CPU，“试验性Metal加速.command”显式选择 MPS。
 
 验收步骤：导入合成练习视频，点选分割并确认，使用像素单位，完成 SAM2/TAPNext/指标/视频导出，重新解码导出视频、读取 CSV，关闭后重开历史结果。然后用真实视频短片分别验证 CPU 和 MPS；记录 Mac 型号、内存、macOS/Python/PyTorch 版本、耗时、结果差异。只有端到端实际完成才能把 BUILD_STATUS.json 中 NOT_YET_VALIDATED 改为通过。
 
 MPS 报错时关闭软件，再用默认 CPU 入口启动；不在已运行任务中静默改变设备。MPS 未通过时只交付 CPU 入口。长视频的内存和耗时需另行测量。
 
-此段的 `.command` 和 Metal 入口仅适用于 Conda 便携目录。上面的 Finder 应用默认使用 CPU。
+此段的两个 `.command` 入口仅适用于 Conda 便携目录。
 
 官方依据：[PyTorch 历史安装版本](https://pytorch.org/get-started/previous-versions/)、[SAM2 macOS CPU/MPS demo](https://github.com/facebookresearch/sam2/blob/main/demo/README.md)、[MPS 环境变量](https://docs.pytorch.org/docs/2.15/mps_environment_variables.html)。上游支持不等于本项目整套流程已通过实机验证。

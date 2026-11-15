@@ -1,11 +1,14 @@
 """Image-supported display poses, independent of scientific measurement gates."""
 import numpy as np
 from scipy import ndimage
+from scipy.spatial import cKDTree
 from skimage.graph import route_through_array
+from skimage.morphology import skeletonize
+from endpoint_order import sampled
 from quality_schema import permissions, flag
 from centerline_topology import geometry_quality
 
-VERSION = 'display-centerlines-v2-mask-geometry-supported'
+VERSION = 'display-centerlines-v4-solid-review'
 
 
 def dense_points(p):
@@ -66,6 +69,82 @@ def supported_curve(points, mask, reference_length=None):
     return result if inside_fraction(result,mask)>=.999 and plausible_curve(result,reference_length) else None
 
 
+def mask_guided_review(mask, left, right, fraction):
+    """Fit a neighbouring posture to this frame's medial pixels for display."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return None
+    origin = np.maximum([xs.min()-3, ys.min()-3], 0)
+    x, y = origin
+    local = mask[y:ys.max()+4, x:xs.max()+4].astype(bool)
+    skeleton = skeletonize(local)
+    medial = np.argwhere(skeleton)[:, ::-1]
+    if len(medial) < 2:
+        return None
+    a, b = sampled(left), sampled(right)
+    if a is None or b is None:
+        return None
+    a, b = a-origin, b-origin
+    if np.mean((a-b[::-1])**2) < np.mean((a-b)**2):
+        b = b[::-1]
+    length = np.mean([np.linalg.norm(np.diff(p, axis=0), axis=1).sum() for p in (a,b)])
+    guide = (1-fraction)*a + fraction*b
+    tree = cKDTree(medial)
+    if np.mean(tree.query(guide)[0]) > .10*length:
+        return None
+    degree = ndimage.convolve(skeleton.astype(int),np.ones((3,3),int),mode='constant')-skeleton
+    tips = np.argwhere(skeleton & (degree == 1))[:, ::-1]
+    ramp = np.maximum(1 - np.arange(len(guide))/20, 0)[:, None]
+    best, best_cost = None, np.inf
+    # Around self-contact, interpolation can cut across a loop. Try both
+    # neighbouring loop shapes as well and rank by current skeleton coverage.
+    for t in (fraction, fraction*.4, 1-(1-fraction)*.4):
+        p = (1-t)*a + t*b
+        if len(tips):
+            for end, weight in ((0,ramp),(-1,ramp[::-1])):
+                distances = np.linalg.norm(tips-guide[end],axis=1)
+                if distances.min() <= .055*length:
+                    p += weight*(tips[distances.argmin()] - p[end])
+        for step in range(14):
+            correction = medial[tree.query(p)[1]] - p
+            p += .7*ndimage.gaussian_filter1d(correction,max(.6,3-.21*step),axis=0,mode='nearest')
+        line = supported_curve(p,local,length)
+        if line is None:
+            continue
+        dense = dense_points(line)
+        coverage = cKDTree(dense).query(medial)[0]
+        line_length = np.linalg.norm(np.diff(line,axis=0),axis=1).sum()
+        cost = (2*np.mean(coverage) + .12*abs(line_length-length)
+                + .10*np.linalg.norm(p-guide,axis=1).mean())
+        if cost < best_cost:
+            best_cost, best = cost, line + origin
+    return best
+
+
+def fill_display_gaps(rows, output, get_mask):
+    """Use two bracketing display poses for gaps of one or two frames."""
+    by_key = {(int(r['worm_id']),int(r['frame'])): r for r in rows}
+    anchors = set(output)
+    for (worm,frame), row in by_key.items():
+        if (worm,frame) in anchors or row.get('display_reason') != 'no_supported_curve':
+            continue
+        left = next((f for f in (frame-1,frame-2) if (worm,f) in anchors),None)
+        right = next((f for f in (frame+1,frame+2) if (worm,f) in anchors),None)
+        if left is None or right is None or right-left > 3:
+            continue
+        span = [by_key.get((worm,f)) for f in range(left,right+1)]
+        if not all(r and flag(r,'source_valid') and flag(r,'mask_valid') and flag(r,'identity_valid')
+                   and r.get('identity_segment') == row.get('identity_segment') for r in span):
+            continue
+        mask = get_mask(worm,frame)
+        line = mask_guided_review(mask,output[worm,left],output[worm,right],(frame-left)/(right-left))
+        if line is not None:
+            output[worm,frame] = line
+            row.update(display_source='temporal_mask_review',display_valid=True,
+                       display_inside_fraction=inside_fraction(line,mask),
+                       display_reason='current_mask_and_bracketing_poses',display_version=VERSION)
+
+
 def build_display(rows, formal_lines, candidates, get_mask, fallback):
     """Return display vertices and add provenance only; never change metric gates."""
     output={};references={}
@@ -104,4 +183,5 @@ def build_display(rows, formal_lines, candidates, get_mask, fallback):
         output[key]=q
         row.update(display_valid=True,display_source=source,display_inside_fraction=inside_fraction(q,mask),
             display_reason='review_only_current_mask' if flag(row,'mask_valid') else 'mask_and_pose_review')
+    fill_display_gaps(rows,output,get_mask)
     return output

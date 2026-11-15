@@ -12,7 +12,7 @@ from analyze_phenotypes import ROOT,load_sample,write_png
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--sample',required=True);args=parser.parse_args()
-    data,summary,ids,get_mask,_=load_sample(args.sample,apply_guards=False)
+    data,summary,ids,get_mask,_=load_sample(args.sample,ROOT/'outputs'/args.sample/'sam2-tracking',apply_guards=False)
     with (data/'frame_metrics.csv').open() as handle:old=list(csv.DictReader(handle))
     reference={w:reference_area([int(r['area_px']) for r in old if int(r['worm_id'])==w]) for w in ids}
     rows=[];changes=[]

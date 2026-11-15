@@ -10,7 +10,22 @@ const renderPhenotypes=(()=>{
   el('phenotype-worms').hidden=current.worms.length<2;
   el('phenotype-context').textContent=`线虫 ${number(worm.worm_id,0)} · 共 ${number(worm.frames,0)} 帧 · 有效姿态 ${number(worm.valid_frames,0)} 帧 · 有效掩膜 ${number(worm.mask_valid_frames,0)} 帧${current.scale_um_per_px===null?'':` · ${number(current.scale_um_per_px,5)} μm/px`}`;
   el('growth-metrics').replaceChildren();el('motion-metrics').replaceChildren();
-  for(const metric of worm.metrics){const card=add(el(metric.group==='growth'?'growth-metrics':'motion-metrics'),'article',`metric-card ${metric.status}`,'');add(card,'span','metric-label',metric.label);const value=add(card,'div','metric-value','');add(value,'strong','',number(metric.value));add(value,'span','metric-unit',metric.unit);if(metric.status==='missing')add(card,'span','metric-status','暂不可用');if(metric.status==='candidate')add(card,'span','metric-status','头端候选结果');if(metric.note)add(card,'p','metric-note',metric.note);add(card,'p','metric-definition',metric.definition)}
+  for(const metric of worm.metrics){
+    const group=metric.group==='growth'?'growth-metrics':'motion-metrics';
+    const card=add(el(group),'article',`metric-card ${metric.status}`,'');
+    add(card,'span','metric-label',metric.label);
+    const value=add(card,'div','metric-value','');
+    add(value,'strong','',number(metric.value,metric.key.includes('curvature')?6:3));
+    add(value,'span','metric-unit',metric.unit);
+    if(metric.status==='missing')add(card,'span','metric-status','暂不可用');
+    if(metric.status==='candidate')add(card,'span','metric-status','头端候选结果');
+    const coverage=[];
+    if(metric.valid_frames!=null)coverage.push(`有效 ${number(metric.valid_frames,0)} / ${number(worm.frames,0)} 帧`);
+    if(metric.valid_duration_s!=null)coverage.push(`有效观察 ${number(metric.valid_duration_s,3)} 秒`);
+    if(coverage.length)add(card,'p','metric-coverage',coverage.join(' · '));
+    if(metric.note)add(card,'p','metric-note',metric.note);
+    add(card,'p','metric-definition',metric.definition);
+  }
   el('phenotype-context').textContent+=' · '+(worm.identity_note||'');
   el('head-result').textContent=worm.head.label;el('head-note').textContent=worm.head.note;
   el('activity-result').textContent=worm.activity.label;el('activity-note').textContent=worm.activity.provisional?'暂定分类，仅供复核；PPT 中的 A/B/C 阈值仍待确定。':'保留当前不可分类状态，不强行归入 A/B/C。';

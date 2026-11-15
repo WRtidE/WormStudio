@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 
 from frame_metrics import present_frame
+from quality_schema import flag
 
 CONTOUR = (55, 220, 55)
 CENTERLINE = (250, 250, 250)
@@ -22,17 +23,26 @@ def draw_worm(image, mask, points, row):
     if points is None: return
     points = np.rint(points).astype(np.int32)
     valid = view['posture_valid'] and row.get('display_source','formal')=='formal'
-    if valid:
-        cv2.polylines(image, [points], False, CENTERLINE, 1, cv2.LINE_AA)
-    else:
-        for k in range(len(points)-1):
-            if k % 8 < 4:
-                cv2.line(image, tuple(points[k]), tuple(points[k+1]), UNCERTAIN, 2, cv2.LINE_AA)
-    # Display names are fixed; confirmation is reported separately in the HUD/UI.
-    labels = ('H','T')
+    cv2.polylines(image, [points], False, CENTERLINE, 1, cv2.LINE_AA)
+    if 'self_contact_state' in row:
+        point_color = (43, 213, 255)
+        for point in points:
+            cv2.circle(image, tuple(point), 1, point_color, -1, cv2.LINE_AA)
+        for index, label, endpoint in zip((0,-1), view['endpoint_labels'], ('a','b')):
+            color = ((42,76,246) if label.startswith('H') else (225,161,0)
+                     if label.startswith('T') else (210,210,210))
+            xy = tuple(points[index])
+            filled = valid and not flag(row, f'endpoint_{endpoint}_inferred')
+            cv2.circle(image, xy, 4, color, -1 if filled else 1, cv2.LINE_AA)
+            cv2.putText(image, label, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
+        return
+    labels = view['endpoint_labels']
+    if 'endpoint_order_block' in row and row['endpoint_order_block'] in ('', None):
+        for point in points[[0,-1]]:
+            cv2.circle(image, tuple(point), 4, (170,170,170), -1, cv2.LINE_AA)
+        return
     for index, label, color in [(0, labels[0], (255,200,0)), (-1, labels[1], (0,110,255))]:
         # Endpoint identity is distinguished by color even before head confirmation.
-        # Amber dashes describe pose quality, not head confirmation.
         xy = tuple(points[index])
         cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
         cv2.putText(image, label, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
@@ -44,7 +54,9 @@ def draw_hud(image, rows, frame, fps):
     scale = min(.55, max(.28, width/1750))
     step = max(16, int(32*scale/.55))
     seconds = rows[0].get('time_s', frame/fps) if rows else frame/fps
-    lines = [f'Frame {frame} | {seconds:.3f}s | green: contour | white: measured | amber dashed: review pose']
+    lines = [f'Frame {frame} | {seconds:.3f}s | green: contour | white: centerline | REVIEW: check pose']
+    if rows and 'self_contact_state' in rows[0]:
+        lines[0] = f'Frame {frame} | {seconds:.3f}s | green: contour | yellow: 101 points | red H: head | blue T: tail | A/B: unidentified'
     def fmt(value, digits=1):
         return '--' if value is None else f'{value:.{digits}f}'
     for row in rows:

@@ -37,10 +37,10 @@ class ManualAnnotationTests(unittest.TestCase):
 
     def test_current_profile_overrides_legacy_choices_without_changing_masks(self):
         annotation=manual.Annotation(dict(self.settings,analysis_profile='current'))
-        self.assertEqual(annotation.initial_state()['analysis_method'],'tapnext')
-        with patch('tapnext_support.resources'),patch('tapnext_support.dependency_path'):
+        self.assertEqual(annotation.initial_state()['analysis_method'],'self_contact')
+        with patch('tapnext_support.resources',side_effect=AssertionError('unused tracker')):
             annotation.save(dict(self.body,centerline_method='niu',head_detection='twardis'))
-        self.assertEqual(annotation.result['centerline_method'],'tapnext')
+        self.assertEqual(annotation.result['centerline_method'],'self_contact')
         self.assertEqual(annotation.result['head_detection'],'taper_seed')
         saved=cv2.imread(annotation.result['groups'][0]['worms'][0]['mask_path'],0)
         np.testing.assert_array_equal(saved,self.mask[5:55,5:95])
@@ -163,6 +163,7 @@ class ManualAnnotationTests(unittest.TestCase):
         candidates = np.zeros((3, 30, 40), dtype=bool)
         candidates[1, 5:20, 8:25] = True
         predictor.predict.return_value = (candidates, np.array([0.2, 0.9, 0.3]), None)
+        annotation = manual.MaskPredictor(annotation.image, annotation.model_size)
         annotation.predictor = predictor
         with patch.dict(os.environ, WORMSTUDIO_DEVICE='cpu'):
             result = annotation.predict(dict(roi=[20, 10, 60, 40],
@@ -197,12 +198,29 @@ class ManualAnnotationTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); worker.join()
 
+    @unittest.skipUnless(manual.sys.platform == 'darwin', 'Mac annotation worker')
+    def test_annotation_worker_is_reused_and_releases_on_frame_change(self):
+        annotation = manual.Annotation(self.settings)
+        try:
+            with self.assertRaisesRegex(ValueError, '正点'):
+                annotation.predict({})
+            pid = annotation.worker.pid
+            with self.assertRaisesRegex(ValueError, '正点'):
+                annotation.predict({})
+            self.assertEqual(annotation.worker.pid, pid)
+        finally:
+            annotation.release_predictor()
+        self.assertIsNone(annotation.worker)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+
     def test_click_refinement_is_isolated_per_worm_and_revision(self):
         annotation=manual.Annotation(self.settings)
         predictor=MagicMock()
         masks=np.ones((3,60,100),dtype=bool)
         logits=np.stack([np.full((256,256),i,dtype=np.float32) for i in range(3)])
         predictor.predict.return_value=(masks,np.array([.3,.9,.5]),logits)
+        annotation = manual.MaskPredictor(annotation.image, annotation.model_size)
         annotation.predictor=predictor
         p1=[dict(x=30,y=20,label=1)]
         first=annotation.predict(dict(worm_id=9,points=p1))

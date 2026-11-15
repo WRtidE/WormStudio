@@ -65,3 +65,5 @@ docs/*
 !docs/MACOS.md
 !docs/PORTABLE_RELEASE.md
 !docs/CPU_OPTIMIZATION.md
+
+.electron-runtime/

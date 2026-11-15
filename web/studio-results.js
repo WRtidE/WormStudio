@@ -19,7 +19,9 @@ window.StudioResults = (() => {
     crossing_without_two_reliable_anchors:'缺少自交前后的可靠姿态', ambiguous_branch_pairing:'自交走向无法唯一确定',
     unresolved_self_contact_or_missing_tips:'自接触或端点不可见'};
   const metrics = [['length_um','体长','μm'],['area_um2','面积','μm²'],['volume_um3','体积估算','μm³'],
-    ['mean_width_um','平均体宽','μm'],['speed_um_s','质心速度','μm/s'],['head_angle_deg','头部弯曲角','°']];
+    ['mean_width_um','平均体宽','μm'],['body_extension','身体伸展度',''],
+    ['length_width_ratio','长宽比',''],['speed_bl_s','体长归一化速度','体长/s'],
+    ['midbody_abs_curvature_per_um','中段绝对曲率','μm⁻¹'],['speed_um_s','质心速度','μm/s'],['head_angle_deg','头部弯曲角','°']];
   let latest = null, key = '', timeline = null, worm = null, position = 0, pending = null;
   let controller = null, revision = 0, ranges = [], visible = false, headAnchors = {};
   let identityReport={edges:[]},identityEdge=null,identityTimer=null;
@@ -67,19 +69,37 @@ window.StudioResults = (() => {
     if (!row) return;
     window.ResultPlayer.frame(row);
     el('head-a').disabled=el('head-b').disabled=!row.head_review_allowed;
-    const labels=['H','T']; // Display names only; head_confirmed remains authoritative.
+    const contactDirection=row.head_reason==='two_sided_contact_orientation';
+    const labels=row.endpoint_labels || ['A','B'];
+    const colors = row.self_contact_state ? (row.head_confirmed || row.head_candidate ? ['红色','蓝色'] : ['灰色','灰色']) : ['蓝色','橙色'];
+    const palette = row.self_contact_state ? (row.head_confirmed || row.head_candidate ? ['#f64c2a','#00a1e1'] : ['#aaa','#aaa']) : [];
+    for (const [i,id] of ['head-a','head-b'].entries()) el(id).style.setProperty('--endpoint-color',palette[i] || '');
     el('head-a').textContent=row.head_confirmed?'保持 H 端为头':`选择 ${labels[0]} 端为头`;
     el('head-b').textContent=row.head_confirmed?'纠正：T 端才是头':`选择 ${labels[1]} 端为头`;
     text('result-head-status',row.head_status);
-    const headReasons={taper_seed_initialization:'起始清晰帧按尖锐程度初始化，此后保持骨架点序',initial_taper_insufficient:'起始清晰帧的尖锐程度差异不足',initial_taper_conflict:'起始清晰帧的形状判断不一致',manual_seed_propagated:'沿短缺口骨架关联继承人工种子方向，仍为未确认候选',temporal_orientation_conflict:'局部方向与连续块分歧，按骨架关联保留端点身份',temporal_orientation_reference:'短缺口两侧骨架匹配，沿连续块方向跟踪',relative_endpoint_bending:'端部相对中体的摆动差异',appearance_and_seed_evidence:'灰度外观与片段初始定向一致',appearance_temporal_reference:'同身份段的灰度外观时序匹配',appearance_motion_conflict:'外观与初始定向冲突',endpoint_taper:'两端渐细程度的连续帧投票',taper_and_motion_agree:'两端形状与运动投票一致',twardis_endpoint_motion:'两端运动差异',shape_motion_conflict:'形状与运动证据冲突',conflicting_shape_votes:'形状投票不一致',insufficient_window:'连续可靠帧不足',insufficient_motion_evidence:'两端差异不足',conflicting_motion_votes:'运动投票不一致',posture_unreliable:'当前姿态不可靠',endpoints_too_close:'两端过近',manual_anchor:'当前连续片段已有人工锚点',manual_anchor_conflict:'同一片段锚点冲突',manual_point_not_near_endpoint:'锚点未匹配可靠端点',automatic_detection_disabled:'自动检测已关闭',manual_anchor_unreliable:'锚点所在帧姿态不可靠'};
-    text('result-head-explanation',row.head_confirmed?'蓝色 H = 已确认头，橙色 T = 尾。此连续片段无需重复确认；发现错误时可展开纠正或撤销锚点。':row.head_candidate?'蓝色 H / 橙色 T 为自动头尾候选，尚未人工确认；画面统一使用 H/T 标签。':'画面统一标为蓝色 H / 橙色 T；本帧头尾尚无法确定，标签仅表示当前显示方向，需由你确认。');
+    const headReasons={tracked_endpoint_order:'沿同一条虫的中线匹配传递定向',endpoint_order_unanchored:'当前片段无法接回已知头端，可在清晰帧重新点选',endpoint_anchor_conflict:'头部锚点与几何对应有冲突，需复核',taper_seed_initialization:'起始清晰帧按尖锐程度初始化，此后保持骨架点序',initial_taper_insufficient:'起始清晰帧的尖锐程度差异不足',initial_taper_conflict:'起始清晰帧的形状判断不一致',manual_seed_propagated:'沿短缺口骨架关联继承人工种子方向，仍为未确认候选',temporal_orientation_conflict:'局部方向与连续块分歧，按骨架关联保留端点身份',temporal_orientation_reference:'短缺口两侧骨架匹配，沿连续块方向跟踪',relative_endpoint_bending:'端部相对中体的摆动差异',appearance_and_seed_evidence:'灰度外观与片段初始定向一致',appearance_temporal_reference:'同身份段的灰度外观时序匹配',appearance_motion_conflict:'外观与初始定向冲突',endpoint_taper:'两端渐细程度的连续帧投票',taper_and_motion_agree:'两端形状与运动投票一致',twardis_endpoint_motion:'两端运动差异',shape_motion_conflict:'形状与运动证据冲突',conflicting_shape_votes:'形状投票不一致',insufficient_window:'连续可靠帧不足',insufficient_motion_evidence:'两端差异不足',conflicting_motion_votes:'运动投票不一致',posture_unreliable:'当前姿态不可靠',endpoints_too_close:'两端过近',manual_anchor:'当前连续片段已有人工锚点',manual_anchor_conflict:'同一片段锚点冲突',manual_point_not_near_endpoint:'锚点未匹配可靠端点',automatic_detection_disabled:'自动检测已关闭',manual_anchor_unreliable:'锚点所在帧姿态不可靠'};
+    headReasons.trajectory_block_orientation='用相邻片段的端部轨迹接回头尾顺序';
+    headReasons.trajectory_frame_orientation='用邻近清晰帧的端部轨迹推定这一帧的方向';
+    headReasons.centerline_overlap_orientation='根据两帧重合虫身的位置和切线方向接回头尾';
+    headReasons.endpoint_continuity_conflict='前后轨迹给出的头端与虫身对应关系冲突，头尾待复核';
+    text('result-head-explanation',row.head_confirmed?'H 为已确认头，T 为尾。此连续片段无需重复确认；发现错误时可展开纠正或撤销锚点。':row.head_candidate?'H? / T? 为候选头尾。':'A / B 表示当前片段内的两个端点，头尾方向待确认。');
     text('result-head-evidence',`依据：${headReasons[row.head_reason]||row.head_reason||'旧结果未记录'}${row.head_candidate&&Number.isFinite(row.head_evidence_score)?` · 规则分 ${row.head_evidence_score.toFixed(2)}（非准确率）`:''}。正式头摆指标使用人工确认的可靠片段。`);
     if(row.head_candidate&&Number.isFinite(row.head_shape_votes))el('result-head-evidence').textContent+=` 本片段形状有效票 ${row.head_shape_votes}，运动窗口票 ${row.head_motion_votes}。`;
+    if(row.head_trajectory_frames?.length)el('result-head-evidence').textContent+=` 轨迹参考帧 ${row.head_trajectory_frames.join('、')}。`;
     if(Number.isFinite(row.head_temporal_seed_frame)) el('result-head-evidence').textContent+=` 连续方向块 ${row.head_temporal_block}，固定种子第 ${row.head_temporal_seed_frame} 帧${row.head_temporal_conflict?'；局部证据有分歧，保留候选待复核':''}。`;
     if(Number.isFinite(row.head_appearance_votes)) el('result-head-evidence').textContent+=` 外观有效票 ${row.head_appearance_votes}，其他片段参考帧 ${row.head_appearance_reference_frames}；模板来源 ${row.head_appearance_reference==='auto_seeded'?'自动候选，仍待验证':row.head_appearance_reference==='manual_and_auto'?'含人工锚点':'无'}。`;
-    const displayLabels={formal:'白色实线：可靠姿态',geometry_review:'橙色虚线：身份待复核的几何',diagnostic_candidate:'橙色虚线：诊断候选',mask_refit:'橙色虚线：当前掩膜重新拟合',unavailable:'没有可显示的可靠几何'};
-    if(row.display_source!=='legacy')el('result-head-explanation').textContent+=` 骨架：${displayLabels[row.display_source]||row.display_source}；虚线不进入正式测量。`;
-    text('head-choice-note',row.head_review_allowed?`蓝色 ${labels[0]} / 橙色 ${labels[1]}，按钮颜色与画面对应。请选择实际头端；显示 H/T 不代表已经确认，确认后应用于当前片段。`:'本帧端点或身份不可靠，请切换至清晰、可靠的姿态帧。');
+    const displayLabels={formal:'可靠姿态',geometry_review:'待复核 · 身份待复核的几何',diagnostic_candidate:'待复核 · 诊断候选',mask_refit:'待复核 · 当前掩膜重新拟合',temporal_mask_review:'待复核 · 由相邻姿态和本帧掩膜拟合',unavailable:'没有可显示的可靠几何'};
+    if(row.contact_bridge||contactDirection){
+      text('result-head-explanation',row.head_candidate?'H? / T? 表示从清晰帧继承的候选头尾方向。':'A / B 表示尚未定向的两个端点。');
+      const b=row.contact_bridge;
+      const notes=b?[`接触前后参照帧 ${b.anchors.join('、')}`,
+        b.measured?'两端可见，双向路径与原求解器吻合':b.path_supported?'双向路径吻合，保留为重建候选':'前后两侧对中线路径仍有分歧']:[];
+      if(contactDirection)notes.push(`头尾方向来自第 ${row.head_temporal_seed_frame} 帧`);
+      text('result-head-evidence',notes.join('。')+'。');
+    }
+    if(row.endpoints_unlinked)text('result-head-explanation','当前帧无法关联端点。灰色圆点表示两端位置，头尾顺序待定。');
+    if(row.display_source!=='legacy')el('result-head-explanation').textContent+=` 骨架：${displayLabels[row.display_source]||row.display_source}。`;
+    text('head-choice-note',row.head_review_allowed?`${colors[0]} ${labels[0]} / ${colors[1]} ${labels[1]}，按钮颜色与画面对应。请选择实际头端，确认后应用于当前片段。`:'本帧端点或身份不可靠，请切换至清晰、可靠的姿态帧。');
     el('head-choice-note').textContent+=el('result-original').checked?' 当前为原始画面，请先取消“原始画面”查看端点标记。':'';
     if(el('result-original').checked)el('head-a').disabled=el('head-b').disabled=true;
     if(row.head_anchor_conflict) text('head-review-message','本片段头部锚点冲突，正式头摆已暂停。请在锚点列表核对并撤销错误记录。');
@@ -109,9 +129,9 @@ window.StudioResults = (() => {
       const card = document.createElement('article'); card.className = 'studio-metric' + (available ? '' : ' missing');
       const name = document.createElement('span');
       name.textContent = metric === 'area_um2' && unverified && !legacy ? '匿名轮廓面积' : label;
-      const number = document.createElement('strong'); number.textContent = available ? value.toLocaleString('zh-CN', {maximumFractionDigits:2}) : '—';
+      const number = document.createElement('strong'); number.textContent = available ? value.toLocaleString('zh-CN', {maximumFractionDigits:metric==='midbody_abs_curvature_per_um'?6:2}) : '—';
       const suffix = document.createElement('small'); suffix.textContent = pixel ? unit.replace('μm','px') : unit;
-      card.append(name, number, suffix); el(['volume_um3','mean_width_um'].includes(metric)?'studio-extra-metrics':'studio-metric-cards').append(card);
+      card.append(name, number, suffix); el(['volume_um3','mean_width_um','body_extension','midbody_abs_curvature_per_um','length_width_ratio','speed_bl_s'].includes(metric)?'studio-extra-metrics':'studio-metric-cards').append(card);
     }
     if(row.tracklet_status==='stable_anonymous') {
       for(const [field,label,unit] of [['tracklet_length_px','片段局部体长','px'],['tracklet_speed_px_s','片段局部速度','px/s']]) {

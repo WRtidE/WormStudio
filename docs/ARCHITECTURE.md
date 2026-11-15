@@ -4,6 +4,7 @@
 
 |职责|主要文件|
 |---|---|
+|Electron 窗口与运行时|`tools/electron/main.cjs`、`src/electron_desktop.py`|
 |应用与批处理入口|`studio.py`、`worm_pipeline.py`|
 |本地HTTP、交互标注、任务调度|`src/manual_worm_annotation.py`、`pipeline_progress.py`、`workspace_sessions.py`|
 |分割与方法适配|`track_configured_video.py`、`extract_tapnext.py`、`extract_centerlines.py`、`extract_topology.py`|
@@ -20,8 +21,8 @@
 
 `head_point_tracks.py`和算法包中的反馈模块属于实验实现，保留源码与合成测试，不意味着默认启用或已证明优于现行方法。发布不包含历史模型缓存、示例研究视频或开发报告。
 
-前端使用原生JavaScript和本地Python服务，没有Node生产运行依赖。Node只用于前端测试。GPU模型按任务加载，不随页面源码打包。
+Electron 主进程启动本地 Python 服务，并在 Chromium 窗口中载入工作台。页面使用原生 JavaScript 和 Canvas，渲染进程启用沙箱并关闭 Node 集成。Node 运行时随 Electron 一起分发。GPU 模型按任务加载。
 
 布局由 `web/workspace-links.js` 管理，主工作台与标注/进度 iframe 共用一个存储实例。`GET/POST /api/layout` 使用当前会话令牌校验写入，校验有限数值和组件键，原子合并到 `config/layout.local.json`。浏览器缓存只作为启动暂存，服务端已有记录优先，布局不依赖临时端口。窄视口把面板放进可切换的工具区，保留桌面几何。布局重置不触碰标注与分析数据。
 
-文件树由 `web/library-tree.js` 呈现，`POST /api/library-tree` 校验会话后执行工作区操作。`workspace_library.py` 的 v2 索引记录 folders、parent、order、collapsed，以及文件 removed 标记；旧 relativePath 索引自动迁移。所有树操作只改变引用，历史目录扫描使用 auto 注册，避免恢复已移除条目。活动分析源文件受移除保护。
+文件树由 `web/library-tree.js` 呈现，`POST /api/library-tree` 校验会话后执行工作区操作。`workspace_library.py` 的 v2 索引记录 folders、parent、order、collapsed，以及文件 removed 标记；旧 relativePath 索引自动迁移。所有树操作只改变引用，历史目录扫描使用 auto 注册，避免恢复已移除条目。从文件树移除正在使用的视频或其上级文件夹时，当前任务继续通过原路径读写，可通过“返回当前分析”继续。

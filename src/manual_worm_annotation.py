@@ -4,10 +4,11 @@ import copy
 import gc
 import json
 import math
+import multiprocessing
 import re
 import secrets
+import sys
 import threading
-import webbrowser
 from http.server import BaseHTTPRequestHandler
 from centerline_methods import METHODS, validate_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
 from sam2_models import model_spec
@@ -25,51 +26,16 @@ def png(image):
     return data.tobytes()
 
 
-class Annotation:
-    def __init__(self, settings, frame=0):
-        self.settings = settings
-        sample = settings['sample']
-        reserved={'all','con','prn','aux','nul'}|{f'{p}{i}' for p in ('com','lpt') for i in range(1,10)}
-        if not re.fullmatch(r'[\w][\w.-]{0,79}', sample) or sample.endswith('.') or sample.split('.')[0].lower() in reserved:
-            raise ValueError('请使用普通的 SAMPLE_NAME 文件夹名')
-        video = Path(settings['video']).resolve()
-        if not video.is_file(): raise ValueError(f'视频不存在：{video}')
-        cap = cv2.VideoCapture(str(video))
-        if not cap.isOpened():
-            cap.release(); raise ValueError('无法打开此视频，文件可能损坏或编码不受支持。请确认能正常播放，或转换为 H.264 MP4 后重试。')
-        self.n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if self.n < 5:
-            cap.release(); raise ValueError(f'视频只有 {self.n} 帧，分析至少需要 5 帧。请选择更长的视频。')
-        if type(frame) is not int or not 0 <= frame < self.n:
-            cap.release(); raise ValueError(f'标注帧超出范围，请输入 0–{self.n - 1} 之间的整数。')
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
-        ok, image = cap.read(); cap.release()
-        if not ok: raise ValueError(f'无法解码第 {frame} 帧，请尝试另一帧，或转换视频编码后重试。')
-        h, w = image.shape[:2]
-        self.crop = settings.get('crop_xyxy') or [0, 0, w, h]
-        x, y, x1, y1 = self.crop
-        if any(type(v) is not int for v in self.crop) or not (0 <= x < x1 <= w and 0 <= y < y1 <= h):
-            raise ValueError('CROP_XYXY 超出原视频范围；可设为 None 使用完整画面')
-        self.image = image[y:y1, x:x1]
-        self.frame = frame
-        self.video = str(video)
-        self.output = ROOT / 'outputs' / sample / 'manual-initialization'
-        self.path = self.output / 'annotation.json'
-        stat = video.stat()
-        self.identity = dict(video=self.video, size=stat.st_size, mtime_ns=stat.st_mtime_ns,
-                             frame=frame, display_crop=self.crop)
-        self.token = secrets.token_urlsafe(24)
-        self.done = threading.Event()
-        self.result = None
+class MaskPredictor:
+    def __init__(self, image, model_size):
+        self.image = image
+        self.model_size = model_size
         self.predictor = None
         self.predictor_roi = None
         self.prediction_cache = {}
-        self.model_size = settings.get('sam2_model','large')
-        if self.model_size not in ('large','tiny'): raise ValueError('SAM2_MODEL 必须为 large 或 tiny')
 
     def predict(self, body):
-        """Predict one first-frame worm mask from user points/box on the CUDA GPU."""
-        if self.done.is_set(): raise ValueError('本次标注已保存')
+        """Predict first-frame mask candidates from points or a box."""
         h, w = self.image.shape[:2]
         roi = body.get('roi') or [0, 0, w, h]
         if not isinstance(roi, list) or len(roi) != 4 or any(type(v) is not int for v in roi):
@@ -123,7 +89,7 @@ class Annotation:
         if previous and body.get('prediction_token')==previous['token']:
             old=previous['points']
             idx=body.get('previous_candidate',previous['winner'])
-            if type(idx) is not int or not 0<=idx<len(previous['candidates']):
+            if type(idx) is not int or not 0<=idx<previous['candidate_count']:
                 raise ValueError('候选编号无效')
             if (previous['roi']==roi and previous['box']==box and len(points)>len(old)
                     and points[:len(old)]==old and previous['logits'] is not None):
@@ -145,20 +111,131 @@ class Annotation:
         if options[winner]['area_px']<20:
             raise ValueError('未找到足够大的虫体，请追加虫体点或框住虫体')
         self.prediction_cache[worm_id]=dict(points=points,box=box,roi=roi,token=token,
-                                            logits=logits,candidates=options,winner=winner)
+                                            logits=logits,candidate_count=len(options),winner=winner)
         return dict(**options[winner], candidate=winner,candidates=options,
                     prediction_token=token,refined=mask_input is not None)
 
+
+def annotation_worker(connection, image, model_size):
+    # The child owns the model and Metal allocations for one annotation frame.
+    with connection:
+        predictor = MaskPredictor(image, model_size)
+        while True:
+            try:
+                body = connection.recv()
+            except EOFError:
+                return
+            try:
+                result = predictor.predict(body)
+            except ValueError as error:
+                connection.send(('invalid', str(error)))
+            except Exception as error:
+                connection.send(('failed', str(error)))
+                return
+            else:
+                connection.send(('ok', result))
+                del result
+
+
+class Annotation:
+    def __init__(self, settings, frame=0):
+        self.settings = settings
+        sample = settings['sample']
+        reserved={'all','con','prn','aux','nul'}|{f'{p}{i}' for p in ('com','lpt') for i in range(1,10)}
+        if not re.fullmatch(r'[\w][\w.-]{0,79}', sample) or sample.endswith('.') or sample.split('.')[0].lower() in reserved:
+            raise ValueError('请使用普通的 SAMPLE_NAME 文件夹名')
+        video = Path(settings['video']).resolve()
+        if not video.is_file(): raise ValueError(f'视频不存在：{video}')
+        cap = cv2.VideoCapture(str(video))
+        if not cap.isOpened():
+            cap.release(); raise ValueError('无法打开此视频，文件可能损坏或编码不受支持。请确认能正常播放，或转换为 H.264 MP4 后重试。')
+        self.n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self.n < 5:
+            cap.release(); raise ValueError(f'视频只有 {self.n} 帧，分析至少需要 5 帧。请选择更长的视频。')
+        if type(frame) is not int or not 0 <= frame < self.n:
+            cap.release(); raise ValueError(f'标注帧超出范围，请输入 0–{self.n - 1} 之间的整数。')
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+        ok, image = cap.read(); cap.release()
+        if not ok: raise ValueError(f'无法解码第 {frame} 帧，请尝试另一帧，或转换视频编码后重试。')
+        h, w = image.shape[:2]
+        self.crop = settings.get('crop_xyxy') or [0, 0, w, h]
+        x, y, x1, y1 = self.crop
+        if any(type(v) is not int for v in self.crop) or not (0 <= x < x1 <= w and 0 <= y < y1 <= h):
+            raise ValueError('CROP_XYXY 超出原视频范围；可设为 None 使用完整画面')
+        self.image = image[y:y1, x:x1]
+        self.frame = frame
+        self.video = str(video)
+        self.output = ROOT / 'outputs' / sample / 'manual-initialization'
+        self.path = self.output / 'annotation.json'
+        stat = video.stat()
+        self.identity = dict(video=self.video, size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                             frame=frame, display_crop=self.crop)
+        self.token = secrets.token_urlsafe(24)
+        self.done = threading.Event()
+        self.result = None
+        self.model_size = settings.get('sam2_model','large')
+        if self.model_size not in ('large','tiny'): raise ValueError('SAM2_MODEL 必须为 large 或 tiny')
+        self.local_predictor = None
+        self.worker = None
+        self.connection = None
+        self.predict_lock = threading.Lock()
+
+    def predict(self, body):
+        with self.predict_lock:
+            if self.done.is_set():
+                raise ValueError('本次标注已保存')
+            if sys.platform != 'darwin':
+                if self.local_predictor is None:
+                    self.local_predictor = MaskPredictor(self.image, self.model_size)
+                return self.local_predictor.predict(body)
+            if self.worker is None:
+                ctx = multiprocessing.get_context('spawn')
+                parent, child = ctx.Pipe()
+                worker = ctx.Process(target=annotation_worker, args=(child, self.image, self.model_size), daemon=True)
+                try:
+                    worker.start()
+                except BaseException:
+                    parent.close()
+                    raise
+                finally:
+                    child.close()
+                self.worker, self.connection = worker, parent
+            try:
+                self.connection.send(body)
+                status, result = self.connection.recv()
+            except (EOFError, OSError) as error:
+                self._close_worker()
+                raise RuntimeError('SAM2 标注进程已退出，可重新点选') from error
+            if status == 'invalid':
+                raise ValueError(result)
+            if status == 'failed':
+                self._close_worker()
+                raise RuntimeError(result)
+            return result
+
+    def _close_worker(self):
+        if self.worker is None:
+            return
+        self.connection.close()
+        self.worker.join(timeout=2)
+        if self.worker.is_alive():
+            self.worker.kill()
+            self.worker.join()
+        self.worker.close()
+        self.worker = self.connection = None
+
     def release_predictor(self):
-        self.predictor = None
-        self.predictor_roi = None
-        self.prediction_cache.clear()
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available(): torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        with self.predict_lock:
+            self._close_worker()
+            if self.local_predictor is not None:
+                model = self.local_predictor.predictor
+                device = model.device.type if model is not None else None
+                del model
+                self.local_predictor = None
+                gc.collect()
+                if device == 'cuda':
+                    import torch
+                    torch.cuda.empty_cache()
 
     def previous(self):
         if not self.path.exists(): return None
@@ -214,8 +291,8 @@ class Annotation:
             if mask is None or mask.shape!=(y1-y,x1-x): return result
             rgba=np.full((*self.image.shape[:2],4),255,np.uint8);rgba[:,:,3]=0
             rgba[y:y1,x:x1,3]=(mask>127).astype(np.uint8)*255
-            from head_tail import normalize_anchors
-            heads=[a for a in normalize_anchors(config.get('head_annotations',{}).get(str(entry['id']))) if a['frame']==self.frame]
+            from head_tail import anchors_in_crop
+            heads=[a for a in anchors_in_crop(config.get('head_annotations',{}).get(str(entry['id'])),config['crop_xyxy'],config['crop_xyxy']) if a['frame']==self.frame]
             head_point=[heads[0]['point'][0]+x,heads[0]['point'][1]+y] if len(heads)==1 else None
             worms.append(dict(id=entry['id'],area_px=int((mask>127).sum()),head_point=head_point,
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
@@ -255,6 +332,9 @@ class Annotation:
             scale = length / distance
         entries = body.get('worms', [])
         if not entries: raise ValueError('请至少标注一条虫')
+        if method == 'self_contact' and len(entries) != 1 and (
+                body.get('analysis_profile') == 'current' or self.settings.get('analysis_profile') == 'current'):
+            raise ValueError('当前工作台仅支持单虫标注，请保留本次分析的线虫')
         if method == 'tapnext':
             from tapnext_support import validate_single_worm, resources, dependency_path
             validate_single_worm(len(entries), self.model_size)
@@ -323,7 +403,8 @@ class Annotation:
             worms.append(dict(id=worm, mask_path=str(path.resolve())))
         config = dict(sample=self.settings['sample'], video=self.video, crop_xyxy=absolute,
                       measurement_mode=unit_config['measurement_mode'],
-                      scale_um_per_px=scale, scale_source='User-entered scale' if not calibration else 'User-selected two-point scale bar',
+                      scale_um_per_px=scale, scale_source='User-entered scale' if not calibration else (
+                          'Click-detected scale bar' if calibration.get('method') == 'auto' else 'User-selected two-point scale bar'),
                       groups=[dict(name='manual', crop_xyxy=absolute, anchor_frame=self.frame, worms=worms)],
                       review_intervals=self.settings.get('review_intervals', []), wormtracer=self.settings.get('wormtracer', {}),
                       centerline_method=method,sam2_model=self.model_size,
@@ -436,6 +517,32 @@ def create_server(annotation=None, progress=None):
         def do_GET(self):
             from urllib.parse import parse_qs, urlsplit
             annotation = self.server.annotation
+            if progress and self.path.startswith('/api/channel/'):
+                route = urlsplit(self.path)
+                query = parse_qs(route.query)
+                file = query.get('file', [''])[0]
+                run = query.get('run', [None])[0]
+                try:
+                    counts = self.server.channel_counts()
+                    if route.path == '/api/channel/state':
+                        view = counts.state(file, run)
+                        if view['task'] and view['task']['status'] != 'complete':
+                            view['task'].pop('events', None)
+                        self.respond(200, view)
+                    elif route.path == '/api/channel/setup':
+                        self.respond(200, counts.setup(file, int(query.get('channels', [32])[0]), int(query.get('frame', [0])[0]), run))
+                    elif route.path == '/api/channel/frames':
+                        self.respond(200, counts.frames(file, run, int(query.get('start', ['1'])[0]), int(query.get('limit', ['6'])[0])))
+                    elif route.path == '/api/channel/event':
+                        self.respond(200, counts.event(file, run, int(query.get('id', [0])[0])))
+                    elif route.path == '/api/channel/export':
+                        self.respond(200, counts.export(file, run), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                    else: self.respond(404, {})
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+                except (ValueError, OSError, RuntimeError, cv2.error) as exc:
+                    self.respond(400, dict(error=str(exc)))
+                return
             if self.path == '/api/layout':
                 from workspace_layout import read
                 token = progress.token if progress else annotation.token if annotation else None
@@ -447,7 +554,9 @@ def create_server(annotation=None, progress=None):
                 try: self.respond(200, listing(ROOT))
                 except (ValueError, OSError) as exc: self.respond(500, dict(error='文件工作区读取失败：'+str(exc)))
             elif progress and self.path.startswith('/api/library-media?'): self.send_artifact(library=True)
-            elif self.path in ('/studio', '/studio.css', '/studio-clean.css', '/studio.js', '/studio-results.js', '/result-navigation.js', '/result-viewport.js', '/result-player.js', '/workspace-controls.js', '/library-tree.js', '/studio-evaluation.js', '/studio-evaluation.css', '/studio-embed.css', '/draft-autosave.js', '/workspace-usability.css', '/workspace-links.js'):
+            elif self.path == '/wormstudio-icon.png':
+                self.respond(200, (ROOT/'web/wormstudio-icon.png').read_bytes(), 'image/png')
+            elif self.path in ('/studio', '/studio.css', '/studio-clean.css', '/channel-counts.css', '/channel-counts.js', '/channel-review.js', '/studio.js', '/studio-results.js', '/result-navigation.js', '/result-viewport.js', '/result-player.js', '/workspace-controls.js', '/library-tree.js', '/studio-evaluation.js', '/studio-evaluation.css', '/studio-embed.css', '/draft-autosave.js', '/workspace-usability.css', '/workspace-links.js'):
                 name = 'studio.html' if self.path == '/studio' else self.path[1:]
                 kind = 'text/html' if name.endswith('.html') else 'text/css' if name.endswith('.css') else 'text/javascript'
                 self.respond(200, (ROOT/'web'/name).read_bytes(), kind + '; charset=utf-8')
@@ -486,7 +595,8 @@ def create_server(annotation=None, progress=None):
                     query = parse_qs(urlsplit(self.path).query)
                     run = query.get('run', [''])[0]
                     sequence = int(query['sequence'][0]) if 'sequence' in query else None
-                    data = progress.preview(run, int(query.get('after', ['0'])[0]), sequence)
+                    data = progress.preview(run, int(query.get('after', ['0'])[0]), sequence,
+                                            focus=query.get('view') == ['focus'])
                     self.respond(200, data, 'image/jpeg' if sequence is not None else 'application/json; charset=utf-8')
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     self.respond(409, dict(error=str(exc)))
@@ -563,6 +673,15 @@ def create_server(annotation=None, progress=None):
         def do_POST(self):
             annotation = self.server.annotation
             try:
+                if progress and self.path == '/api/channel/task':
+                    if self.headers.get('X-Annotation-Token') != progress.token:
+                        self.respond(403, dict(error='Invalid processing session')); return
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= 8192: raise ValueError('计数请求无效')
+                    body = json.loads(self.rfile.read(size))
+                    if not isinstance(body, dict): raise ValueError('计数请求无效')
+                    self.respond(200, self.server.channel_counts().action(body.get('file'), body.get('action'), body))
+                    return
                 if progress and self.path == '/api/batch':
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond(403, dict(error='Invalid processing session')); return
@@ -601,7 +720,7 @@ def create_server(annotation=None, progress=None):
                     from mask_correction import request_edit
                     result = request_edit(progress, ROOT, body.get('run'), body.get('sequence'))
                     self.respond(202 if result.get('waiting') else 200, result); return
-                if progress and (self.path.startswith('/api/library-upload?') or self.path in ('/api/library-selection','/api/library-tree')):
+                if progress and (self.path.startswith('/api/library-upload?') or self.path in ('/api/library-selection','/api/library-tree','/api/library-link')):
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond(403,dict(error='Invalid processing session')); return
                     from workspace_library import upload, select, organize
@@ -609,8 +728,14 @@ def create_server(annotation=None, progress=None):
                     size = int(self.headers.get('Content-Length', '0'))
                     if self.path == '/api/library-tree':
                         if not 0 < size <= 32768: raise ValueError('文件树请求过大或为空')
-                        active=(progress.config or {}).get('video') if progress.snapshot()['status'] in ('running','preparing') else None
-                        result=organize(ROOT,json.loads(self.rfile.read(size)),active_video=active)
+                        result=organize(ROOT,json.loads(self.rfile.read(size)))
+                    elif self.path == '/api/library-link':
+                        if not 0 < size <= 8192: raise ValueError('视频路径无效')
+                        from workspace_library import register, VIDEO
+                        path = Path(json.loads(self.rfile.read(size))['path']).expanduser()
+                        if not path.is_absolute() or path.suffix.lower() not in VIDEO:
+                            raise ValueError('请选择视频文件的完整路径')
+                        result = register(ROOT, path)
                     elif self.path == '/api/library-selection':
                         if not 0 < size <= 8192: raise ValueError('文件选择请求无效')
                         result = select(ROOT, json.loads(self.rfile.read(size)).get('id'))
@@ -618,6 +743,16 @@ def create_server(annotation=None, progress=None):
                         q = parse_qs(urlsplit(self.path).query)
                         result = upload(ROOT, self.rfile, size, q.get('name',[''])[0], q.get('relativePath',[''])[0], q.get('signature',[''])[0],q.get('parent',[None])[0])
                     self.respond(200,result); return
+                if progress and self.path == '/api/remove-history':
+                    if self.headers.get('X-Annotation-Token') != progress.token:
+                        self.respond(403, dict(error='Invalid processing session')); return
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= 8192: raise ValueError('任务请求无效')
+                    body = json.loads(self.rfile.read(size))
+                    if not isinstance(body, dict): raise ValueError('任务请求无效')
+                    from workspace_sessions import remove_history_entry
+                    remove_history_entry(ROOT, body.get('sample'))
+                    self.respond(200, dict(removed=True)); return
                 if progress and self.path in ('/api/open-run','/api/resume-run','/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review','/api/cancel'):
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond(403,dict(error='Invalid processing session')); return
@@ -686,7 +821,6 @@ def create_server(annotation=None, progress=None):
                     # Keep the existing Event: collect_annotation is waiting on it.
                     for key in ('image','frame','identity','crop'):
                         setattr(annotation,key,getattr(candidate,key))
-                    annotation.prediction_cache={}
                     self.respond(200,dict(ok=True));return
                 if self.path == '/api/evaluation/save':
                     from evaluation_http import save
@@ -811,7 +945,23 @@ def create_server(annotation=None, progress=None):
                 self.respond(500, dict(error=f'SAM2 预测失败：{error}'))
     # Single-request server serializes saves and avoids model/state races.
     from http.server import HTTPServer
-    server = HTTPServer(('127.0.0.1', 0), Handler)
+    class WorkspaceServer(HTTPServer):
+        counts = None
+
+        def channel_counts(self):
+            if self.counts is None:
+                from channel_counts import ChannelCounts
+                self.counts = ChannelCounts(ROOT)
+            return self.counts
+
+        def server_close(self):
+            if self.annotation is not None:
+                self.annotation.release_predictor()
+            if self.counts is not None:
+                self.counts.close()
+            super().server_close()
+
+    server = WorkspaceServer(('127.0.0.1', 0), Handler)
     server.annotation = annotation
     return server
 
@@ -832,14 +982,27 @@ def collect_annotation(settings, frame=0, reuse=True, check_only=False, open_bro
     server.annotation = annotation
     server.timeout = .5
     url = f'http://127.0.0.1:{server.server_port}/'
-    print(f'请在外部浏览器完成标注并点击“保存并开始处理”：{url}', flush=True)
+    print(f'请在工作台完成标注并点击“保存并开始处理”：{url}', flush=True)
     if progress and not reused_server: progress.bind_server(server)
-    if open_browser and not reused_server: webbrowser.open(url, new=2)
+    close_window = None
+    if open_browser and not reused_server:
+        from electron_desktop import open_view
+        def window_closed():
+            if progress:
+                progress.cancel_requested.set()
+                progress.closed.set()
+            current = getattr(server, 'annotation', None)
+            if current:
+                current.done.set()
+            annotation.done.set()
+        close_window = open_view(url, window_closed)
     try:
         while not annotation.done.is_set():
             if progress: annotation.done.wait(.2)
             else: server.handle_request()
     finally:
-        if not progress: server.server_close()
+        if not progress:
+            if close_window: close_window()
+            server.server_close()
         annotation.release_predictor()
     return annotation.result

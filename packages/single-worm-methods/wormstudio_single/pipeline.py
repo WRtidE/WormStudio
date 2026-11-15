@@ -7,7 +7,8 @@ import time
 import cv2
 import numpy as np
 
-from .baseline import resolve_sequence
+from .baseline import recover_endpoint_jumps, resolve_sequence
+from .contact_bridge import refine_contacts
 from .fusion import VERSION, fit, feasible_quality
 from .mask_quality import mark_quality
 from .metrics import choose_anchors, make_windows, crop_union, calculate_metrics, write_csv
@@ -75,17 +76,36 @@ def video_info(config):
     return n, fps
 
 
-def read_frames(config, roi):
+def read_frames(config, roi, frame_ids=None, expected_frames=None):
     cx, cy, _, _ = config['crop_xyxy']
     x0, y0, x1, y1 = roi
     cap = cv2.VideoCapture(str(config['video']))
     frames = []
     try:
-        while True:
+        if frame_ids is not None:
+            frame_ids = np.asarray(frame_ids)
+            if (frame_ids.ndim != 1 or not len(frame_ids) or frame_ids.dtype.kind not in 'iu'
+                    or np.min(frame_ids) < 0 or not (np.all(np.diff(frame_ids.astype(int)) == 1)
+                                                     or np.all(np.diff(frame_ids.astype(int)) == -1))):
+                raise ValueError('Expected a consecutive tracking window in either direction.')
+            first = int(min(frame_ids))
+            if first and not cap.set(cv2.CAP_PROP_POS_FRAMES, first):
+                cap.release()
+                cap = cv2.VideoCapture(str(config['video']))
+                if not all(cap.grab() for _ in range(first)):
+                    raise ValueError('Truncated video before TAPNext tracking window.')
+        while frame_ids is None or len(frames) < len(frame_ids):
             ok, frame = cap.read()
             if not ok:
                 break
             frames.append(frame[cy+y0:cy+y1, cx+x0:cx+x1].copy())
+        if frame_ids is not None:
+            if len(frames) != len(frame_ids):
+                raise ValueError('Truncated TAPNext tracking window.')
+            if expected_frames is not None and max(frame_ids) == expected_frames - 1 and cap.grab():
+                raise ValueError('Decoded frame count differs from mask count.')
+            if frame_ids[0] > frame_ids[-1]:
+                frames.reverse()
     finally:
         cap.release()
     return np.asarray(frames)
@@ -111,31 +131,34 @@ def replay_inputs(config):
 
 
 def fresh_inputs(config, masks, fps):
-    areas = masks.sum((1, 2))
+    roi = crop_union(masks)
+    x0, y0, x1, y1 = roi
+    return prepare_local_inputs(config, masks[:, y0:y1, x0:x1].copy(), roi, fps)
+
+
+def prepare_local_inputs(config, local_masks, roi, fps):
+    areas = local_masks.sum((1, 2))
     rows = [dict(frame=i, worm_id=1, area_px=int(a), ambiguous_overlap_px=0) for i,a in enumerate(areas)]
     mark_quality(rows, [1])
     valid = np.array([not r['low_confidence'] for r in rows])
-    roi = crop_union(masks)
-    x0, y0, x1, y1 = roi
-    local_masks = masks[:, y0:y1, x0:x1].copy()
-    baseline, quality, _ = resolve_sequence(local_masks, mask_valid=valid, fps=fps)
+    baseline, quality, diagnostic = resolve_sequence(local_masks, mask_valid=valid, fps=fps)
+    for i in config.get('excluded_frames', []):
+        quality[i]['mask_valid'] = False
+        quality[i]['centerline_valid'] = False
+        quality[i]['quality_reasons'].append('user_excluded_mask')
+    recover_endpoint_jumps(baseline, quality, diagnostic)
     previous = None
     for i,p in enumerate(baseline):
         if np.isfinite(p).all():
             if previous is not None:
                 baseline[i] = align(p, previous)
             previous = baseline[i]
-    # Apply visual exclusions at the same stage as the validated historical batch.
-    for i in config.get('excluded_frames', []):
-        quality[i]['mask_valid'] = False
-        quality[i]['centerline_valid'] = False
-        quality[i]['quality_reasons'].append('user_excluded_mask')
     valid = np.array([q['mask_valid'] and q['centerline_valid'] and q['topology']=='simple'
                       and np.isfinite(p).all() for p,q in zip(baseline,quality)])
     anchors = choose_anchors(valid, max_gap=max(1, round(config.get('anchor_interval_seconds',2.)*fps)))
     refs = [q['reference_length_px'] for q in quality if q.get('reference_length_px')]
     meta = dict(source_video=str(config['video']), source_video_sha256=sha256(config['video']),
-                frames=len(masks), fps=fps, crop_xyxy=config['crop_xyxy'], tracking_roi=roi,
+                frames=len(local_masks), fps=fps, crop_xyxy=config['crop_xyxy'], tracking_roi=roi,
                 scale_um_per_px=config.get('scale_um_per_px'), anchors=anchors,
                 reference_length_px=float(np.median(refs)) if refs else None,
                 head_identity='unconfirmed_A_B')
@@ -166,6 +189,7 @@ def solve_cached(masks, baseline, quality, meta, cache, solver='auto'):
         _SKELETON_CACHE.clear()
     if not covered.all() or any(q is None for q in qa):
         raise ValueError('Saved point-track windows do not cover the entire video.')
+    refine_contacts(curves, qa, masks, quality, baseline, meta)
     return curves,qa
 
 
@@ -187,16 +211,14 @@ def solve_fresh(config, masks, baseline, quality, meta, out, checkpoint, device,
     meta['tapnext_support']=dict(per_query=support_count,mode=support_mode,radius_model_px=support_radius,
                                  input_resolution=model.input_resolution,primary_queries=len(INDICES),windows=[])
     timings = dict(model_load_seconds=time.perf_counter()-start,tracking_seconds=0.,fusion_seconds=0.)
-    frames = read_frames(config, meta['tracking_roi'])
-    if len(frames) != n:
-        raise ValueError('Decoded frame count differs from mask count.')
     for k,(ids,has_end) in enumerate(make_windows(n,meta['anchors'])):
         print(f'Window {k+1}: frames {ids[0]}..{ids[-1]}',flush=True)
         lx,ly,rx,by = crop_union(masks[ids]); offset=np.array([lx,ly])
         data=dict(first=baseline[ids[0]]-offset,last=baseline[ids[-1]]-offset if has_end else np.full((101,2),np.nan),
                   masks=masks[ids,ly:by,lx:rx],frame_ids=ids,
                   mask_valid=np.array([quality[i]['mask_valid'] for i in ids]),reference_length=meta['reference_length_px'])
-        local=frames[ids,ly:by,lx:rx]
+        frames = read_frames(config, meta['tracking_roi'], ids, n)
+        local=frames[:,ly:by,lx:rx]
         stamp=time.perf_counter()
         fs,fp=support_points(data['first'][INDICES],data['masks'][0],support_count,support_mode,support_radius,model.input_resolution)
         fd={};bd={}
@@ -222,15 +244,16 @@ def solve_fresh(config, masks, baseline, quality, meta, out, checkpoint, device,
         stamp=time.perf_counter();p,checks=run_fusion(data,z,solver);timings['fusion_seconds']+=time.perf_counter()-stamp
         for i,points,q in zip(ids,p,checks):curves[i]=points+offset;qa[i]=q
         if on_preview is not None:
-            for i in ids:
+            for j,i in enumerate(ids):
                 # Preview consumers cannot alter the arrays used for measurement.
                 try:
-                    on_preview(int(i), frames[i].copy(), masks[i].copy(), curves[i].copy(), dict(qa[i]))
+                    on_preview(int(i), frames[j].copy(), masks[i].copy(), curves[i].copy(), dict(qa[i]))
                 except Exception:
                     pass
         _SKELETON_CACHE.clear()
     if device=='cuda':meta['tapnext_support']['peak_torch_allocated_mib']=torch.cuda.max_memory_allocated()/2**20
     del model
+    refine_contacts(curves, qa, masks, quality, baseline, meta)
     return curves,qa,timings
 
 

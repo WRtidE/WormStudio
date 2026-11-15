@@ -118,13 +118,14 @@ def prune_short_spurs(sk,radius):
     return sk
 
 
-def topology_candidates(mask,prune=False):
+def topology_candidates(mask,prune=False,*,skeleton=None):
     """Return native-pixel candidates, contact region, and observable topology."""
     ys,xs=np.nonzero(mask)
     if len(xs)<30:return [],np.zeros_like(mask),dict(kind='empty')
     x0=max(0,xs.min()-4);y0=max(0,ys.min()-4)
     local=mask[y0:ys.max()+5,x0:xs.max()+5]
-    sk=skeletonize(local);dt=ndi.distance_transform_edt(local)
+    sk=skeletonize(local) if skeleton is None else skeleton[y0:ys.max()+5,x0:xs.max()+5]
+    dt=ndi.distance_transform_edt(local)
     if prune:sk=prune_short_spurs(sk,float(np.median(dt[sk])))
     degree=ndi.convolve(sk.astype(int),np.ones((3,3)),mode='constant')-sk
     endpoints=np.argwhere(sk&(degree==1));branches=sk&(degree>2)

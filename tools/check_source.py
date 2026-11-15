@@ -22,6 +22,10 @@ def check(root):
         if p.suffix.lower() in FORBIDDEN_SUFFIXES or any(x in FORBIDDEN_PARTS for x in rel.parts):errors.append(f'artifact: {rel}')
         if p.stat().st_size>2_000_000:errors.append(f'oversize: {rel}')
         if p.name in ('python_path.txt','target_videos.json','evaluation_dataset.json'):errors.append(f'private config: {rel}')
+        if rel.as_posix() == 'web/wormstudio-icon.png':
+            with p.open('rb') as image:
+                if image.read(8) != b'\x89PNG\r\n\x1a\n':errors.append(f'invalid PNG: {rel}')
+            continue
         try:text=p.read_text(encoding='utf-8-sig')
         except UnicodeError:errors.append(f'non-text file: {rel}');continue
         if PRIVATE_PATH.search(text) or SECRET.search(text):errors.append(f'private path or credential pattern: {rel}')

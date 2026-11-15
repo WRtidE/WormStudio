@@ -1,0 +1,12 @@
+'use strict';
+const {contextBridge, ipcRenderer} = require('electron');
+contextBridge.exposeInMainWorld('settings', {
+  onOpenUpdates: callback => ipcRenderer.on('settings:open-updates', () => callback()),
+  state: () => ipcRenderer.invoke('updates:state'),
+  check: () => ipcRenderer.invoke('updates:check'),
+  auto: enabled => ipcRenderer.invoke('updates:auto', enabled),
+  download: () => ipcRenderer.invoke('updates:download'),
+  reveal: () => ipcRenderer.invoke('updates:reveal'),
+  workspace: () => ipcRenderer.invoke('updates:workspace'),
+  onChange: callback => ipcRenderer.on('updates:changed', (_event, state) => callback(state))
+});

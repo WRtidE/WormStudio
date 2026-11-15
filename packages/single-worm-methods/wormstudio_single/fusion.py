@@ -8,7 +8,7 @@ import numpy as np
 from scipy import ndimage as ndi
 from .quality import INDICES,full_line,curve_measures
 from .geometry import topology_candidates,resample
-from .skeleton import extract_niu,valid_line
+from .skeleton import extract_body_geometry
 
 VERSION='image-constrained-temporal-v3-contact-events'
 
@@ -35,10 +35,11 @@ def feasible_quality(p,mask,reference):
 def frame_candidates(mask,reference,observations,mask_valid=True):
     """Reject inadmissible hypotheses BEFORE they enter the temporal solver."""
     if not mask_valid or not mask.any():return [],dict(reason='invalid_mask',rejected=0)
-    niu=extract_niu(mask);states=[];rejected=0
-    if niu['topology']=='simple' and valid_line(niu['ordered']):
+    niu, path_source = extract_body_geometry(mask)
+    states=[];rejected=0
+    if path_source is not None:
         # A unique observable body path is stronger than generic point tracks.
-        source=[dict(points=niu['ordered'],name='robust_medial',origin='image')]
+        source=[dict(points=niu['ordered'],name=path_source,origin='image')]
     else:
         graph,_,_=topology_candidates(mask)
         source=[dict(points=c['points'],name=c['name'],origin='image') for c in graph]

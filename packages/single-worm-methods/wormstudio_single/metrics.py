@@ -60,6 +60,10 @@ def calculate_metrics(curves,masks,base_quality,qa,baseline,meta):
         # cannot by itself turn an identical body shape into disagreement.
         disagreement=min(float(np.linalg.norm(p-baseline[i],axis=1).mean()),float(np.linalg.norm(p[::-1]-baseline[i],axis=1).mean())) if finite and np.isfinite(baseline[i]).all() else np.nan
         usable=pose_supported(base_quality[i],q,disagreement,reference or 1.)
+        bridge=q.get('contact_bridge')
+        contact_measured=bool(bridge and bridge['measured'] and q['status']=='CONTACT_SUPPORTED'
+                              and base_quality[i]['mask_valid'] and q['geometric_pass'] and finite)
+        usable=usable or contact_measured
         temporal_recovered=q.get('status')=='TEMPORAL_RECONSTRUCTION_REVIEW'
         if temporal_recovered:usable=False
         if not meta['anchors']:status='no_anchor'
@@ -70,18 +74,18 @@ def calculate_metrics(curves,masks,base_quality,qa,baseline,meta):
         reasons=[]
         if not meta['anchors']:reasons.append('no_reliable_initial_pose')
         if not base_quality[i]['mask_valid']:reasons.append('mask_quality')
-        if base_quality[i]['topology']!='simple':reasons.append('self_contact_or_uncertain_topology')
+        if base_quality[i]['topology']!='simple' and not contact_measured:reasons.append('self_contact_or_uncertain_topology')
         if not finite:reasons.append('centerline_unavailable')
         elif not q.get('geometric_pass'):reasons.append('centerline_geometry')
         if temporal_recovered:reasons.append('whole_event_temporal_inference')
-        if not base_quality[i]['centerline_valid']:reasons.append('baseline_pose_uncertain')
-        if np.isfinite(disagreement) and disagreement>max(3,.03*(reference or 1)):reasons.append('method_disagreement')
+        if not base_quality[i]['centerline_valid'] and not contact_measured:reasons.append('baseline_pose_uncertain')
+        if not contact_measured and np.isfinite(disagreement) and disagreement>max(3,.03*(reference or 1)):reasons.append('method_disagreement')
         length=width=curvature=tip_distance=np.nan
         if finite:
             ds=np.linalg.norm(np.diff(p,axis=0),axis=1);length=float(ds.sum());tip_distance=float(np.linalg.norm(p[0]-p[-1]))
             theta=np.unwrap(np.arctan2(np.diff(p[:,1]),np.diff(p[:,0])))
             curvature=float(np.sum(abs(np.diff(theta)))/max(length,1))
-            if usable:
+            if usable and not contact_measured:
                 dt=ndi.distance_transform_edt(mask)
                 width=float(2*ndi.map_coordinates(dt,[p[:,1],p[:,0]],order=1,mode='constant')[5:-5].mean())
         row=dict(frame=i,time_s=i/meta['fps'],status=status,status_zh=STATUS[status],pose_metrics_valid=usable,
@@ -95,6 +99,7 @@ def calculate_metrics(curves,masks,base_quality,qa,baseline,meta):
             inside_fraction=q.get('inside_fraction',np.nan),geometry_pass=q.get('geometric_pass',False),
             candidate=q.get('candidate','none'),baseline_mean_difference_px=disagreement)
         observed=q.get('endpoint_observed',[True,True] if finite else [False,False])
+        if bridge: row['contact_bridge']=bridge
         row.update(endpoint_a_observed=bool(observed[0]),endpoint_b_observed=bool(observed[1]),
             temporal_reconstructed=temporal_recovered)
         for key in ('tap_effective_points','tap_bidirectional_points','tap_bidirectional_error_px',

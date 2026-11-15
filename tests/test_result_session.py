@@ -19,7 +19,7 @@ from worm_pipeline import compatible_identity
 class ResultSessionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='worm-session-')
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.patch = patch.object(manual, 'ROOT', self.root); self.patch.start()
         self.video = self.root/'second.mp4'
         writer = cv2.VideoWriter(str(self.video), cv2.VideoWriter_fourcc(*'mp4v'), 12, (128,80))
@@ -80,7 +80,7 @@ class ResultSessionTests(unittest.TestCase):
         with self.post('/api/new-video', {'video_path':str(self.video)}) as response:
             self.assertEqual(json.load(response)['annotation_url'], '/')
         self.assertEqual(self.progress.snapshot()['status'], 'preparing')
-        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'tapnext')
+        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'self_contact')
         with self.assertRaises(urllib.error.HTTPError) as error:
             self.post('/api/new-video', {'video_path':str(self.video)})
         self.assertEqual(error.exception.code,409)

@@ -3,7 +3,7 @@ import numpy as np
 from .evidence import prepare, candidate_cost
 from .fusion import feasible_quality, frame_candidates
 from .contact import candidate_states, _transition
-from .skeleton import extract_niu, valid_line
+from .skeleton import extract_body_geometry
 
 VERSION = 'tapnext-evidence-v4-experimental'
 
@@ -44,8 +44,9 @@ def fit(d,z,motion_weight=2.):
     bracketed=bool(np.isfinite(d['last']).all() and np.asarray(d['mask_valid']).all())
     states=[];topologies=[]
     for i,mask in enumerate(d['masks']):
-        niu=extract_niu(mask);simple=niu['topology']=='simple' and valid_line(niu['ordered'])
-        topologies.append(niu['topology'])
+        niu, path_source = extract_body_geometry(mask)
+        simple = path_source is not None
+        topologies.append('simple' if simple else niu['topology'])
         if not d['mask_valid'][i] or not mask.any(): choices=[]
         elif bracketed:
             # Enumerate self-contact hypotheses even when a shorter path

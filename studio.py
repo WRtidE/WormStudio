@@ -1,6 +1,5 @@
 """File-first local workspace; reuse the existing annotation and analysis pipeline."""
 import sys
-import webbrowser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
@@ -8,6 +7,9 @@ from resource_paths import ensure_runtime
 
 
 def main(open_browser=True):
+    if open_browser:
+        from electron_desktop import launch
+        return launch()
     from manual_worm_annotation import create_server
     from pipeline_progress import PipelineProgress
     from worm_pipeline import _main, video_config
@@ -21,8 +23,6 @@ def main(open_browser=True):
     progress.bind_server(server)
     url = progress.url.removesuffix('/progress') + '/studio'
     print(f'Worm Studio: {url}', flush=True)
-    if open_browser:
-        webbrowser.open(url, new=2)
     try:
         while (settings := progress.wait()) is not None:
             try:
@@ -44,4 +44,4 @@ def main(open_browser=True):
 
 if __name__ == '__main__':
     ensure_runtime()
-    main()
+    raise SystemExit(main())

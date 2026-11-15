@@ -67,7 +67,7 @@ def frame_geometry(masks, proximity_px=2):
     return result
 
 
-def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., identity_confirmations=()):
+def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., identity_confirmations=(), boundary_frames=None):
     """Mark contact and keep identity unverified after an interaction.
 
     Post-contact geometries may still be displayed as candidates; per-worm
@@ -87,6 +87,8 @@ def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., id
     for i in range(n):
         current=frame_geometry({w:all_masks[w][i] for w in ids})
         for w,r in current.items():
+            if boundary_frames and i in boundary_frames.get(w, ()):
+                r['boundary_truncated'] = True
             input_bad=i in source_invalid
             if input_bad:r['contact_ids']=[]
             trusted=bool(not input_bad and not original_bad.get((i,w),False) and r['area_px']

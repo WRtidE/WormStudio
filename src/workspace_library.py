@@ -169,11 +169,20 @@ def descendants(state,folder_id):
         result.update(extra)
 
 
-def organize(root,body,active_video=None):
+def organize(root,body):
     """Organize references only. Never delete or rename source media or analysis outputs."""
     if not isinstance(body,dict):raise ValueError('文件树请求无效')
     state=read(root);operation=body.get('op');item_id=body.get('id');parent=body.get('parent')
     item=next((f for f in state['folders']+state['files'] if f['id']==item_id and not f.get('removed')),None)
+    items=[item] if item is not None else []
+    if operation in ('move','remove') and 'ids' in body:
+        ids=body['ids']
+        if (not isinstance(ids,list) or not ids or item_id is not None or
+                not all(isinstance(key,str) for key in ids) or len(ids)!=len(set(ids))):
+            raise ValueError('所选文件无效，请重新选择')
+        available={f['id']:f for f in state['files'] if not f.get('removed')}
+        if any(key not in available for key in ids):raise ValueError('所选文件已改变，请刷新文件树')
+        items=[available[key] for key in ids]
     result={}
     if operation in ('mkdir','ensure-path'):
         check_parent(state,parent)
@@ -188,7 +197,7 @@ def organize(root,body,active_video=None):
             for part in parts:folder_name(part)
             for part in parts:parent=ensure_folder(state,part,parent)['id']
             result['folder']=next(f for f in state['folders'] if f['id']==parent)
-    elif item is None:raise ValueError('文件或文件夹已移除，请刷新文件树')
+    elif not items:raise ValueError('文件或文件夹已移除，请刷新文件树')
     elif operation=='rename':
         name=folder_name(body.get('name'))
         if any(f['id']!=item_id and f['parent']==item.get('parent') and f['name'].casefold()==name.casefold() for f in state['folders']):raise ValueError('此位置已存在同名文件夹')
@@ -201,19 +210,19 @@ def organize(root,body,active_video=None):
         if item in state['folders']:
             if parent in descendants(state,item_id):raise ValueError('不能将文件夹移到自己或子文件夹内')
             if any(f['id']!=item_id and f['parent']==parent and f['name'].casefold()==item['name'].casefold() for f in state['folders']):raise ValueError('目标位置已存在同名文件夹')
-        ordered=[f for f in nodes(state,parent) if f['id']!=item_id]
+        moving_ids={f['id'] for f in items}
+        ordered=[f for f in nodes(state,parent) if f['id'] not in moving_ids]
         before=body.get('before')
-        if before==item_id:return dict(listing(root),**result)
+        if before in moving_ids:return dict(listing(root),**result)
         index=next((i for i,f in enumerate(ordered) if f['id']==before),None) if before else len(ordered)
         if index is None:raise ValueError('排序位置已改变，请刷新后重试')
-        item['parent']=parent;ordered.insert(index,item)
+        for f in items:f['parent']=parent
+        ordered[index:index]=items
         for i,f in enumerate(ordered):f['order']=i
         if parent:next(f for f in state['folders'] if f['id']==parent)['collapsed']=False
     elif operation=='remove':
-        ids=descendants(state,item_id) if item in state['folders'] else {item_id}
+        ids=descendants(state,item_id) if item in state['folders'] else {f['id'] for f in items}
         removed=[f for f in state['files'] if f['id'] in ids or f.get('parent') in ids]
-        if active_video and any(Path(f['path']).resolve()==Path(active_video).resolve() for f in removed):
-            raise ValueError('此文件正在标注或处理，完成后再从工作区移除')
         for f in removed:f.update(removed=True,parent=None)
         state['folders']=[f for f in state['folders'] if f['id'] not in ids]
         if state.get('selected') in {f['id'] for f in removed}:state['selected']=None

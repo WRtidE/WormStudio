@@ -17,7 +17,8 @@ jobs:
       - name: Verify native imports and local workspace without downloading models
         run: |
           python -m pip check
-          python -c "import platform; assert platform.machine() == 'arm64'; import AppKit, WebKit, webview, cv2, torch, torchvision"
+          python -c "import platform; assert platform.machine() == 'arm64'; import cv2, torch, torchvision"
+          python -c "from electron_desktop import command; import subprocess; subprocess.run([*command()[:1], '--version'], check=True)"
           python tools/check_environment.py --code-only
           python -m unittest discover -s tests -p 'test_macos_portability.py'
         env:

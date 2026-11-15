@@ -8,11 +8,48 @@ import cv2
 import numpy as np
 
 
+def prepare_recovered_edit(source, summary, seed_folder):
+    """Rebase original prompts into the larger ROI so a repaired mask can be edited."""
+    from crop_recovery import place
+    from head_tail import anchors_in_crop
+    info = summary.get('crop_recovery', {})
+    restored = [e for e in info.get('events', []) if e['decision']=='recovered']
+    if not restored:
+        return
+    for group in source['groups']:
+        ids = {w['id'] for w in group['worms']}
+        old = group['crop_xyxy']
+        boxes = [old]+[e['crop_xyxy'] for e in restored if e['worm_id'] in ids]
+        box = [min(b[0] for b in boxes),min(b[1] for b in boxes),
+               max(b[2] for b in boxes),max(b[3] for b in boxes)]
+        if old==box:
+            continue
+        shift=np.array(old[:2])-box[:2]
+        for a in [dict(frame=group['anchor_frame'],worms=group['worms']),*group.get('additional_anchors',[])]:
+            for w in a['worms']:
+                if 'mask_path' in w:
+                    original=cv2.imdecode(np.frombuffer(Path(w['mask_path']).read_bytes(),np.uint8),0)
+                    seed_folder.mkdir(parents=True,exist_ok=True)
+                    path=seed_folder/f"seed-w{w['id']}-f{a['frame']}.png"
+                    path.write_bytes(cv2.imencode('.png',place(original,old,box))[1].tobytes())
+                    w['mask_path']=str(path.resolve())
+                else:
+                    for key in ('points','guide_path'):
+                        if key in w:
+                            w[key]=(np.asarray(w[key])+shift).tolist()
+                    w['box']=(np.asarray(w['box'])+np.tile(shift,2)).tolist()
+        group['crop_xyxy']=box
+    result_crop=summary['crop_xyxy']
+    source['head_annotations']={w:anchors_in_crop(a,source['crop_xyxy'],result_crop)
+                                for w,a in source.get('head_annotations',{}).items()}
+    source['crop_xyxy']=result_crop
+
+
 def request_edit(progress, root, run, sequence):
     from manual_worm_annotation import Annotation, png
     from live_preview import latest_sequence
     from run_storage import fresh_sample
-    from head_tail import normalize_anchors
+    from head_tail import anchors_in_crop
 
     with progress.lock:
         current = getattr(progress.server, 'annotation', None)
@@ -34,7 +71,9 @@ def request_edit(progress, root, run, sequence):
         if progress.next_ready.is_set() or progress.data['status'] not in ('running', 'complete', 'failed', 'cancelled'):
             raise ValueError('当前任务正在切换，请稍后重试')
         source = copy.deepcopy(progress.config)
-        paths = {worm['id']: root / 'outputs' / source['sample'] / 'sam2-tracking' / 'masks' /
+        from crop_recovery import tracking_directory
+        tracking = tracking_directory(root/'outputs'/source['sample'],source)
+        paths = {worm['id']: tracking / 'masks' /
                  f"worm-{worm['id']}" / f'{frame:06d}.png'
                  for group in source['groups'] for worm in group['worms']}
         paths = {worm: path for worm, path in paths.items() if path.is_file()}
@@ -46,7 +85,11 @@ def request_edit(progress, root, run, sequence):
             progress.cancel_requested.set()
             return dict(waiting=True, frame=frame)
 
-        settings = dict(source, sample=fresh_sample(source['sample'], root / 'outputs'),
+        sample = fresh_sample(source['sample'], root/'outputs')
+        if (tracking/'summary.json').is_file():
+            summary=json.loads((tracking/'summary.json').read_text(encoding='utf-8-sig'))
+            prepare_recovered_edit(source,summary,root/'outputs'/sample/'manual-initialization')
+        settings = dict(source, sample=sample,
                         previous_sample=source['sample'])
         settings.pop('identity_confirmations', None)
         candidate = Annotation(settings, frame=frame)
@@ -58,7 +101,7 @@ def request_edit(progress, root, run, sequence):
                 raise ValueError(f'线虫 {worm} 的掩膜文件不完整，请选择其他帧')
             rgba = np.full((h, w, 4), 255, np.uint8)
             rgba[:, :, 3] = (mask > 127).astype(np.uint8) * 255
-            heads = [a for a in normalize_anchors(source.get('head_annotations', {}).get(str(worm))) if a['frame'] == frame]
+            heads = [a for a in anchors_in_crop(source.get('head_annotations', {}).get(str(worm)),source['crop_xyxy'],source['crop_xyxy']) if a['frame'] == frame]
             worms.append(dict(id=worm, mask='data:image/png;base64,' + base64.b64encode(png(rgba)).decode('ascii'),
                               area_px=int((mask > 127).sum()), confirmed=False,
                               head_point=heads[0]['point'] if len(heads) == 1 else None))

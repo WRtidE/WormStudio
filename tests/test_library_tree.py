@@ -63,6 +63,25 @@ class LibraryTreeTests(unittest.TestCase):
         self.assertTrue(next(f for f in state['folders'] if f['id']==top)['collapsed'])
         self.assertEqual(Path(b['path']).read_bytes(),b'a,b\n1,2')
 
+    def test_group_move_and_remove_validate_the_whole_selection_before_saving(self):
+        folder=self.folder('复核')
+        first=self.file('first.csv')
+        second=self.file('second.csv',folder)
+        last=self.file('last.csv',folder)
+        ids=[second['id'],first['id']]
+        library.select(self.root,first['id'])
+        library.organize(self.root,dict(op='move',ids=ids,parent=folder,before=last['id']))
+        self.assertEqual([f['id'] for f in library.nodes(library.read(self.root),folder)],ids+[last['id']])
+        before=library.read(self.root)
+        for op in ('move','remove'):
+            with self.assertRaises(ValueError):
+                library.organize(self.root,dict(op=op,ids=[first['id'],'missing']))
+            self.assertEqual(library.read(self.root),before)
+        result=library.organize(self.root,dict(op='remove',ids=ids))
+        self.assertIsNone(result['selected'])
+        self.assertEqual([f['id'] for f in result['files']],[last['id']])
+        self.assertTrue(all(Path(f['path']).is_file() for f in (first,second)))
+
     def test_invalid_parent_cycle_name_and_sort_leave_saved_tree_unchanged(self):
         top=self.folder('实验');sub=self.folder('子文件夹',top);before=(self.root/'config/workspace.local.json').read_bytes()
         for body in [dict(op='move',id=top,parent=sub),dict(op='move',id=sub,parent='unknown'),
@@ -87,11 +106,31 @@ class LibraryTreeTests(unittest.TestCase):
         restored=library.register(self.root,a['path'])
         self.assertEqual(restored['id'],a['id']);self.assertEqual(len(library.listing(self.root)['files']),2)
 
-    def test_current_analysis_protected_when_removing_containing_folder(self):
-        folder=self.folder('working');file=self.file(parent=folder)
-        with self.assertRaisesRegex(ValueError,'正在标注或处理'):
-            library.organize(self.root,dict(op='remove',id=folder),active_video=file['path'])
-        self.assertEqual(len(library.listing(self.root)['files']),1)
+    def test_remove_folder_while_annotating_or_processing_keeps_session_and_media(self):
+        with patch.object(manual, 'ROOT', self.root):
+            for status in ('preparing', 'running'):
+                with self.subTest(status=status):
+                    folder = self.folder(status)
+                    active = self.file('active.mp4', self.folder('nested', folder))
+                    self.file('other.mp4', folder)
+                    library.select(self.root, active['id'])
+                    progress = PipelineProgress()
+                    progress.config = dict(video=active['path'])
+                    progress.data['status'] = status
+                    progress.bind_server(manual.create_server(progress=progress))
+                    try:
+                        req = urllib.request.Request(progress.url.removesuffix('/progress')+'/api/library-tree',
+                            data=json.dumps(dict(op='remove', id=folder)).encode(),
+                            headers={'X-Annotation-Token':progress.token})
+                        with urllib.request.urlopen(req) as response:
+                            result = json.load(response)
+                        self.assertEqual((result['files'], result['folders'], result['selected']), ([], [], None))
+                        self.assertEqual(progress.snapshot()['status'], status)
+                        self.assertEqual(Path(progress.config['video']).read_bytes(), b'a,b\n1,2')
+                        self.assertEqual(library.media(self.root, active['id']), Path(active['path']))
+                        self.assertFalse(progress.cancel_requested.is_set())
+                    finally:
+                        progress.close()
 
     def test_ensure_path_merges_only_same_parent_and_rename_only_changes_label(self):
         a=self.folder('A');b=self.folder('B')

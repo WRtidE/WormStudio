@@ -27,9 +27,9 @@ class MacPortabilityTests(unittest.TestCase):
             with inference_context('mps'):
                 self.assertIn('Metal', device_label('mps'))
 
-    def test_auto_does_not_enable_unvalidated_metal(self):
+    def test_auto_selects_available_metal(self):
         with patch.dict(os.environ, WORMSTUDIO_DEVICE='auto'), patch('torch.cuda.is_available', return_value=False), patch('torch.backends.mps.is_available', return_value=True):
-            self.assertEqual(selected_device(), 'cpu')
+            self.assertEqual(selected_device(), 'mps')
 
     def test_native_mac_runtime_layout(self):
         root = Path('bundle with spaces')

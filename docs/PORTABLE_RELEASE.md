@@ -2,6 +2,8 @@
 
 交付目录为工作区 delivery/WormStudio-Windows-CPU-GPU。完整复制目录给使用者；入口为启动软件.bat，说明为先读我.html。Windows x64，CPU 或 NVIDIA CUDA；其他 GPU 当前走 CPU。包含 Python 3.11、PyTorch 2.7 CUDA 12.8、SAM2 Large、TAPNext++。
 
+新版便携目录用 Electron 打开工作台。在交付机准备同架构的 Electron 运行时缓存 `app/.electron-runtime/`，使实验电脑可离线启动。
+
 默认 auto 自动选择；使用CPU启动.bat 可强制 CPU，使用GPU启动.bat 在 GPU 不可用时明确报错。CPU 使用 float32，CUDA 使用设备支持的混合精度。同一模型的结果可能有小幅浮点差异。GPU 内存不足时由用户重新以 CPU 启动，不静默切换已运行的任务。
 
 运行环境来自已验证的环境，以 conda-pack no-archive 导出。原环境 setuptools/wheel 由 pip 替换，打包使用 ignore_missing_files=True；交付环境实测导入、模型推理和导出通过。移除了 SAM2 的外部 editable 路径，改为包内 resources/sam2。首次启动执行 conda-unpack，使用者应在首次运行前放到最终目录。

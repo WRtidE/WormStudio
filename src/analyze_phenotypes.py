@@ -9,7 +9,7 @@ Coordinates are within the saved cropped first frame, not the full video.
 """
 import argparse
 from pipeline_progress import report_progress
-from live_preview import report_preview
+from live_preview import enabled as preview_enabled, report_preview
 import csv
 import json
 import math
@@ -28,6 +28,7 @@ from centerline_topology import geometry_quality
 from worm_colors import worm_color
 from head_tail import detect_head_tail, endpoint_labels, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
 from display_centerlines import build_display, VERSION as DISPLAY_VERSION
+from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
 from quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
 
 from resource_paths import PROJECT_ROOT as ROOT
@@ -204,6 +205,9 @@ def load_sample(sample,mask_source=None,apply_guards=True):
     base=ROOT/'outputs'/sample
     default_source='sam2-tracking' if (base/'pipeline-config.json').exists() else ('multiworm-tracking-manual' if sample=='2-1-1314' else 'sam2-tracking')
     data=Path(mask_source) if mask_source is not None else base/default_source
+    if mask_source is None and (base/'pipeline-config.json').is_file():
+        from crop_recovery import tracking_directory
+        data=tracking_directory(base,json.loads((base/'pipeline-config.json').read_text(encoding='utf-8')))
     summary=json.loads((data/'summary.json').read_text(encoding='utf-8'))
     summary['mask_source']=str(data)
     n=summary['frames'];bad={}
@@ -271,9 +275,24 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     video_config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
     from quality_stage import load_guards
     guards=load_guards(data,ids,n,required=bool(video_config.get('quality_schema_version')))
+    tracking_guards = guards
     from identity_reassociation import reassociate,VERSION as ASSOCIATION_VERSION,RULES
     association_report=dict(version=ASSOCIATION_VERSION,rules=RULES,edges=[],scope='legacy guards unavailable')
-    if guards is not None:
+    if method == 'self_contact':
+        # Use the very same identity boundaries and reviewed jumps that constrained the fit.
+        for worm in ids:
+            fit_dir = ROOT/'outputs'/sample/wormtracer_source/f'worm-{worm}'
+            if guards is None:
+                raise ValueError('Missing mask quality guards for the self-contact fit')
+            records = json.loads((fit_dir/'identity-guards.json').read_text(encoding='utf-8'))
+            if len(records) != n or any(r['frame'] != f or r['worm_id'] != worm for f,r in enumerate(records)):
+                raise ValueError('Identity decisions do not match this track')
+            guards[worm] = records
+            if worm == ids[0]:
+                fit_report = json.loads((fit_dir/'events.json').read_text(encoding='utf-8'))
+                association_report = fit_report.get('identity_reassociation', dict(
+                    version=ASSOCIATION_VERSION, rules=RULES, edges=[], scope='original tracking guards'))
+    elif guards is not None:
         fit_qualities={}
         for worm in ids:
             path=ROOT/'outputs'/sample/wormtracer_source/f'worm-{worm}'/'quality.json'
@@ -294,6 +313,9 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         head_point=config.get('head_points_crop_xy',{}).get(f'{sample}:{worm}')
         manual=video_config.get('head_annotations',{}).get(str(worm))
         if manual is None and head_point is not None: manual=dict(frame=0,point=head_point)
+        if manual is not None and 'crop_xyxy' in source:
+            from head_tail import anchors_in_crop
+            manual=anchors_in_crop(manual,video_config.get('crop_xyxy',source['crop_xyxy']),source['crop_xyxy'])
         head_status='unconfirmed_A_B_endpoints'
         initial_width_ratio=None
         for frame in range(n):
@@ -323,6 +345,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             if not row['mask_valid']:reasons.extend(guard['reasons'] or ['tracking_contact_or_area_outlier'])
             if fit_quality is not None:
                 item=fit_quality[frame]
+                if method == 'self_contact':
+                    row['self_contact_state'] = item['selected_candidate']
+                if item.get('contact_bridge'):
+                    row['contact_bridge']=json.dumps(item['contact_bridge'])
                 reasons.extend(item['quality_reasons'])
                 row.update(mask_valid=row['mask_valid'] and item['mask_valid'],centerline_topology=item['topology'],
                            centerline_candidate=item['selected_candidate'],branch_score_margin=item['branch_score_margin'])
@@ -341,12 +367,18 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                 else:
                     p=fitted[frame].copy()
                     if not np.isfinite(p).all(): raise ValueError('centerline_missing')
-                    dt=ndimage.distance_transform_edt(mask)
-                    r=ndimage.map_coordinates(dt,[p[:,1],p[:,0]],order=1,mode='constant')
+                    if method == 'self_contact':
+                        x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
+                        dt = ndimage.distance_transform_edt(np.pad(mask[y:y+h,x:x+w],2))
+                        coords = (p - [x-2,y-2]).T[::-1]
+                    else:
+                        dt = ndimage.distance_transform_edt(mask)
+                        coords = p.T[::-1]
+                    r=ndimage.map_coordinates(dt,coords,order=1,mode='constant')
                     inside=ndimage.map_coordinates(mask.astype(float),[p[:,1],p[:,0]],order=0,mode='constant')
                     qa=dict(centerline_inside_fraction=float(inside.mean()),**geometry_quality(p))
                     qa.pop('crossing_segments')
-                    if qa['local_hairpin']:reasons.append('local_hairpin')
+                    if method != 'self_contact' and qa['local_hairpin']:reasons.append('local_hairpin')
                 center=p.mean(axis=0)
                 if fitted is not None:
                     reverse=False  # Preserve extracted geometry; head order is resolved below.
@@ -359,13 +391,17 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                 if reverse:p,r=p[::-1].copy(),r[::-1].copy()
                 radius_profiles[frame]=r
                 if qa.get('skeleton_path_fraction',1)<.7:reasons.append('branched_or_contact_skeleton')
-                if qa['centerline_inside_fraction']<.97:reasons.append('centerline_outside_mask')
+                if method != 'self_contact' and qa['centerline_inside_fraction']<.97:reasons.append('centerline_outside_mask')
                 length=float(np.linalg.norm(np.diff(p,axis=0),axis=1).sum()*scale)
                 row.update(length_um=length,volume_estimate_um3=frustum_volume(p,r)*scale**3,
                            mean_width_um=float(2*r.mean()*scale),head_candidate_angle_deg=signed_angle(p),
                            opposite_end_angle_deg=signed_angle(p[::-1]),**qa)
                 row['endpoint_a_angle_deg']=signed_angle(p)
+                if row.get('contact_bridge'):
+                    row['mean_width_um']=np.nan  # Overlapping silhouettes inflate the distance-transform width.
                 row['volume_valid']=not reasons and row.get('centerline_topology','simple')=='simple'
+                if method == 'self_contact' and (qa.get('local_hairpin') or qa['centerline_inside_fraction'] < .97):
+                    row['volume_valid'] = False
                 if not row['volume_valid']:row['volume_estimate_um3']=np.nan
                 if head_status=='unconfirmed_A_B_endpoints':row['head_candidate_angle_deg']=np.nan
                 row['head_x_crop_px'],row['head_y_crop_px']=p[0]
@@ -383,7 +419,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         lengths=np.array([r['length_um'] for r in rows]);median_length=pose_length_reference(rows)
         # Detect incomplete/merged masks even if the tracker never returned empty.
         for i in range(n):
-            if valid[i] and np.isfinite(median_length) and not (.65*median_length<=lengths[i]<=1.35*median_length):
+            if method != 'self_contact' and valid[i] and np.isfinite(median_length) and not (.65*median_length<=lengths[i]<=1.35*median_length):
                 valid[i]=False;rows[i]['quality_reason']+=';length_outlier';rows[i]['valid_for_summary']=False;rows[i]['centerline_valid']=False
                 rows[i]['volume_valid']=False;rows[i]['volume_estimate_um3']=np.nan
         # Individual metrics need both local geometry and continuous identity.
@@ -396,10 +432,48 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         head_valid=valid & np.array([r.get('centerline_topology','simple')=='simple'
             and not r.get('endpoint_a_inferred',False) and not r.get('endpoint_b_inferred',False) for r in rows])
         from head_appearance import extract_profiles
-        intensity_profiles=extract_profiles(source,poses,radius_profiles,head_valid)
+        endpoint_visible = None
+        if method == 'self_contact':
+            head_valid = valid
+            if fit_quality is not None:
+                endpoint_visible = [[r.get('endpoint_a_inferred') is False,
+                                     r.get('endpoint_b_inferred') is False] for r in fit_quality]
+        seed_mode = video_config.get('head_detection','twardis') in ('taper_seed','manual_seed')
+        intensity_profiles = (None if method == 'self_contact' and seed_mode else
+                              extract_profiles(source,poses,radius_profiles,head_valid))
         heads=detect_head_tail(poses,head_valid,manual=manual,
             mode=video_config.get('head_detection','twardis'),parameters=config.get('head_detection_parameters'),
-            segment_ids=[r['identity_segment'] for r in rows],radius_profiles=radius_profiles,intensity_profiles=intensity_profiles,fps=fps)
+            segment_ids=[r['identity_segment'] for r in rows],radius_profiles=radius_profiles,intensity_profiles=intensity_profiles,
+            fps=fps,endpoint_visible=endpoint_visible,
+            pose_gap_allowed=[not r['centerline_valid'] and r['source_valid'] and r['mask_valid'] and r['identity_valid']
+                              for r in rows] if endpoint_visible is not None else None)
+        from head_temporal import apply_contact_directions
+        apply_contact_directions(heads,rows,fit_quality,video_config.get('head_detection','twardis'))
+        candidate_path=ROOT/'outputs'/sample/wormtracer_source/f'worm-{worm}'/'diagnostic-candidates.npy'
+        candidates={}
+        if candidate_path.exists():
+            raw_candidates=np.load(candidate_path,allow_pickle=False)
+            if raw_candidates.shape!=(n,101,2):raise ValueError('Display candidate shape mismatch')
+            candidates={(worm,i):p
+                        for i,p in enumerate(raw_candidates) if np.isfinite(p).all()}
+        # Display geometry is still in its native point order here.
+        for row in rows:
+            row['pose_valid'] = row['centerline_valid']
+        visible = build_display(rows,lines,candidates,get_mask,centerline)
+        if method == 'self_contact' and fit_quality and video_config.get('head_detection') != 'manual_only':
+            from head_temporal import orient_loop_reviews
+            orient_loop_reviews(rows, heads, fit_quality, visible, worm)
+        mode = video_config.get('head_detection','twardis')
+        if seed_mode and method != 'self_contact':
+            from endpoint_order import order_endpoints
+            order_endpoints(rows, heads, visible, worm, fps, manual, len(ids)==1,
+                            intensity_profiles, config.get('head_detection_parameters'))
+        for i,row in enumerate(rows):
+            key = (worm,i)
+            if key not in visible:
+                continue
+            reverse = row.get('endpoint_order_reversed',heads[i]['head_endpoint']==1)
+            display_lines[key] = visible[key][::-1].copy() if reverse else visible[key]
         for i,(row,head) in enumerate(zip(rows,heads)):
             row.update(head)
             row['head_metrics_valid']=bool(valid[i] and head['head_endpoint'] is not None and head['head_identity_confirmed'])
@@ -407,7 +481,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             for key in ('head_x_crop_px','head_y_crop_px','tail_x_crop_px','tail_y_crop_px','heading_x','heading_y'): row[key]=np.nan
             p=lines.get((worm,i))
             if p is None: continue
-            if head['head_endpoint']==1:
+            reverse = head['head_endpoint']==1
+            if row['display_source'] in ('formal','geometry_review'):
+                reverse = row.get('endpoint_order_reversed', reverse)
+            if reverse:
                 p=p[::-1].copy();lines[(worm,i)]=p
                 a,b=row.get('endpoint_a_inferred',False),row.get('endpoint_b_inferred',False)
                 row['endpoint_a_inferred'],row['endpoint_b_inferred']=b,a
@@ -422,7 +499,9 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                 row['tail_x_crop_px'],row['tail_y_crop_px']=p[-1]
                 heading=p[10]-p[30];heading/=max(np.linalg.norm(heading),1e-9)
                 row['heading_x'],row['heading_y']=heading
-        for row in rows:finish_dimensions(row)
+        for i, row in enumerate(rows):
+            finish_dimensions(row)
+            measure_posture(row, lines.get((worm, i)), scale)
         confirmed_frames=sum(r['head_identity_confirmed'] for r in rows)
         candidate_frames=sum(r['head_detection_status'] in CANDIDATE_STATUSES for r in rows)
         known_frames=confirmed_frames+candidate_frames
@@ -437,8 +516,12 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         trajectory_runs=[idx for segment in np.unique(segments) for idx in runs(mask_valid & (segments==segment))]
         smoothed=np.full_like(centers,np.nan)
         for idx in trajectory_runs:
-            local=smooth_valid(centers[idx],np.ones(len(idx),bool),window)
-            smoothed[idx]=local
+            segment_centers = centers[idx]
+            if np.all(segment_centers == segment_centers[0]):
+                # Filtering constant coordinates can create a tiny artificial path.
+                smoothed[idx] = segment_centers
+            else:
+                smoothed[idx] = smooth_valid(segment_centers, np.ones(len(idx), bool), window)
         velocity=np.full_like(smoothed,np.nan)
         for idx in trajectory_runs:
             if len(idx)>=2:velocity[idx]=np.gradient(smoothed[idx],times[idx],axis=0)
@@ -498,7 +581,14 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             median_area_um2=finite_stat([rows[i]['area_um2'] for i in np.flatnonzero(mask_valid)]),
             median_volume_estimate_um3=finite_stat([rows[i]['volume_estimate_um3'] for i in np.flatnonzero(valid)]),
             mean_speed_um_s=finite_stat(speeds,np.mean),mean_speed_bl_s=mean_speed,
-            path_length_um=float(sum(np.linalg.norm(np.diff(smoothed[idx],axis=0),axis=1).sum() for idx in trajectory_runs)) if np.isfinite(speeds).any() else np.nan,
+            **trajectory_statistics(smoothed, times, trajectory_runs),
+            **behavior_statistics(rows, times, trajectory_runs),
+            normalized_speed_valid_frames=int(np.isfinite(bl_s).sum()),
+            length_valid_frames=int(np.isfinite(lengths[valid]).sum()),
+            area_valid_frames=int(sum(np.isfinite(rows[i]['area_um2']) for i in np.flatnonzero(mask_valid))),
+            volume_valid_frames=int(sum(np.isfinite(rows[i]['volume_estimate_um3']) for i in np.flatnonzero(valid))),
+            speed_valid_frames=int(np.isfinite(speeds).sum()),
+            head_angle_valid_frames=int(np.isfinite(angle_smooth).sum()),
             explored_bbox_diagonal_bl=spread,observed_valid_duration_s=duration,
             directional_bend_count=len(events) if angle_valid.any() else None,directional_bends_per_min=len(events)*60/duration if duration else None,
             observed_complete_cycles=cycles if angle_valid.any() else None,
@@ -506,6 +596,18 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             head_candidate_half_excursion_deg=float(np.subtract(*np.nanpercentile(angle_smooth,[95,5]))/2) if angle_valid.any() else None,
             activity_class_provisional=activity,
             movement_state_counts={state:sum(r['movement_state']==state for r in rows) for state in sorted({r['movement_state'] for r in rows})}))
+        for field, summary_key, count_key in (
+                ('mean_width_um', 'median_width_um', 'width_valid_frames'),
+                ('length_width_ratio', 'median_length_width_ratio', 'ratio_valid_frames'),
+                ('body_extension', 'median_body_extension', 'extension_valid_frames'),
+                ('midbody_abs_curvature_per_um', 'median_midbody_abs_curvature_per_um', 'curvature_valid_frames')):
+            values = [row[field] for row in rows if row['valid_for_summary']
+                      and (field != 'mean_width_um' or row.get('centerline_topology', 'simple') == 'simple')
+                      and np.isfinite(row[field])]
+            all_summaries[-1][summary_key] = finite_stat(values)
+            all_summaries[-1][count_key] = len(values)
+            if field == 'mean_width_um':
+                all_summaries[-1]['mean_width_um'] = finite_stat(values, np.mean)
         if source.get('measurement_mode') == 'pixels':
             from measurement_units import pixel_fields
             for row in rows: pixel_fields(row)
@@ -515,13 +617,6 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         tracklet_reports.append(tracklet_report)
         all_summaries[-1].update(tracklet_pose_frames=sum(r['tracklet_pose_valid'] for r in rows),
             tracklet_additional_pose_frames=sum(r['tracklet_pose_valid'] and not r['identity_valid'] for r in rows))
-        candidate_path=ROOT/'outputs'/sample/wormtracer_source/f'worm-{worm}'/'diagnostic-candidates.npy'
-        candidates={}
-        if candidate_path.exists():
-            raw_candidates=np.load(candidate_path,allow_pickle=False)
-            if raw_candidates.shape!=(n,101,2):raise ValueError('Display candidate shape mismatch')
-            candidates={(worm,i):p for i,p in enumerate(raw_candidates) if np.isfinite(p).all()}
-        display_lines.update(build_display(rows,lines,candidates,get_mask,centerline))
         all_summaries[-1].update(display_frames=sum(r['display_valid'] for r in rows),
             display_source_counts={k:sum(r['display_source']==k for r in rows) for k in sorted({r['display_source'] for r in rows})})
         diagnostics.extend(exclude_unusable(row) for row in rows)
@@ -541,8 +636,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     with (output/'bend_events.csv').open('w',newline='',encoding='utf-8-sig') as f:
         fields=['sample','worm_id','head_status','frame','time_s','direction','angle_deg']
         w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(all_events)
-    report=dict(sample=sample,mask_source=str(data),centerline_method=method,centerline_source=wormtracer_source if method!='skeleton' else 'skeleton',fps=fps,scale_um_per_px=None if source.get('measurement_mode')=='pixels' else scale,calibration=scale_info,
-                measurement_mode=source.get('measurement_mode','physical'), metric_definition_version='ppt-20261021-v2',
+    report=dict(sample=sample,crop_xyxy=source['crop_xyxy'],mask_source=str(data),centerline_method=method,centerline_source=wormtracer_source if method!='skeleton' else 'skeleton',fps=fps,scale_um_per_px=None if source.get('measurement_mode')=='pixels' else scale,calibration=scale_info,
+                measurement_mode=source.get('measurement_mode','physical'), metric_definition_version=METRIC_VERSION,
                 tracklet_version=TRACKLET_VERSION,tracklet_scope=tracklet_report['scope'],
                 identity_reassociation_version=ASSOCIATION_VERSION,identity_reviews=video_config.get('identity_reviews',[]),
                 timebase=timebase,
@@ -557,6 +652,13 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                          'Anonymous area needs source/mask/scale. Individual posture and trajectories additionally require identity continuity; summaries exclude unverified identities. Continuity is not biological ground truth.',
                          'body-relative endpoint-bending and image-appearance candidates use reliable continuous segments; ambiguous/contact frames remain A/B. Evidence scores are not probabilities. Volume excludes self-contact frames.',
                          'Speed is in the camera coordinate system; no stage drift correction.'])
+    if method == 'tapnext' and len(ids) == 1 and tracking_guards is not None:
+        from adaptive_endpoints import review_output
+        _, endpoint_summary = review_output(output/'size-adaptive', all_rows, display_lines,
+                                            tracking_guards[ids[0]], get_mask, source, sample,
+                                            ROOT/'outputs'/sample/wormtracer_source/f'worm-{ids[0]}')
+        report['adaptive_endpoint_version'] = endpoint_summary['version']
+        report['adaptive_endpoint_body_scale'] = endpoint_summary['body_scale']
     report=json_safe(report)
     (output/'summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
     np.savez_compressed(output/'diagnostic-centerlines.npz',**{f'w{w}_f{f}':p for (w,f),p in lines.items()})
@@ -603,18 +705,39 @@ def write_report(output,report,rows):
     simple=[{k:v for k,v in w.items() if not isinstance(v,(list,dict))} for w in report['worms']]
     with (output/'worm_summary.csv').open('w',newline='',encoding='utf-8-sig') as f:
         writer=csv.DictWriter(f,fieldnames=list(simple[0])); writer.writeheader(); writer.writerows(simple)
+    with (output/'behavior_events.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+        fields = ['worm_id','event','start_frame','end_frame','start_s','end_s','duration_s',
+                  'left_censored','right_censored']
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for worm in report['worms']:
+            writer.writerows(dict(worm_id=worm['worm_id'], **event) for event in worm['behavior_events'])
+    with (output/'trajectory_segments.csv').open('w', newline='', encoding='utf-8-sig') as handle:
+        fields = ['worm_id','start_frame','end_frame','start_s','end_s','net_displacement','unit']
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for worm in report['worms']:
+            writer.writerows(dict(worm_id=worm['worm_id'], unit=unit, **part) for part in worm['trajectory_segments'])
     scale_text='仅像素单位；未提供物理标定。' if pixel_mode(report) else f"像素比例：{report['scale_um_per_px']:.6f} μm/px。"
-    text=[f"# {report['sample']} 表型分析",'',scale_text,
-          '','|线虫|有效姿态帧/总帧|体长 '+unit+'|面积 '+unit+'²|体积估算 '+unit+'³|平均速度 '+unit+'/s|头摆 次/min|',
-          '|---|---|---|---|---|---|---|']
-    for w in report['worms']:
-        def metric(name):
-            v=w.get(key(name)); return '缺失' if v is None else f'{v:.2f}'
-        text.append(f"|{w['worm_id']}|{w['valid_frames']}/{w['frames']}|{metric('median_length_um')}|{metric('median_area_um2')}|{metric('median_volume_estimate_um3')}|{metric('mean_speed_um_s')}|{metric('directional_bends_per_min')}|")
+    from result_metrics import present_report
+    text = [f"# {report['sample']} 表型分析", '', scale_text]
+    for worm in present_report(report, report['worms'])['worms']:
+        text.extend(['', f"## 线虫 {worm['worm_id']:g}", '',
+                     '|指标|数值|单位|有效帧|有效时长（s）|', '|---|---:|---|---:|---:|'])
+        for metric in worm['metrics']:
+            value = metric['value']
+            frames = metric['valid_frames']
+            seconds = metric['valid_duration_s']
+            cells = [metric['label'], '—' if value is None else f'{value:.5g}',
+                     metric['unit'], '—' if frames is None else f'{frames:g}',
+                     '—' if seconds is None else f'{seconds:.3f}']
+            text.append('|' + '|'.join(cells) + '|')
     text += ['', '头摆只统计人工确认且连续可靠的片段；缺失不是零。单向弯曲记一次，频率分母为有效连续观察秒数。',
              '头部角度采用中线0–10%与10–30%方向夹角；幅度为绝对角度P95，另报分位半跨度。阈值为工程口径，尚需独立人工事件验证。',
              '体积采用圆形截面分段圆台估算，不是实测三维体积。速度位于图像坐标系，未校正载物台漂移。',
              'A/B/C与转圈为待验证研究规则；本轮不作为正式表型结论。',
+             '运动与方向时长在各自的连续有效窗口内按相邻帧时间中点分配。停顿次数只计可见起点；事件表中的 left_censored / right_censored 表示该端被窗口截断。倒退事件需同一头尾片段内从前进直接切换为后退。',
+             '', '[停顿与倒退事件](behavior_events.csv) · [分段净位移](trajectory_segments.csv)',
              '', '[逐帧数据](per_frame_metrics.csv) · [单虫汇总](worm_summary.csv) · [摆动事件](bend_events.csv) · [质量](quality.json)',
              '', '![表型曲线](phenotype-plots.png)']
     (output/'报告.md').write_text('\n'.join(text),encoding='utf-8')
@@ -633,12 +756,17 @@ def render(sample,source,output,ids,rows,lines):
         report_progress(frame,source['frames'],'绘制绿色轮廓、白色中线与逐帧指标',fraction=.6+.39*frame/source['frames'])
         ok,image=cap.read()
         if not ok:raise RuntimeError('Truncated source video')
-        image=image[y0:y1,x0:x1].copy()
+        raw=image[y0:y1,x0:x1]
+        image=raw.copy()
+        preview_masks = []
         current_rows = [lookup[(worm,frame)] for worm in ids]
         for worm, row in zip(ids,current_rows):
-            draw_worm(image,get_mask(worm,frame),lines.get((worm,frame)),row)
+            mask = get_mask(worm,frame)
+            if preview_enabled():
+                preview_masks.append((worm, mask))
+            draw_worm(image,mask,lines.get((worm,frame)),row)
         draw_hud(image,current_rows,frame,fps)
-        report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准')
+        report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准', raw=raw, masks=preview_masks)
         writer.write(cv2.copyMakeBorder(image,0,height%2,0,width%2,cv2.BORDER_CONSTANT))
         if frame in (0,source['frames']//2,source['frames']-1):write_png(output/f'preview-{frame:04d}.png',image)
     writer.release();cap.release();shutil.copy2(temp,output/'phenotypes-overlay.mp4');temp.unlink()
@@ -651,13 +779,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',default='all',help='Sample directory name; all retains the two original samples')
     parser.add_argument('--config',type=Path,default=ROOT/'phenotype_config.json')
-    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','tapnext'],default='wormtracer')
+    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','tapnext','self_contact'],default='wormtracer')
     parser.add_argument('--wormtracer-source',default=None,help='Default: contact correction if present, otherwise temporal')
     parser.add_argument('--render-only',action='store_true',help='Refresh videos and previews using saved measurements')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
     for sample in (['2-1-1314','5-1-910'] if args.sample=='all' else [args.sample]):
         from centerline_methods import method_source
-        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','tapnext') else None
+        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','tapnext','self_contact') else None
         fit_source=args.wormtracer_source or default_source or ('wormtracer-contact-corrected' if (ROOT/'outputs'/sample/'wormtracer-contact-corrected'/'mask-source.json').exists() else 'wormtracer-temporal')
         if args.render_only:
             _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if args.centerline_method!='skeleton' else None)

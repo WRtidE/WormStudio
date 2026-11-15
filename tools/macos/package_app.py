@@ -6,17 +6,18 @@ import json
 from pathlib import Path
 import plistlib
 import stat
-import struct
 import sys
 import tarfile
 import zipfile
 
 from packaging.utils import parse_wheel_filename, canonicalize_name
-from PIL import Image, ImageDraw
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from export_source import ROOT, source_files
+sys.path.insert(0, str(ROOT/'src'))
+from electron_desktop import VERSION, verified_archive
 
 APP = 'WormStudio.app/Contents/'
 RES = APP + 'Resources/'
@@ -24,29 +25,16 @@ PYTHON_HASH = '9d50cd14269d1ea8601ab279ae0175bdaad7cb151700f53f201a1ea7d0dc53b7'
 
 
 def icon():
-    im = Image.new('RGBA', (512, 512))
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle((16,16,496,496), radius=108, fill='#164b48')
-    points = []
-    import math
-    for i in range(320):
-        points.append((96+i, 258 + 85*math.sin((i-35)*math.pi/150)))
-    d.line(points, fill='#9de5bd', width=27)
-    for x,y in [points[0],points[-1]]:
-        d.ellipse((x-13,y-13,x+13,y+13),fill='#9de5bd')
-    x,y=points[-1]
-    d.ellipse((x-7,y-7,x+7,y+7),fill='#fff5c8')
-    parts = []
-    for tag, size in [(b'icp4',16),(b'icp5',32),(b'icp6',64),(b'ic07',128),(b'ic08',256),(b'ic09',512)]:
+    with Image.open(ROOT/'web/wormstudio-icon.png') as image:
         out = io.BytesIO()
-        im.resize((size,size),Image.Resampling.LANCZOS).save(out,'PNG')
-        parts.append(tag + struct.pack('>I',len(out.getvalue())+8) + out.getvalue())
-    data = b''.join(parts)
-    return b'icns' + struct.pack('>I',len(data)+8) + data
+        image.save(out, format='ICNS')
+        return out.getvalue()
 
 
 def build(cache, models, sam, example, destination):
     from fetch_wheels import rank
+    electron = cache/'electron'/f'electron-v{VERSION}.zip'
+    verified_archive(electron, 'darwin-arm64')
     pins = {canonicalize_name(p.split('==')[0]):p.split('==')[1]
             for p in (HERE/'pins.txt').read_text().splitlines() if p and not p.startswith('#')}
     wheels = {}
@@ -76,10 +64,16 @@ def build(cache, models, sam, example, destination):
             z.writestr(entry, data)
         put(APP+'Info.plist', plistlib.dumps(dict(CFBundleExecutable='WormStudio', CFBundleName='WormStudio',
             CFBundleDisplayName='WormStudio', CFBundlePackageType='APPL', CFBundleVersion='1',
-            CFBundleIdentifier='org.wormstudio.desktop', CFBundleShortVersionString='1.0',
+            CFBundleIdentifier='org.wormstudio.desktop', CFBundleShortVersionString=json.loads((ROOT/'tools/electron/package.json').read_text())['version'],
             CFBundleIconFile='WormStudio.icns', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True)))
         put(RES+'WormStudio.icns', icon())
         put(APP+'MacOS/WormStudio', (HERE/'WormStudio.sh').read_text(encoding='utf-8').encode(), 0o755)
+        # Preserve Electron framework symlinks, executable modes and licenses.
+        with zipfile.ZipFile(electron) as runtime_zip:
+            for item in runtime_zip.infolist():
+                data = runtime_zip.read(item)
+                item.filename = RES+'electron/'+item.filename
+                z.writestr(item, data)
         put(RES+'desktop.py', (HERE/'desktop.py').read_bytes())
         put('先读我.txt', (HERE/'先读我.txt').read_bytes())
         put(RES+'requirements.lock', ('\n'.join(requirements)+'\n').encode())
@@ -95,7 +89,7 @@ def build(cache, models, sam, example, destination):
                     put(RES+m.name, handle.read(), 0o755 if m.mode & 0o111 else 0o644)
         for path in source_files():
             rel = path.relative_to(ROOT)
-            if rel.parts[0] in ('web','src','packages','config') or rel.name in ('studio.py','worm_pipeline.py','evaluation.py','THIRD_PARTY.md'):
+            if rel.parts[:2] == ('tools', 'electron') or rel.parts[0] in ('web','src','packages','config') or rel.name in ('studio.py','worm_pipeline.py','evaluation.py','review_saved_result.py','THIRD_PARTY.md'):
                 z.write(path, RES+'app/'+rel.as_posix())
         z.write(example, RES+'app/examples/practice.avi')
         for path in [sam/'LICENSE', *sorted((sam/'sam2').rglob('*'))]:

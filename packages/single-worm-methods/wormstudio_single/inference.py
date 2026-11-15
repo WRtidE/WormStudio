@@ -5,6 +5,7 @@ from contextlib import nullcontext
 import os
 import sys
 import tempfile
+import zipfile
 
 import cv2
 import numpy as np
@@ -26,7 +27,18 @@ def load_tracker(checkpoint,device):
     torch.manual_seed(0)
     if device=='cuda' and not torch.cuda.is_available():
         raise RuntimeError('CUDA is unavailable. Select device=cpu for CPU inference.')
-    model=TAPNextPP.from_checkpoint(path,device=device)
+    checkpoint_context = nullcontext()
+    if sys.platform == 'darwin' and zipfile.is_zipfile(path):
+        # The official ZIP checkpoint includes training tensors that inference
+        # never reads. Let the OS page those storages from the original file.
+        try:
+            from torch.utils.serialization import config as serialization_config
+        except ImportError:
+            pass  # Older PyTorch versions use the upstream loading behavior.
+        else:
+            checkpoint_context = serialization_config.patch({'load.mmap': True})
+    with checkpoint_context:
+        model=TAPNextPP.from_checkpoint(path,device=device)
     if device=='cuda':torch.cuda.synchronize()
     return model
 

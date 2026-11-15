@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from display_centerlines import build_display,inside_fraction,supported_curve
+from display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve
 from quality_schema import VERSION
 
 class DisplayTests(unittest.TestCase):
@@ -14,6 +14,21 @@ class DisplayTests(unittest.TestCase):
         self.assertIn((1,0),result);self.assertEqual(r['display_source'],'geometry_review')
         self.assertFalse(r['identity_valid']);self.assertFalse(r['centerline_valid'])
         self.assertEqual(inside_fraction(result[(1,0)],mask),1.)
+
+    def test_short_display_gap_uses_the_current_mask_and_preserves_measurement_status(self):
+        rows = [dict(self.row(i),identity_valid=True,display_reason='no_supported_curve') for i in range(3)]
+        mask = np.zeros((40,120),bool)
+        mask[12:23,5:115] = True
+        p = np.column_stack([np.linspace(10,110,101),np.full(101,15.)])
+        output = {(1,0):p, (1,2):p[::-1]+[0,4]}
+        fill_display_gaps(rows,output,lambda w,f:mask)
+        self.assertEqual(rows[1]['display_source'],'temporal_mask_review')
+        self.assertEqual(inside_fraction(output[1,1],mask),1.)
+        self.assertFalse(rows[1]['centerline_valid'])
+        del output[1,1]
+        rows[1].update(display_reason='no_supported_curve',identity_valid=False)
+        fill_display_gaps(rows,output,lambda w,f:mask)
+        self.assertNotIn((1,1),output)
     def test_current_mask_refit_and_empty_source(self):
         mask=np.ones((20,100),bool);p=np.column_stack([np.linspace(2,98,101),np.full(101,10.)])
         r=self.row();r['mask_valid']=False

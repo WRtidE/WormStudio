@@ -63,9 +63,9 @@ window.ResultPlayer=(()=>{
   function end(e){pointers.delete(e.pointerId);if(!pointers.size)canvas.classList.remove('dragging');}
   for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,end);
   canvas.addEventListener('keydown',e=>{
-    if(['+','=','-','0','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();
+    if(['+','=','-','0','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();
     if(e.key==='+'||e.key==='=')zoom(1.25);else if(e.key==='-')zoom(.8);else if(e.key==='0')fit();
-    else if(transform){const delta={ArrowLeft:[30,0],ArrowRight:[-30,0],ArrowUp:[0,30],ArrowDown:[0,-30]}[e.key];if(delta){transform.x+=delta[0];transform.y+=delta[1];apply();}}
+    else if(transform){const delta={ArrowUp:[0,30],ArrowDown:[0,-30]}[e.key];if(delta){transform.x+=delta[0];transform.y+=delta[1];apply();}}
   });
   el('result-zoom-in').onclick=()=>zoom(1.25);el('result-zoom-out').onclick=()=>zoom(.8);
   el('result-fit').onclick=fit;

@@ -6,7 +6,7 @@ must have reliable simple poses on both sides and a distinct branch choice.
 Scores and thresholds are engineering checks, not calibrated accuracy.
 """
 import numpy as np
-from .skeleton import extract_niu, line_metrics, valid_line, align
+from .skeleton import extract_body_geometry, line_metrics, align
 from .geometry import topology_candidates, geometry_quality
 
 VERSION = 'conservative-crossing-v1'
@@ -19,6 +19,53 @@ def ordered_error(a, b):
     """Correspondence distance, allowing an arbitrary A/B reversal."""
     return min(float(np.mean(np.linalg.norm(a-b,axis=1))),
                float(np.mean(np.linalg.norm(a[::-1]-b,axis=1))))
+
+
+def recover_endpoint_jumps(baseline, quality, diagnostic):
+    """Reconsider an isolated, marginal tip jump using two observed frames on each side."""
+    # Freeze the original decisions: a recovered frame cannot validate another.
+    reliable = [q['centerline_valid'] and q['mask_valid'] and q['topology'] == 'simple'
+                for q in quality]
+    for i in range(2, len(quality) - 2):
+        q = quality[i]
+        neighbors = [i - 2, i - 1, i + 1, i + 2]
+        if (q['quality_reasons'] != ['centerline_temporal_jump'] or not q['mask_valid']
+                or q['topology'] != 'simple' or not all(reliable[j] for j in neighbors)):
+            continue
+        length = q['reference_length_px']
+        if not length:
+            continue
+        # Work in body lengths after removing translation. Match both ends
+        # independently of how the skeletonizer ordered the vertices.
+        current = (diagnostic[i] - diagnostic[i].mean(0)) / length
+        others = baseline[neighbors]
+        others = (others - others.mean(axis=1, keepdims=True)) / length
+        ends = current[[0, -1]]
+        tips = others[:, [0, -1]]
+        direct = np.linalg.norm(tips - ends, axis=2).mean(axis=1)
+        reverse = np.linalg.norm(tips[:, ::-1] - ends, axis=2).mean(axis=1)
+        if np.any(abs(direct - reverse) < .10):
+            continue
+        flip = reverse < direct
+        others[flip] = others[flip, ::-1]
+        previous_step = np.linalg.norm(current - others[1], axis=1)
+        tip_step = float(previous_step[[0, -1]].max())
+        limit = DEFAULTS['max_step_endpoint_fraction']
+        if (previous_step.mean() > DEFAULTS['max_step_shape_fraction']
+                or not limit < tip_step <= 1.10 * limit):
+            continue
+
+        # Both the inner and outer pair must support the observed pose.
+        # A one-frame tip excursion that returns to its old position fails.
+        before2, before1, after1, after2 = others
+        predictions = np.stack([(before1 + after1) / 2, (before2 + after2) / 2])
+        errors = np.linalg.norm(predictions - current, axis=2)
+        tip_error = float(errors[:, [0, -1]].max())
+        if tip_error > .60 * limit or errors.mean(axis=1).max() > .5 * DEFAULTS['max_step_shape_fraction']:
+            continue
+        baseline[i] = diagnostic[i]
+        q.update(centerline_valid=True, quality_reasons=[], endpoint_jump_review=dict(
+            supporting_frames=neighbors, step_bl=tip_step, max_midpoint_error_bl=tip_error))
 
 
 def sequence_choice(frames, reference):
@@ -73,9 +120,10 @@ def resolve_sequence(masks, mask_valid=None, fps=30., parameters=None):
     if mask_valid.shape!=(count,):raise ValueError('Mask validity frame mismatch')
     records=[];simple_lengths=[]
     for frame_index,mask in enumerate(masks):
-        mask=np.asarray(mask,bool);niu=extract_niu(mask);candidates=[]
-        if niu['topology']=='simple' and valid_line(niu['ordered']):
-            candidates=[dict(points=niu['ordered'],name='simple_medial',connection_cost=0.)]
+        mask=np.asarray(mask,bool);candidates=[]
+        niu, path_source = extract_body_geometry(mask)
+        if path_source is not None:
+            candidates=[dict(points=niu['ordered'],name='simple_medial' if path_source == 'robust_medial' else path_source,connection_cost=0.)]
             kind='simple'
         else:
             candidates,_,info=topology_candidates(mask)
@@ -111,7 +159,8 @@ def resolve_sequence(masks, mask_valid=None, fps=30., parameters=None):
     output=np.full((count,101,2),np.nan);diagnostic=output.copy();quality=[]
     for f,r in enumerate(records):
         quality.append(dict(frame=f,mask_valid=bool(mask_valid[f]),centerline_valid=False,
-            topology=r['topology'],selected_candidate='none',branch_score_margin=None,
+            topology=r['topology'],raw_skeleton_topology=r['niu']['topology'],
+            raw_skeleton_endpoints=int(r['niu']['endpoints']),selected_candidate='none',branch_score_margin=None,
             quality_reasons=[],reference_length_px=reference))
     available=np.array([bool(r['candidates']) for r in records]) & mask_valid
     groups=np.split(np.flatnonzero(available),np.where(np.diff(np.flatnonzero(available))>1)[0]+1)

@@ -1,9 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Worm Studio · 线虫分析工作台</title><link rel="stylesheet" href="./studio.css"><link rel="stylesheet" href="./studio-evaluation.css"><link rel="stylesheet" href="./workspace-usability.css"><link rel="stylesheet" href="./studio-clean.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Worm Studio · 线虫分析工作台</title><link rel="icon" type="image/png" href="./wormstudio-icon.png"><link rel="stylesheet" href="./studio.css"><link rel="stylesheet" href="./studio-evaluation.css"><link rel="stylesheet" href="./workspace-usability.css"><link rel="stylesheet" href="./studio-clean.css"><link rel="stylesheet" href="./channel-counts.css"></head>
 <body class="studio-page" data-workspace-view="preview">
 <svg class="svg-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
-<symbol id="i-worm" viewBox="0 0 24 24"><path d="M5 17c-4-7 6-11 8-5s-8 7-5 0 12-8 12-1"/></symbol>
 <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
 <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
 <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7V5h7l2 3h9v12H3zM12 11v6m-3-3h6"/></symbol>
@@ -20,7 +19,8 @@
 <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3 2.5c-.5.2-.5 1-.5 1.5M12 17h.01"/></symbol>
 </defs></svg>
 <aside id="library" class="library" aria-label="项目文件">
-  <div class="brand-row"><a class="brand" href="/studio"><span class="brand-mark"><svg><use href="#i-worm"/></svg></span><span>Worm Studio<small>线虫分析工作台</small></span></a><button id="collapse-sidebar" class="icon-button" title="收起文件栏" aria-label="收起文件栏"><svg><use href="#i-panel"/></svg></button></div>
+  <div class="brand-row"><a class="brand" href="/studio"><img class="brand-mark" src="./wormstudio-icon.png" alt=""><span>Worm Studio<small>线虫分析工作台</small></span></a><button id="collapse-sidebar" class="icon-button" title="收起文件栏" aria-label="收起文件栏"><svg><use href="#i-panel"/></svg></button></div>
+  <nav class="task-modes" aria-label="分析功能"><button type="button" data-mode="channel"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="18" rx="1"/><rect x="18" y="3" width="4" height="18" rx="1"/></svg>通道计数</button><button type="button" data-mode="phenotype" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M2 16c3-10 6-13 11-8 3 3 6 3 9-2-1 8-6 10-11 6-4-3-5 1-7 5z"/></svg>表征识别</button></nav>
   <div class="library-import"><button id="import-files" class="import-button"><svg><use href="#i-plus"/></svg>导入文件<span>Ctrl O</span></button><button id="import-folder" class="icon-button" aria-label="导入文件夹" title="导入文件夹（保留层级）"><svg><use href="#i-folder"/></svg></button></div>
 
   <p id="library-error" class="library-error" role="alert" hidden></p>
@@ -31,13 +31,50 @@
   <div id="file-list" class="file-list" aria-label="文件列表"></div>
   <div id="evaluation-library" class="evaluation-library" hidden><p class="section-caption">评测标注任务 <span id="eval-task-count">0</span></p><div id="eval-task-list" class="file-list" aria-label="评测任务列表"></div></div>
   <div id="library-empty" class="library-empty"><svg><use href="#i-file"/></svg><p>还没有文件</p><span>导入视频，开始你的第一次分析</span><button id="clear-file-filter" class="small-button" hidden>清除筛选</button></div>
+  <details id="channel-history" hidden><summary>计数记录</summary><div id="channel-history-list"></div></details>
   <details id="saved-projects"><summary>历史任务</summary><div class="history-content"><div id="target-video-list"></div><div id="saved-run-list"></div><button id="refresh-projects" class="plain-button">刷新任务列表</button></div></details>
   <div class="library-bottom"><button id="current-analysis" class="plain-button" hidden><span class="status-dot"></span>返回当前分析<svg><use href="#i-arrow"/></svg></button><div id="layout-feedback" class="layout-feedback" role="status" hidden><span></span><button type="button">重试</button></div><div class="local-footer"><span class="status-dot"></span><span id="connection-label">正在连接本地服务</span></div></div>
 </aside>
 <main class="main-workspace">
-  <header class="workspace-header"><div class="breadcrumbs"><button id="expand-sidebar" class="icon-button" title="展开文件栏" aria-label="展开文件栏" hidden><svg><use href="#i-panel"/></svg></button><span>我的线虫实验</span><span class="slash">/</span><strong id="current-name">工作台</strong></div><div class="header-right"><button id="focus-canvas" class="small-button" aria-pressed="false" hidden>专注画面</button><button id="cancel-run" class="small-button" hidden>取消当前处理</button><span id="session-badge" class="session-badge">本地工作区</span></div></header>
+  <header class="workspace-header"><div class="breadcrumbs"><button id="expand-sidebar" class="icon-button" title="展开文件栏" aria-label="展开文件栏" hidden><svg><use href="#i-panel"/></svg></button><span id="mode-crumb">表征识别</span><span class="slash">/</span><strong id="channel-name" hidden></strong><strong id="current-name">工作台</strong></div><div class="header-right"><button id="open-settings" class="small-button" hidden aria-label="设置"><svg aria-hidden="true"><use href="#i-sliders"/></svg>设置</button><button id="focus-canvas" class="small-button" aria-pressed="false" hidden>专注画面</button><button id="cancel-run" class="small-button" hidden>取消当前处理</button><span id="session-badge" class="session-badge">本地工作区</span></div></header>
+  <section id="channel-workspace" hidden aria-label="通道计数">
+    <nav class="count-tabs" aria-label="通道计数步骤"><button data-count-tab="setup">通道设置</button><button data-count-tab="count">计数进度</button><button data-count-tab="result">结果复核</button></nav>
+    <div id="count-message" role="status" hidden></div>
+    <div id="count-empty"><span id="count-empty-label" role="status">从左侧选择一个视频</span><button id="count-retry" class="small-button" hidden>重试</button></div>
+    <div id="count-work" hidden>
+      <section id="count-distribution" class="cross-panel" aria-label="通道分布" hidden>
+        <div class="cross-heading"><h2>通道分布</h2><span class="cross-total"><b id="cross-total"></b> 次越线</span>
+          <div class="cross-actions"><button id="cross-all" class="small-button" hidden>清除筛选</button><a id="cross-export" class="small-button" hidden>导出 Excel</a></div></div>
+        <div class="cross-scroll"><div id="cross-chart" role="group" aria-label="按通道筛选"></div></div>
+      </section>
+      <div id="count-layout" hidden>
+        <section id="count-config" aria-label="设置检测区域">
+          <div class="count-tools"><label for="count-channels">通道数</label><input id="count-channels" type="number" min="1" max="100" value="32">
+            <button class="small-button" id="count-adjust" aria-expanded="false" aria-controls="count-sliders">微调检测线</button>
+            <button id="count-start" class="primary">开始计数</button></div>
+          <div id="count-sliders" hidden>
+            <label>上边界 <output></output><input data-count-line="mask_top_ratio" type="range" min="0" max="1000"></label>
+            <label>越线 ↑ <output></output><input data-count-line="tripwire_ratio" type="range" min="0" max="1000"></label>
+            <label>下边界 <output></output><input data-count-line="mask_bottom_ratio" type="range" min="0" max="1000"></label>
+          </div>
+        </section>
+        <div class="count-stage"><svg id="count-view" role="img" aria-label="通道画面与检测线"></svg><span id="count-photo-status" role="status" hidden></span></div>
+        <div id="count-transport" hidden><strong id="count-status"></strong><progress id="count-progress" aria-label="计数进度"></progress><span id="count-position"></span><button id="count-pause" class="small-button">暂停计数</button></div>
+      </div>
+      <section id="cross-results" hidden aria-label="越线复核">
+        <section class="cross-panel cross-overview"><div class="cross-heading"><h2>完整视野</h2><div class="cross-view-actions"><button id="cross-return" class="small-button" hidden>回到越线帧</button><label><input type="checkbox" id="cross-markers" checked>叠加标记</label></div></div>
+          <div class="cross-stage" tabindex="0" role="group" aria-label="逐帧查看原片"><div id="cross-photo" hidden><img id="cross-full" alt="显微视频原帧"><i id="cross-band"></i><i class="cross-line" id="cross-line"></i></div><span id="cross-photo-status" role="status" hidden></span></div>
+          <div class="cross-transport"><button id="cross-before" class="small-button" aria-label="上一帧" title="上一帧">‹</button><input type="range" id="cross-seek" min="1" value="1" aria-label="原片帧"><button id="cross-after" class="small-button" aria-label="下一帧" title="下一帧">›</button><span id="cross-frame"></span></div>
+        </section>
+        <section class="cross-panel cross-evidence"><div class="cross-heading"><h2>越线前后</h2></div>
+          <p id="cross-status" role="status" hidden></p><div id="cross-triplet"></div>
+          <div id="cross-controls" hidden><span id="cross-single" hidden></span><select id="cross-choose" aria-label="选择越线记录"></select><button class="small-button" id="cross-prev" aria-label="上一次越线" title="上一次越线">‹</button><button class="small-button" id="cross-next" aria-label="下一次越线" title="下一次越线">›</button></div>
+        </section>
+      </section>
+    </div>
+  </section>
   <nav class="workspace-tabs" aria-label="工作区视图"><div class="view-tabs"><button data-view="preview" class="active" aria-current="page"><svg><use href="#i-video"/></svg>预览</button><button data-view="annotation" disabled><svg><use href="#i-sliders"/></svg>标注</button><button data-view="progress" disabled>进度</button><button data-view="results" disabled>结果</button></div><div id="result-switcher" role="group" aria-label="本次处理完成的视频" hidden><span class="result-scope-label">本次结果</span><button id="result-previous-video" class="icon-button" aria-label="上一个已完成视频" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><span id="result-video-name"></span><span id="result-position" aria-live="polite" aria-atomic="true"></span><button id="result-next-video" class="icon-button" aria-label="下一个已完成视频" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button></div><span id="tab-note">从一个视频开始</span></nav>
-  <section id="local-file-notice" class="local-file-notice" aria-label="本地文件启动提示" hidden><div><strong>当前为文件预览模式</strong><p>请双击 WormStudio 文件夹中的 <b>start.bat</b>，等待浏览器自动打开工作台。此页可预览素材，标注、评测与保存需要本地服务。</p></div><button id="local-file-help" class="small-button">查看启动步骤</button></section>
+  <section id="local-file-notice" class="local-file-notice" aria-label="本地文件启动提示" hidden><div><strong>当前为文件预览模式</strong><p>请打开 <b>WormStudio</b> 桌面应用以标注、评测和保存。</p></div><button id="local-file-help" class="small-button">查看启动步骤</button></section>
   <div id="preview-workspace" class="preview-workspace">
     <section class="preview-main" aria-label="文件预览区域">
       <section id="staging" aria-label="待标定队列">
@@ -45,7 +82,7 @@
         <ol id="staging-list" aria-labelledby="staging-label" hidden></ol>
       </section>
       <div id="welcome" class="welcome">
-        <div class="welcome-icon"><svg><use href="#i-worm"/></svg></div>
+        <img class="welcome-icon" src="./wormstudio-icon.png" alt="">
         <h1>从一段视频开始</h1>
         <p class="welcome-copy">观察、标注，了解线虫的每一次运动。</p>
         <button id="welcome-import" class="primary"><svg><use href="#i-plus"/></svg>导入实验文件</button>
@@ -76,9 +113,9 @@
       </div>
 
       <dialog id="result-summary-panel" class="result-summary-panel" aria-labelledby="result-summary-title"><div class="summary-dialog-heading"><h2 id="result-summary-title">整段表型汇总</h2><button id="result-summary-close" class="small-button" aria-label="关闭整段汇总">关闭</button></div><p class="summary-help">按各指标有效帧汇总，缺少头尾确认的指标显示 —。单位随本次标定设置显示。</p><section id="phenotype-panel" class="progress-card phenotype-panel" hidden>
-<p class="help">体长、面积与体积按有效帧取中位数，速度取平均值。成虫前 / 成虫后由实验记录确定，本程序不自动判龄。</p>
+<p class="help">形态指标取有效帧的中位数。路程和直线度按连续轨迹片段汇总，坐标以视频画面为准。</p>
 <div id="phenotype-worms" class="worm-tabs" role="group" aria-label="选择要查看指标的线虫"></div><p id="phenotype-context" class="phenotype-context"></p>
-<h3>生长发育</h3><div id="growth-metrics" class="metric-grid"></div><h3>运动指标</h3><div id="motion-metrics" class="metric-grid"></div>
+<h3>形态与姿态</h3><div id="growth-metrics" class="metric-grid"></div><h3>运动指标</h3><div id="motion-metrics" class="metric-grid"></div>
 <h3>头尾与活动分类</h3><div class="behavior-grid"><article class="metric-card"><span class="metric-label">头尾判断</span><strong id="head-result" class="behavior-value"></strong><p id="head-note"></p><p class="metric-definition">形态参考：头部较圆、可见咽部；尾部较尖。A/B 端点不是已确认的头尾。</p></article><article class="metric-card"><span class="metric-label">运动分类 A / B / C</span><strong id="activity-result" class="behavior-value"></strong><p id="activity-note"></p><details class="metric-definitions"><summary>查看 A / B / C 定义</summary><p>A：活跃，在培养池内较快爬行。<br>B：速度较慢，在部分微柱间爬行。<br>C：无明显位移，仅头部左右点动。</p><p>当前分类使用暂定速度、活动范围及头摆规则，尚未用人工真值验证。</p></details></article></div>
 <h3>运动形态</h3><div id="movement-metrics" class="metric-grid"></div><p class="help">以下帧比例以整段视频总帧数为分母，包括无效 / 未知帧；帧数不等于独立行为事件次数。</p><div id="movement-states" class="movement-states"></div>
 <details class="metric-definitions reference-note"><summary>定义与参考值说明</summary><p>头摆幅度采用头部 0–10% 中轴与颈部 10–30% 中轴的夹角，汇总为绝对角度 95 分位数；该分段比例是当前实现的操作性定义。</p><p>头摆频率按当前定义的“单次向一个方向弯曲”计数，单位为次/min，不与完整往返周期的 Hz 混用。体积按分段圆台估算。</p><p>爬行约 135° / 0.5 Hz、游泳约 45° / 1.7 Hz 是芯片外文献参考值，不能据此直接判断本视频的游泳 / 爬行状态。</p></details>
@@ -145,12 +182,12 @@
       <div class="inspector-action"><p>独立版本保存；不修改原视频、实验标注或算法结果。</p><div class="eval-draw-actions"><button id="eval-save" class="small-button" disabled>保存草稿</button><button id="eval-submit" class="primary" disabled>提交本任务</button></div></div>
     </aside>
   </section>
-  <footer class="workspace-status"><span><i class="status-dot"></i><span id="status-text" role="status" aria-live="polite">正在连接本地工作台…</span></span><span id="status-meta">文件仅在本机处理</span></footer>
+  <footer class="workspace-status"><span><i class="status-dot"></i><span id="status-text" role="status" aria-live="polite">正在连接本地工作台…</span></span></footer>
 </main>
-<input id="files-input" type="file" multiple accept="video/*,image/*,.mkv,.avi,.csv,.json,.txt,.tif,.tiff" hidden><input id="folder-input" type="file" webkitdirectory multiple hidden>
+<input id="files-input" type="file" multiple accept=".mp4,.avi,.mov,.mkv,.m4v,.mpg,.mpeg,.wmv,.webm,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tif,.tiff,.csv,.json,.txt" hidden><input id="folder-input" type="file" webkitdirectory multiple hidden>
 <div id="tree-menu" class="tree-menu" role="menu" aria-label="文件管理" hidden></div>
 <dialog id="tree-dialog"><form id="tree-form"><div class="dialog-header"><h2 id="tree-dialog-title">新建文件夹</h2><button type="button" class="icon-button" data-close="tree-dialog" aria-label="关闭">×</button></div><p id="tree-dialog-description"></p><div id="tree-name-field"><label for="tree-name">名称</label><input id="tree-name" maxlength="120" required autocomplete="off"></div><p id="tree-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="tree-dialog">取消</button><button id="tree-submit" class="primary" type="submit">保存</button></div></form></dialog>
-<dialog id="path-dialog"><form id="path-form"><div class="dialog-header"><h2>打开本机视频</h2><button type="button" class="icon-button" data-close="path-dialog" aria-label="关闭">×</button></div><p>输入完整路径，直接读取原始视频，无需复制文件。</p><label for="path-value">视频完整路径</label><input id="path-value" placeholder="C:\实验数据\video.mp4" required autocomplete="off"><p id="path-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="path-dialog">取消</button><button class="primary" type="submit">打开并标注<svg><use href="#i-arrow"/></svg></button></div></form></dialog>
-<dialog id="help-dialog"><div class="dialog-header"><h2>在一个工作台完成分析</h2><button class="icon-button" data-close="help-dialog" aria-label="关闭">×</button></div><ol class="help-list"><li><b>启动工作台</b><p>在文件资源管理器中打开 WormStudio 文件夹，双击 start.bat，保持启动窗口开启。浏览器会自动打开 http://127.0.0.1:端口/studio；若未自动打开，请复制启动窗口显示的完整地址。直接打开 web/studio.html 仅提供文件预览。</p></li><li><b>导入素材</b><p>左侧支持多选文件、选择文件夹或拖放；文件夹按原层级显示。点击文件栏的新建文件夹图标可整理素材，拖动条目可排序或移入文件夹，右键或行末菜单可重命名、上移、下移和移除。移除仅影响工作区列表，保留磁盘文件与结果。视频可进入分析流程，图片与数据文件可预览。通过文件选择器导入的素材会复制到本机工作区，刷新和重启后自动恢复。大视频可通过完整路径打开，直接关联原文件；移动原文件后需要重新打开其路径。</p></li><li><b>在右侧完成标注</b><p>一起拖入多个视频即可依次标定，确认最后一个视频后自动顺序处理。先选择像素单位或填写真实标定，再逐条点选线虫并确认掩膜，最后确认标注并开始分析。编辑后会自动保存草稿；等待“已自动保存”再关闭窗口，同一视频、同一帧会自动恢复。</p></li><li><b>调整画面与工具</b><p>宽窗口可拖动面板标题和边缘调整位置、大小；窄窗口在视频下方切换工具。右上角“专注画面”可暂时隐藏工具，文件栏顶部“⋯ → 恢复默认布局”可重置。布局保存在本机，重启后恢复。</p></li><li><b>暂停与修改掩膜</b><p>“暂停画面”仅暂停预览，后台计算继续。暂停后选择“修改当前帧 Mask”，程序会停止当前计算，打开该帧；保存修正后另存新结果并重新计算，原结果保留。</p></li><li><b>查看结果与评测</b><p>保存标注后自动处理，切换到分析结果可查看视频、逐帧指标及下载文件。独立人工标注请使用文件栏顶部“⋯ → 评测标注”。当前任务结束后可开始下一个视频。</p></li></ol><p class="help-shortcuts"><kbd>Ctrl O</kbd> 导入文件 <kbd>/</kbd> 搜索文件 <kbd>Esc</kbd> 关闭弹窗</p></dialog>
-<script src="./analysis-presentation.js"></script><script src="./result-viewport.js"></script><script src="./result-player.js"></script><script src="./phenotype-results.js"></script><script src="./studio-results.js"></script><script src="./studio-evaluation.js"></script><script src="./workspace-links.js"></script><script src="./library-tree.js"></script><script src="./result-navigation.js"></script><script src="./studio.js"></script>
+<dialog id="path-dialog"><form id="path-form"><div class="dialog-header"><h2>打开本机视频</h2><button type="button" class="icon-button" data-close="path-dialog" aria-label="关闭">×</button></div><p>输入完整路径，直接读取原始视频，无需复制文件。</p><label for="path-value">视频完整路径</label><input id="path-value" placeholder="C:\实验数据\video.mp4" required autocomplete="off"><p id="path-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="path-dialog">取消</button><button class="primary" type="submit"><span id="path-submit-label">打开并标注</span><svg><use href="#i-arrow"/></svg></button></div></form></dialog>
+<dialog id="help-dialog"><div class="dialog-header"><h2>在一个工作台完成分析</h2><button class="icon-button" data-close="help-dialog" aria-label="关闭">×</button></div><ol class="help-list"><li><b>启动工作台</b><p>Mac 双击 WormStudio.app，Windows 双击 start.bat。使用源码时运行 python studio.py。</p></li><li><b>导入素材</b><p>左侧支持多选文件、选择文件夹或拖放；文件夹按原层级显示。点击文件栏的新建文件夹图标可整理素材，拖动条目可排序或移入文件夹，右键或行末菜单可重命名、上移、下移和移除。移除仅影响工作区列表，保留磁盘文件与结果。视频可进入分析流程，图片与数据文件可预览。通过文件选择器导入的素材会复制到本机工作区，刷新和重启后自动恢复。大视频可通过完整路径打开，直接关联原文件；移动原文件后需要重新打开其路径。</p></li><li><b>在右侧完成标注</b><p>一起拖入多个视频即可依次标定，确认最后一个视频后自动顺序处理。先选择像素单位或填写真实标定，再逐条点选线虫并确认掩膜，最后确认标注并开始分析。草稿自动保存，下次打开同一视频的同一帧时会恢复。</p></li><li><b>调整画面与工具</b><p>宽窗口可拖动面板标题和边缘调整位置、大小；窄窗口在视频下方切换工具。右上角“专注画面”可暂时隐藏工具，文件栏顶部“⋯ → 恢复默认布局”可重置。布局保存在本机，重启后恢复。</p></li><li><b>暂停与修改掩膜</b><p>“暂停画面”仅暂停预览，后台计算继续。暂停后选择“修改当前帧 Mask”，程序会停止当前计算，打开该帧；保存修正后另存新结果并重新计算，原结果保留。</p></li><li><b>查看结果与评测</b><p>保存标注后自动处理，切换到分析结果可查看视频、逐帧指标及下载文件。独立人工标注请使用文件栏顶部“⋯ → 评测标注”。当前任务结束后可开始下一个视频。</p></li></ol><p class="help-shortcuts"><kbd>Ctrl O</kbd> 导入文件 <kbd>/</kbd> 搜索文件 <kbd>Esc</kbd> 关闭弹窗</p></dialog>
+<script src="./analysis-presentation.js"></script><script src="./result-viewport.js"></script><script src="./result-player.js"></script><script src="./phenotype-results.js"></script><script src="./studio-results.js"></script><script src="./studio-evaluation.js"></script><script src="./workspace-links.js"></script><script src="./library-tree.js"></script><script src="./result-navigation.js"></script><script src="./channel-review.js"></script><script src="./channel-counts.js"></script><script src="./studio.js"></script>
 <script src="/workspace-controls.js"></script></body></html>

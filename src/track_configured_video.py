@@ -3,7 +3,7 @@ import argparse
 from compute_device import selected_device, inference_context, device_label
 from resource_paths import RESOURCE_ROOT, sam2_checkpoint
 from pipeline_progress import report_progress
-from live_preview import report_tracking
+from live_preview import PreviewCrop, report_tracking
 import csv
 import gc
 import json
@@ -18,6 +18,22 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 from analyze_phenotypes import ROOT,read_image,write_png
 from worm_colors import worm_color
 from sam2_models import model_spec, tracking_model_matches
+from sam2_frames import init_tracking_state, propagate_frames
+
+
+def sam2_input_transform(mode):
+    if mode == 'none':
+        return lambda frame: frame
+    if mode != 'clahe':
+        raise ValueError(f'Unknown SAM2 input contrast mode: {mode}')
+    equalizer = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    def enhance(frame):
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+        image[:, :, 0] = equalizer.apply(image[:, :, 0])
+        return cv2.cvtColor(image, cv2.COLOR_YCrCb2BGR)
+
+    return enhance
 
 
 def guided_mask(mask,prompt):
@@ -37,9 +53,13 @@ def main():
     parser.add_argument('--group',help='Reprocess only one configured group, preserving the other tracks')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
     spec=model_spec(config.get('sam2_model','large'))
+    contrast = config.get('sam2_input_contrast', 'none')
+    prepare_input = sam2_input_transform(contrast)
     out=ROOT/'outputs'/config['sample']/'sam2-tracking';out.mkdir(parents=True,exist_ok=True)
     if args.group and not args.seeds_only:
         prior=json.loads((out/'summary.json').read_text(encoding='utf-8'))
+        if prior.get('sam2_input_contrast', 'none') != contrast:
+            raise ValueError('输入对比度设置已改变，请重新跟踪全部分组')
         if not tracking_model_matches(prior,spec['size']):
             raise ValueError('跟踪模型已改变，请使用新样本运行全部分组，避免混用 Tiny 和 Large 结果')
     capture=cv2.VideoCapture(config['video']);n=int(capture.get(cv2.CAP_PROP_FRAME_COUNT));fps=capture.get(cv2.CAP_PROP_FPS)
@@ -57,6 +77,7 @@ def main():
         hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
     amp_dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
     colors={w:worm_color(w) for w in ids}
+    preview_crop = PreviewCrop(config)
     for group_index,group in enumerate(config['groups']):
         report_progress(detail=f'准备分组 {group_index+1}/{len(config["groups"])} 的跟踪数据',force=True)
         if args.group and group['name']!=args.group:continue
@@ -66,7 +87,7 @@ def main():
         im=frame[y:y1,x:x1];image_predictor=SAM2ImagePredictor(model)
         with torch.inference_mode(),inference_context(device):
             if any('mask_path' not in worm for worm in group['worms']):
-                image_predictor.set_image(cv2.cvtColor(im,cv2.COLOR_BGR2RGB))
+                image_predictor.set_image(cv2.cvtColor(prepare_input(im),cv2.COLOR_BGR2RGB))
             for worm in group['worms']:
                 w=worm['id']
                 if 'mask_path' in worm:
@@ -91,7 +112,7 @@ def main():
                 if not ok:raise RuntimeError('Missing extra anchor')
                 im=frame[y:y1,x:x1]
                 if any('mask_path' not in worm for worm in extra['worms']):
-                    image_predictor.set_image(cv2.cvtColor(im,cv2.COLOR_BGR2RGB))
+                    image_predictor.set_image(cv2.cvtColor(prepare_input(im),cv2.COLOR_BGR2RGB))
                 extra_masks[extra['frame']]={}
                 for worm in extra['worms']:
                     if 'mask_path' in worm:
@@ -114,17 +135,17 @@ def main():
             ok,frame=capture.read()
             if not ok:raise RuntimeError('Truncated video')
             path=frames/f'{f:06d}.jpg'
-            path.write_bytes(cv2.imencode('.jpg',frame[y:y1,x:x1],[cv2.IMWRITE_JPEG_QUALITY,94])[1].tobytes())
+            path.write_bytes(cv2.imencode('.jpg',prepare_input(frame[y:y1,x:x1]),[cv2.IMWRITE_JPEG_QUALITY,94])[1].tobytes())
         report_progress(detail='视频帧准备完成，正在初始化 SAM2',fraction=(group_index+.15)/len(config['groups']),force=True)
         predictions={}
         with torch.inference_mode(),inference_context(device):
-            state=model.init_state(str(frames),offload_video_to_cpu=True,offload_state_to_cpu=True)
+            state=init_tracking_state(model,frames,n)
             for w,mask in initial.items():model.add_new_mask(state,frame_idx=anchor,obj_id=w,mask=mask)
             for f,objects in extra_masks.items():
                 for w,mask in objects.items():model.add_new_mask(state,frame_idx=f,obj_id=w,mask=mask)
             start=group.get('propagate_from',anchor)
             for reverse in ([False,True] if start else [False]):
-                for f,object_ids,logits in model.propagate_in_video(state,start_frame_idx=start,reverse=reverse):
+                for f,object_ids,logits in propagate_frames(model, state,start_frame_idx=start,reverse=reverse):
                     current={int(w):mask for w,mask in zip(object_ids,logits[:,0].cpu().numpy()>0)}
                     # Keep separate visible body pieces; discard only tiny speckles.
                     for w,mask in current.items():
@@ -141,7 +162,8 @@ def main():
                             centroid_y_px=float(yy.mean()+y-cy) if len(yy) else None,
                             ambiguous_overlap_px=int((mask&other).sum()))
                     detail=f'分组 {group_index+1}/{len(config["groups"])} · '+('反向跟踪' if reverse else '正向跟踪')
-                    report_tracking(frames/f'{f:06d}.jpg',current,f,n,detail)
+                    report_tracking(frames/f'{f:06d}.jpg',current,f,n,detail,
+                        reader=preview_crop if group['crop_xyxy'] != config['crop_xyxy'] else None, offset=(x-cx,y-cy))
                     report_progress(len(predictions),n,detail,fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
             del state
         for f in sorted(predictions):rows.extend(predictions[f].values())
@@ -158,6 +180,7 @@ def main():
     summary=dict(video=config['video'],frames=n,fps=fps,crop_xyxy=config['crop_xyxy'],worm_ids=ids,
         scale_um_per_px=config['scale_um_per_px'],scale_source=config['scale_source'],model=spec['label'],
         measurement_mode=config.get('measurement_mode','physical'),
+        sam2_input_contrast=contrast,
         sam2_model=spec['size'],model_config=spec['config'],checkpoint=spec['checkpoint'],
         inference_precision=str(amp_dtype).removeprefix('torch.'),
         mask_overlap_allowed=True,initialization=config['groups'],review_intervals=config.get('review_intervals',[]),device=device_label(device),

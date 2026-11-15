@@ -249,7 +249,7 @@
   }
   function mountDock(doc) {
     const panels=[...doc.querySelectorAll('[data-floating-panel]')];
-    const host=doc.querySelector('.annotation-page .workspace,.processing-content,.results-workspace');
+    const host=doc.querySelector('.processing-content,.results-workspace');
     if (!host || !panels.length || host.dataset.dockMounted) return;
     host.dataset.dockMounted='true';
     const destination=doc.querySelector('.result-player') || host;

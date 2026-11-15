@@ -10,7 +10,7 @@ import numpy as np
 from compute_device import selected_device
 from analyze_phenotypes import ROOT, load_sample
 from pipeline_progress import report_progress
-from live_preview import enabled as preview_enabled, report_geometry
+from live_preview import PreviewCrop, enabled as preview_enabled, report_geometry
 from tapnext_support import VERSION, resources, signature, validate_single_worm, prepare_runtime
 
 
@@ -34,21 +34,40 @@ def measurement_output(curves, baseline_quality, metrics, meta):
             uncertain_point_ranges=[] if valid else [[0, 100]],
             temporal_anchors=meta['anchors'], temporal_reconstructed=row['temporal_reconstructed'],
             tapnext_status=row['status'])
+        if row.get('contact_bridge'):
+            item['contact_bridge'] = row['contact_bridge']
+            item['temporal_anchors'] = row['contact_bridge']['anchors']
         quality.append(item)
     return accepted, quality, candidates
+
+
+def read_tracking_masks(get_mask, worm, n):
+    from wormstudio_single.metrics import crop_union
+    occupied = get_mask(worm, 0).astype(bool, copy=True)
+    for i in range(1, n):
+        report_progress(i, n, '读取 SAM2 轮廓，确定跟踪区域')
+        occupied |= get_mask(worm, i)
+    roi = crop_union(occupied[None])
+    x0, y0, x1, y1 = roi
+    masks = np.empty((n, y1-y0, x1-x0), dtype=bool)
+    for i in range(n):
+        report_progress(i, n, '读取跟踪区域内的轮廓')
+        masks[i] = get_mask(worm, i)[y0:y1, x0:x1]
+    return masks, roi
 
 
 def run(sample, worm_filter=None):
     package, checkpoint = resources()
     dependencies = prepare_runtime()
     sys.path.insert(0, str(package))
-    from wormstudio_single.pipeline import fresh_inputs, solve_fresh, sha256
+    from wormstudio_single.pipeline import prepare_local_inputs, solve_fresh, sha256
     from wormstudio_single.metrics import calculate_metrics, write_csv
     from wormstudio_single.quality import write_json
     from wormstudio_single.fusion_v4 import VERSION as SOLVER_VERSION
 
     started = time.monotonic()
     data, source, ids, get_mask, bad = load_sample(sample)
+    preview_crop = PreviewCrop(source)
     validate_single_worm(len(ids), source.get('sam2_model', 'large'))
     worm = ids[0]
     if worm_filter is not None and worm_filter != worm:
@@ -67,17 +86,20 @@ def run(sample, worm_filter=None):
     config = dict(video=source['video'], crop_xyxy=source['crop_xyxy'],
         scale_um_per_px=source['scale_um_per_px'] if source.get('measurement_mode')!='pixels' else 1., anchor_interval_seconds=2.,
         excluded_frames=[i for i in range(source['frames']) if bad.get((i, worm), False)])
-    masks = []
-    for i in range(source['frames']):
-        report_progress(i, source['frames'], '读取 SAM2 轮廓，准备单虫时序跟踪')
-        masks.append(get_mask(worm, i))
+    masks, roi = read_tracking_masks(get_mask, worm, source['frames'])
     report_progress(detail='选择可靠姿态与双向跟踪锚点', force=True)
-    masks, baseline, base_quality, meta = fresh_inputs(config, np.asarray(masks, bool), source['fps'])
+    masks, baseline, base_quality, meta = prepare_local_inputs(config, masks, roi, source['fps'])
+    from quality_stage import load_guards
+    guards = load_guards(data, ids, len(masks))
+    if guards is not None:
+        meta['contact_identity_segments'] = [r.get('identity_segment', 0)
+            if r.get('identity_valid') and not r.get('source_frame_invalid') else None for r in guards[worm]]
     report_progress(detail='TAPNext++ 双向点跟踪与时序融合；详细窗口进度见运行日志', force=True)
     def preview_frame(frame, image, mask, line, check):
-        report_geometry(mask,line,frame,len(masks),'TAPNext 窗口融合候选 · 尚未完成最终质量检查',image=image,accepted=False)
+        report_geometry(mask,line,frame,len(masks),'TAPNext 窗口融合候选 · 尚未完成最终质量检查',reader=preview_crop, offset=meta['tracking_roi'][:2], worm=worm)
+    device = selected_device()
     curves, checks, timings = solve_fresh(config, masks, baseline, base_quality, meta,
-        evidence, checkpoint, selected_device(), solver='auto', on_preview=preview_frame if preview_enabled() else None)
+        evidence, checkpoint, device, solver='auto', on_preview=preview_frame if preview_enabled() else None)
     rows = calculate_metrics(curves, masks, base_quality, checks, baseline, meta)
     if source.get('measurement_mode') == 'pixels':
         from measurement_units import pixel_fields
@@ -96,7 +118,7 @@ def run(sample, worm_filter=None):
     np.savez_compressed(evidence / 'inputs.npz', masks=masks, baseline=baseline)
     write_json(folder / 'mask-source.json', dict(mask_source=str(data.resolve())))
     write_json(target / 'run.json', dict(version=VERSION, algorithm_signature=signature(),
-        solver=SOLVER_VERSION, solver_selection='auto', method='tapnext', frames=len(curves), worm_id=worm,
+        solver=SOLVER_VERSION, solver_selection='auto', method='tapnext', device=device, frames=len(curves), worm_id=worm,
         valid_frames=sum(q['centerline_valid'] for q in quality),
         mask_source=str(data.resolve()), package=str(package), checkpoint=str(checkpoint),
         checkpoint_sha256=checksum, evidence_directory=evidence.name, timings=timings, dependencies=dependencies,

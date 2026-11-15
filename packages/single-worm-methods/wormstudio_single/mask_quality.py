@@ -1,6 +1,8 @@
 """Area consistency must not let missing detections invalidate good frames."""
 import numpy as np
 
+MAX_AREA_JUMP_FRACTION = .25
+
 
 def reference_area(areas):
     usable = np.asarray(areas, float)
@@ -18,7 +20,7 @@ def mark_quality(rows, ids, intervals=()):
             jump = abs(row['area_px']/max(areas[max(0,i-1)],1)-1)
             row.update(area_deviation_fraction=float(deviation), area_jump_fraction=float(jump),
                 low_confidence=bool(row['ambiguous_overlap_px'] > .01*reference
-                    or deviation > .25 or jump > .2 or row['area_px'] < 100))
+                    or deviation > .25 or jump > MAX_AREA_JUMP_FRACTION or row['area_px'] < 100))
             if any(worm in item['worm_ids'] and item['frames'][0] <= row['frame'] <= item['frames'][1]
                    for item in intervals):
                 row['low_confidence'] = True

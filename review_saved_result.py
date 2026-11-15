@@ -6,7 +6,7 @@ from resource_paths import ensure_runtime, PROJECT_ROOT
 if __name__=='__main__':ensure_runtime()
 import argparse
 import json
-import webbrowser
+from electron_desktop import open_view
 import cv2
 from pipeline_progress import PipelineProgress
 from manual_worm_annotation import create_server
@@ -15,7 +15,7 @@ from manual_worm_annotation import create_server
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',required=True)
-    parser.add_argument('--method',choices=['niu','wormtracer','hybrid','topology','tapnext'],default=None)
+    parser.add_argument('--method',choices=['niu','wormtracer','hybrid','topology','tapnext','self_contact'],default=None)
     parser.add_argument('--no-browser',action='store_true')
     args=parser.parse_args()
     base=(PROJECT_ROOT/'outputs'/args.sample).resolve()
@@ -42,9 +42,11 @@ def main():
     progress.finish(base,config,'export')
     progress.bind_server(create_server(progress=progress))
     print(progress.url,flush=True)
-    if not args.no_browser:webbrowser.open(progress.url)
+    close_window = None if args.no_browser else open_view(progress.url, progress.closed.set)
     try:progress.wait()
-    finally:progress.close()
+    finally:
+        if close_window: close_window()
+        progress.close()
 
 
 if __name__=='__main__':main()

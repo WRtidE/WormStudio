@@ -1,7 +1,7 @@
 'use strict';
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {annotationReadiness, measureCalibration} = require('../web/annotation-readiness.js');
+const {annotationReadiness, measureCalibration, detectScaleBar} = require('../web/annotation-readiness.js');
 const fixture = {scale: '', worms: [{area: 300, confirmed: true, headPoint: [10, 20]}], method: 'topology'};
 
 test('confirmed mask and head cannot replace missing scale; identifies the repair step', () => {
@@ -48,5 +48,24 @@ test('incomplete ruler, coincident points, and invalid lengths have no usable sc
     assert.ok(result.error);
     assert.equal(result.scale, undefined);
     assert.equal(result.calibration, undefined);
+  }
+});
+
+test('automatic calibration measures between tick centers in either orientation', () => {
+  const width = 140, height = 140;
+  for (const vertical of [false, true]) {
+    const data = new Uint8ClampedArray(4 * width * height);
+    for (let along = 20; along <= 122; along++) {
+      const cap = along < 23 || along > 119;
+      for (let across = cap ? 42 : 48; across <= (cap ? 58 : 52); across++) {
+        const pixel = vertical ? along * width + across : across * width + along;
+        data.set([245, 240, 12, 255], 4 * pixel);
+      }
+    }
+    const frame = {data, width, height};
+    const point = vertical ? [50, 70] : [70, 50];
+    assert.deepEqual(detectScaleBar(frame, point), vertical ? [[50, 21], [50, 121]] : [[21, 50], [121, 50]]);
+    assert.equal(detectScaleBar(frame, [1, 1]), null);
+    assert.equal(measureCalibration(detectScaleBar(frame, point), '').distance, 100);
   }
 });

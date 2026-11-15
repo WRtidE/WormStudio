@@ -1,15 +1,11 @@
-"""Finder entry: offline environment, persistent workspace and native WebKit window."""
-import html
+"""Finder entry: offline environment, persistent workspace and Electron window."""
 import os
 from pathlib import Path
-import re
 import shutil
-import signal
 import site
 import subprocess
 import sys
 import tempfile
-import threading
 
 
 def dialog(message, *, question=False):
@@ -52,13 +48,6 @@ def populate(res, workspace):
     register(workspace, sample, auto=True)
 
 
-def message_page(title, text):
-    return ('<!doctype html><meta charset=utf-8><style>body{font:18px -apple-system;'
-            'color:#14453e;background:#f4f9f7;margin:12vh 10vw}small{color:#487b70}'
-            'p{line-height:1.7;overflow-wrap:anywhere}</style><small>WORMSTUDIO</small><h1>'
-            + html.escape(title) + '</h1><p>' + html.escape(text) + '</p>')
-
-
 def run(res, base, logfile):
     import fcntl
     with (base/'session.lock').open('a') as guard:
@@ -74,61 +63,14 @@ def run(res, base, logfile):
         workspace = base/'workspace'
         populate(res, workspace)
         env = dict(os.environ, PYTHONPATH=os.pathsep.join(map(str, [packages, res/'sam2'])),
-                   WORM_STUDIO_PYTHON=sys.executable, WORMSTUDIO_DEVICE='cpu',
+                   WORM_STUDIO_PYTHON=sys.executable,
                    WORM_STUDIO_RESOURCES=str(res), WORMSTUDIO_SINGLE_ROOT=str(workspace/'packages/single-worm-methods'),
                    WORMSTUDIO_TAPNEXT_CHECKPOINT=str(res/'models/tapnextpp_ckpt.pt'),
                    WORMSTUDIO_SAM2_CHECKPOINT=str(res/'models/sam2_hiera_large.pt'))
-        open_window(workspace, env, logfile)
+        runtime = res/'electron/Electron.app/Contents/MacOS/Electron'
+        env.update(WORM_STUDIO_ELECTRON=str(runtime), WORM_STUDIO_WORKSPACE=str(workspace), PYTHONUTF8='1', MPLBACKEND='Agg')
+        subprocess.run([str(runtime), str(workspace/'tools/electron')], cwd=workspace, env=env, check=True)
 
-
-def open_window(workspace, env, logfile):
-    import webview
-    from webview.menu import Menu, MenuAction
-
-    results = workspace/'outputs'
-    results.mkdir(exist_ok=True)
-    menu = [Menu('工作区', [MenuAction('在 Finder 中打开结果目录', lambda: subprocess.run(['/usr/bin/open', str(results)])),
-                          MenuAction('在 Finder 中打开工作区', lambda: subprocess.run(['/usr/bin/open', str(workspace)]))])]
-    webview.settings['ALLOW_DOWNLOADS'] = True
-    window = webview.create_window('WormStudio · 线虫分析', width=1200, height=800, min_size=(800, 560),
-                                   html=message_page('正在打开工作台', '正在载入本地视频分析组件…'),
-                                   confirm_close=True)
-    # The child process group includes pipeline stages and video encoders.
-    # Closing the GUI must not leave them running or lock the workspace.
-    proc = subprocess.Popen([sys.executable, '-u', '-c', 'import studio; studio.main(open_browser=False)'],
-                            cwd=workspace, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True, text=True, encoding='utf-8', errors='replace')
-    closing = threading.Event()
-
-    def follow():
-        ready = False
-        for line in proc.stdout:
-            print(line, end='', flush=True)
-            match = re.fullmatch(r'Worm Studio: (http://127\.0\.0\.1:\d+/studio)', line.strip())
-            if match and not closing.is_set() and not ready:
-                ready = True
-                window.load_url(match[1])
-        status = proc.wait()
-        if not closing.is_set():
-            if ready and not status:
-                window.destroy()
-            else:
-                window.load_html(message_page('工作台未能继续运行', f'请查看本次启动日志：{logfile}'))
-
-    try:
-        webview.start(follow, gui='cocoa', menu=menu, localization={
-            'global.quitConfirmation': '退出将停止当前分析。确定退出 WormStudio 吗？',
-            'global.ok': '确定', 'global.cancel': '取消'})
-    finally:
-        closing.set()
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-        except ProcessLookupError:
-            pass
 
 if __name__ == '__main__':
     run(*map(Path, sys.argv[1:]))

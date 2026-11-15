@@ -12,6 +12,7 @@ def selected_device():
         raise RuntimeError('Metal GPU 不可用，请使用 CPU 启动入口。')
     if torch.cuda.is_available():return 'cuda'
     if mode=='cuda':raise RuntimeError('GPU 不可用，请使用 CPU 启动入口。')
+    if torch.backends.mps.is_available():return 'mps'
     return 'cpu'
 
 def inference_context(device):
@@ -21,5 +22,5 @@ def inference_context(device):
 
 def device_label(device):
     import torch
-    if device=='mps':return 'Apple Metal GPU（试验模式，待实机验收）'
+    if device=='mps':return 'Apple Metal GPU（MPS）'
     return torch.cuda.get_device_name() if device=='cuda' else 'CPU（处理速度较慢）'

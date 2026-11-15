@@ -98,7 +98,7 @@ def finish_dimensions(row):
     return allowed
 
 
-METRIC_GROUPS = dict(area=('area_um2',), posture=('length_um', 'mean_width_um','endpoint_a_angle_deg','opposite_end_angle_deg'),
+METRIC_GROUPS = dict(area=('area_um2',), posture=('length_um', 'mean_width_um', 'length_width_ratio', 'body_extension', 'midbody_abs_curvature_per_um', 'endpoint_a_angle_deg','opposite_end_angle_deg'),
     volume=('volume_estimate_um3',), motion=('centroid_x_um', 'centroid_y_um', 'speed_um_s', 'speed_bl_s',
         'centroid_x_source_px','centroid_y_source_px','centroid_smoothed_x_um','centroid_smoothed_y_um'),
     head=('head_candidate_angle_deg', 'head_candidate_angle_smoothed_deg', 'head_x_crop_px', 'head_y_crop_px',

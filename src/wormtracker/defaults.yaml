@@ -1,0 +1,44 @@
+# WormTracker 默认配置文件
+# 修改此文件后重新启动软件即可生效
+# 也可在 GUI 的「参数调节」面板中实时调整并导出
+
+# ---- 后端选择 ----
+# mog2: 传统视觉 (不需要 GPU，适合任何电脑)
+backend: mog2
+
+# ---- 物理映射 ----
+num_channels: 32          # 微流控芯片通道数
+x_margin_left: 0.05       # 画面左侧裁剪比例
+x_margin_right: 0.15      # 画面右侧裁剪比例
+wall_ratio: 0.12           # 通道壁宽度比例
+wall_refine: true          # 实时竖线峰值检测修正
+
+# ---- 检测判定 ----
+tripwire_ratio: 0.65       # 计数检测线高度 (0=顶部, 1=底部)
+min_area: 100               # 虫体最小像素面积
+max_area: 4500             # 虫体最大像素面积
+mask_top_ratio: 0.35       # 屏蔽区域上界 (仅 MOG2)
+mask_bottom_ratio: 0.85    # 屏蔽区域下界 (仅 MOG2)
+
+# ---- MOG2 背景建模 ----
+bg_history: 200            # 背景学习历史帧数 (降低以更快遗忘初始帧中的静止物体)
+var_threshold: 16           # 背景模型敏感度 (越小越敏感)
+init_frame_index: 20       # 启动背景采样窗口；桌面计数从首帧追踪
+
+# ---- 追踪策略 ----
+max_dist_x: 25             # 最大水平位移 (防串道)
+max_dist_y: 300            # 单帧纵向位移基准；连续高速轨迹可放宽至 1.5 倍
+track_history_len: 100     # 轨迹历史最大长度
+cross_debounce: 10         # 越线冷却帧数 (降低以允许连续虫快速计数)
+
+# ---- 熔断保护 (仅 MOG2) ----
+panic_noise_ratio: 0.015   # 触发熔断的噪点比例阈值
+grid_mutation_tolerance: 0.15  # 网格突变容忍度
+cooldown_frames: 30        # 网格突变后的冷却帧数
+
+# ---- 墙壁遮罩 ----
+wall_mask_margin: 3        # 墙壁向内侵蚀像素，防止光照变化导致墙壁伪影
+wall_peak_half_width: 5    # 峰值精修模式下墙壁红线半宽 (px)，红线全宽 = half_width * 2
+
+# ---- 输出 ----
+export_format: xlsx          # 导出格式: xlsx | csv

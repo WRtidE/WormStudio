@@ -36,7 +36,9 @@ class PhenotypeResultTests(unittest.TestCase):
                  activity_class_provisional='B',movement_state_counts={'moving_head_unconfirmed':12})
         result=self.present(row)
         metrics={r['key']:r for r in result['metrics']}
-        self.assertEqual(len(metrics),6)
+        self.assertEqual(len(metrics),21)
+        self.assertIsNone(metrics['median_width_um']['value'])
+        self.assertIsNone(metrics['median_width_um']['valid_frames'])
         self.assertEqual(metrics['median_area_um2']['unit'],'μm²')
         self.assertEqual(metrics['median_volume_estimate_um3']['status'],'estimate')
         self.assertIsNone(metrics['directional_bends_per_min']['value'])

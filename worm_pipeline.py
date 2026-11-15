@@ -3,6 +3,7 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
+from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, SELF_CONTACT_VERSION, validate_method, method_source
 from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
@@ -15,10 +16,10 @@ SAMPLE_NAME = "experiment-01"  # 新视频或新参数建议使用新名字
 # True：外部浏览器中点击虫体分割、人工修正，再确认并开始分析。
 # False：使用下方 GROUPS 中的点标记或已有掩膜。
 MANUAL_ANNOTATION = True
-CENTERLINE_METHOD = "tapnext"  # 工作台新分析统一采用当前单虫路线
+CENTERLINE_METHOD = CURRENT_METHOD
 SAM2_MODEL = "large"            # 点选分割和全视频跟踪统一使用：large / tiny
 ANNOTATION_FRAME = 0            # 选择较容易区分线虫的一帧，帧号从 0 开始
-HEAD_DETECTION = 'taper_seed'  # 首帧人工优先，否则按起始形状初始化；正式头摆仍需人工
+HEAD_DETECTION = CURRENT_HEAD_DETECTION  # 首帧人工优先，否则按起始形状初始化；正式头摆仍需人工
 OPEN_BROWSER = True             # 自动打开外部浏览器；False 时打印网址
 
 # None：显示完整画面，在浏览器中选分析区域；也可填写 [左, 上, 右, 下]。
@@ -51,7 +52,6 @@ import re
 import subprocess
 import sys
 import time
-from centerline_methods import validate_method, method_source
 from sam2_models import model_spec, tracking_model_matches
 
 PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'repair', 'temporal', 'metrics', 'export')
@@ -163,7 +163,7 @@ def validate_config(config, relative_to=ROOT):
     for item in [a for values in annotations.values() for a in normalize_anchors(values)]:
         frame(item.get('frame'),'头部标注帧')
         point=item.get('point')
-        crop=c['crop_xyxy']
+        crop=[0,0,width,height] if item.get('point_space')=='source' else c['crop_xyxy']
         if (not isinstance(point,list) or len(point)!=2 or
             any(type(v) not in (int,float) or not math.isfinite(v) for v in point) or
             not (0<=point[0]<crop[2]-crop[0] and 0<=point[1]<crop[3]-crop[1])):
@@ -184,6 +184,8 @@ def validate_config(config, relative_to=ROOT):
     if fit['rescale'] > 1 or any(not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v <= 1 for v in fit['rescale_by_worm'].values()):
         raise ValueError('缩放比例必须大于 0 且不大于 1')
     c['centerline_method'] = validate_method(c.get('centerline_method','wormtracer'))
+    if c['centerline_method'] == 'self_contact':
+        c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
     c['sam2_model']=model_spec(c.get('sam2_model','large'))['size']
     if c['centerline_method'] == 'tapnext':
         from tapnext_support import validate_single_worm, resources, dependency_path
@@ -192,12 +194,14 @@ def validate_config(config, relative_to=ROOT):
         dependency_path()
     c['wormtracer'] = fit
     from quality_schema import VERSION as QUALITY_VERSION
+    from tracking_quality import MAX_AREA_JUMP_FRACTION
     from multiworm_quality import validate_reviews, VERSION as GUARD_VERSION
     validate_reviews(c, ids, n)
     from identity_reassociation import validate_reviews as validate_fragment_reviews
     validate_fragment_reviews(c,ids,n)
     c['quality_schema_version'] = QUALITY_VERSION
     c['quality_rules_version'] = GUARD_VERSION
+    c['max_area_jump_fraction'] = MAX_AREA_JUMP_FRACTION
     return c, dict(frames=n, fps=fps, width=width, height=height, ids=ids)
 
 
@@ -216,6 +220,12 @@ def build_stages(config, info, snapshot, phenotype_path):
     add('quality', 'quality', 'quality_stage.py', ['--sample', sample], [tracking / 'quality-guards.json'])
     method = config.get('centerline_method','wormtracer')
     source = method_source(method)
+    if method == 'self_contact':
+        from crop_recovery import FOLDER
+        recovered = tracking / FOLDER
+        add('crop-recovery', 'quality', 'crop_recovery.py', ['--sample', sample],
+            [recovered / name for name in ('summary.json', 'quality-guards.json', 'tracking-quality.csv')]
+            + [recovered/'masks'/f'worm-{w}'/f'{f:06}.png' for w in info['ids'] for f in range(info['frames'])])
     if method in ('wormtracer','hybrid'):
         for phase, folder, script in [('fit', 'wormtracer-tuned', 'run_wormtracer.py'),
                                        ('repair', 'wormtracer-corrected', 'repair_wormtracer.py'),
@@ -231,11 +241,13 @@ def build_stages(config, info, snapshot, phenotype_path):
                 outputs = [out / 'centerlines.npy', out / 'run.json']
                 outputs.append(out / 'quality.json')
                 add(f'{phase}-worm-{worm}', phase, script, args, outputs)
-    if method in ('topology', 'tapnext'):
+    if method in ('topology', 'tapnext', 'self_contact'):
         for worm in info['ids']:
             out=base/source/f'worm-{worm}'
-            add(f'{method}-worm-{worm}','fit',f'extract_{method}.py',['--sample',sample,'--worm',worm],
-                [out/'centerlines.npy',out/'run.json',out/'quality.json'])
+            outputs = [out/'centerlines.npy', out/'run.json', out/'quality.json']
+            if method == 'self_contact':
+                outputs.extend(out/name for name in ('diagnostic-candidates.npy','identity-guards.json','events.json'))
+            add(f'{method}-worm-{worm}','fit',f'extract_{method}.py',['--sample',sample,'--worm',worm],outputs)
     if method in ('niu','hybrid'):
         for worm in info['ids']:
             out=base/source/f'worm-{worm}'
@@ -248,7 +260,8 @@ def build_stages(config, info, snapshot, phenotype_path):
         [results / name for name in ('summary.json', 'per_frame_metrics.csv', 'worm_summary.csv', 'centerlines.npz',
             'phenotypes-overlay.mp4', '报告.md', 'quality.json', 'per_frame_metrics.json',
             'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
-            'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz')])
+            'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
+            'behavior_events.csv','trajectory_segments.csv')])
     add('export', 'export', 'review_configured_video.py', ['--sample', sample,'--centerline-source',source],
         [results / f'{sample}_annotated_full-frame.mp4', results / 'verification.json'])
     return stages
@@ -263,6 +276,7 @@ def compatible_tracking(config, info, base):
     equal = (Path(old['video']).resolve() == Path(config['video']) and old['frames'] == info['frames']
              and abs(old['fps'] - info['fps']) < .001 and old['crop_xyxy'] == config['crop_xyxy']
              and old.get('worm_ids') == info['ids'] and old.get('initialization') == config['groups']
+             and old.get('sam2_input_contrast', 'none') == config.get('sam2_input_contrast', 'none')
              and old.get('review_intervals', []) == config.get('review_intervals', [])
              and old.get('measurement_mode','physical') == config.get('measurement_mode','physical')
              and old.get('scale_um_per_px') == config.get('scale_um_per_px'))
@@ -277,6 +291,12 @@ def complete(stage, config, info):
             summary=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
             if not tracking_model_matches(summary,config.get('sam2_model','large')):return False
         except (OSError,ValueError):return False
+    if stage.get('name') == 'crop-recovery':
+        from crop_recovery import VERSION as REPLAY_VERSION
+        try:
+            summary=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
+            if summary.get('crop_recovery',{}).get('version') != REPLAY_VERSION: return False
+        except (OSError,ValueError): return False
     if stage['phase']=='quality':
         from quality_stage import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
@@ -289,8 +309,15 @@ def complete(stage, config, info):
             if report.get('head_detection_version')!=VERSION: return False
             from display_centerlines import VERSION as DISPLAY_VERSION
             if report.get('display_version')!=DISPLAY_VERSION:return False
+            if config.get('centerline_method') == 'tapnext' and len(info['ids']) == 1:
+                from adaptive_endpoints import VERSION as ENDPOINT_VERSION
+                folder = Path(stage['outputs'][0]).parent/'size-adaptive'
+                if (report.get('adaptive_endpoint_version') != ENDPOINT_VERSION or
+                        not all((folder/name).is_file() for name in ('summary.json','frames.csv'))):
+                    return False
             if report.get('quality_schema_version')!=QUALITY_VERSION: return False
-            if report.get('metric_definition_version')!='ppt-20261021-v2': return False
+            from phenotype_statistics import VERSION as METRIC_VERSION
+            if report.get('metric_definition_version') != METRIC_VERSION: return False
             from local_tracklets import VERSION as TRACKLET_VERSION
             if report.get('tracklet_version')!=TRACKLET_VERSION: return False
             from identity_reassociation import VERSION as ASSOCIATION_VERSION
@@ -302,7 +329,7 @@ def complete(stage, config, info):
             try:p = np.load(stage['outputs'][0], allow_pickle=False)
             except (ValueError,EOFError):return False
             if p.shape != (info['frames'], 101, 2): return False
-            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'tapnext-worm-'))
+            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'tapnext-worm-', 'self_contact-worm-'))
             if adapter or len(stage['outputs']) > 2:
                 quality=json.loads(Path(stage['outputs'][2]).read_text(encoding='utf-8'))
                 if len(quality)!=len(p): return False
@@ -313,6 +340,8 @@ def complete(stage, config, info):
             if stage['name'].startswith('tapnext-worm-'):
                 from tapnext_support import signature
                 if meta.get('algorithm_signature') != signature(): return False
+            if stage['name'].startswith('self_contact-worm-') and meta.get('version') != SELF_CONTACT_VERSION:
+                return False
             if stage['name'].startswith('topology-worm-'):
                 from crossing_centerline import VERSION
                 if meta.get('version')!=VERSION:return False
@@ -354,27 +383,54 @@ def compatible_identity(previous, current):
     return inputs(previous) == inputs(current)
 
 
+def check_memory_pressure():
+    """Return True at warning level; stop the stage at critical pressure."""
+    if sys.platform != 'darwin':
+        return False
+    import ctypes
+    level = ctypes.c_int()
+    size = ctypes.c_size_t(ctypes.sizeof(level))
+    status = ctypes.CDLL(None).sysctlbyname(b'kern.memorystatus_vm_pressure_level',
+        ctypes.byref(level), ctypes.byref(size), None, 0)
+    # Darwin reports dispatch memory pressure as normal (1), warning (2), or critical (4).
+    if status == 0 and level.value == 4:
+        raise RuntimeError('Mac 系统内存压力已达到严重级别，已停止分析。请保存并关闭占用内存的应用，'
+                           '检查启动磁盘可用空间，然后在工作台选择“继续此任务”。')
+    return status == 0 and level.value == 2
+
+
 def run_stage(stage, log, progress=None):
-    env = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUNBUFFERED='1')
+    env = dict(os.environ, PYTHONUTF8='1', PYTHONIOENCODING='utf-8', PYTHONUNBUFFERED='1')
     env['PYTHONPATH'] = str(ROOT / 'src') + os.pathsep + env.get('PYTHONPATH', '')
     if progress and progress.event_path: env['WORM_PROGRESS_FILE'] = str(progress.event_path)
     if progress and progress.preview_dir:
         env['WORM_PREVIEW_DIR'] = str(progress.preview_dir)
         env['WORM_PREVIEW_STAGE'] = progress.data['stages'][progress.data['active']]['label']
     started = time.monotonic()
+    last_report = started
     with log.open('w', encoding='utf-8') as handle:
+        warning_message = 'Mac 系统内存压力处于警告级别，继续分析。'
+        warning = check_memory_pressure()
+        if warning:
+            print(warning_message, file=handle, flush=True)
         process = subprocess.Popen(stage['command'], cwd=ROOT, env=env, stdout=handle, stderr=subprocess.STDOUT)
         try:
             while True:
                 if progress and progress.cancel_requested.is_set():
                     raise RuntimeError('用户取消了当前处理；已完成阶段保留，可继续任务')
                 try:
-                    code = process.wait(timeout=.6 if progress else 30)
+                    code = process.wait(timeout=.6 if progress or sys.platform == 'darwin' else 30)
                     if progress: progress.poll()
                     break
                 except subprocess.TimeoutExpired:
+                    current_warning = check_memory_pressure()
+                    if current_warning and not warning:
+                        print(warning_message, file=handle, flush=True)
+                    warning = current_warning
                     if progress: progress.poll()
-                    else: print(f'  {stage["name"]} 运行中，{time.monotonic() - started:.0f} 秒；日志：{log.name}', flush=True)
+                    elif time.monotonic() - last_report >= 30:
+                        last_report = time.monotonic()
+                        print(f'  {stage["name"]} 运行中，{last_report - started:.0f} 秒；日志：{log.name}', flush=True)
         except BaseException:
             if os.name == 'nt' and process.poll() is None:
                 subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
@@ -476,11 +532,15 @@ def _main(progress, raw_override=None):
     progress.configure(config, info, stages, base, device_label(device))
     progress.data['notice'] = notice
     if not args.no_progress_ui and progress.server is None:
-        import webbrowser
+        from electron_desktop import open_view
         from manual_worm_annotation import create_server
         progress.bind_server(create_server(progress=progress))
         print(f'处理进度：{progress.url}', flush=True)
-        if OPEN_BROWSER: webbrowser.open(progress.url, new=2)
+        if OPEN_BROWSER:
+            def window_closed():
+                progress.cancel_requested.set()
+                progress.closed.set()
+            open_view(progress.url, window_closed)
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     state_path = base / 'pipeline-state.json'
     state = state or dict(sample=config['sample'], stages={})

@@ -6,7 +6,7 @@ No forward-motion assumption is used to flip heads (true reversals are retained)
 """
 import numpy as np
 
-VERSION = 'head-tail-v7-initialized-orientation'
+VERSION = 'head-tail-v14-physical-end-continuity'
 DEFAULTS = dict(window_frames=5, min_motion_bl=.005, min_contrast=.15,
                 min_vote_fraction=.65, close_endpoints_bl=.10,
                 max_step_bl=.25, min_assignment_margin_bl=.02,
@@ -134,7 +134,16 @@ def normalize_anchors(manual, count=None):
     return anchors
 
 
-def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters=None, segment_ids=None, radius_profiles=None, intensity_profiles=None, fps=30.):
+def anchors_in_crop(manual, annotation_crop, result_crop):
+    """Express saved crop-local or source-frame head clicks in the result canvas."""
+    records = normalize_anchors(manual)
+    for record in records:
+        origin = [0,0] if record.pop('point_space',None) == 'source' else annotation_crop[:2]
+        record['point'] = (np.asarray(record['point']) + origin - np.asarray(result_crop[:2])).tolist()
+    return records
+
+
+def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters=None, segment_ids=None, radius_profiles=None, intensity_profiles=None, fps=30., endpoint_visible=None, pose_gap_allowed=None):
     """Return original endpoint index 0/1, status, evidence and segment per frame.
 
     manual is one {frame, point} record or a list. Identity propagates in
@@ -155,6 +164,14 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
     if p.ndim != 3 or p.shape[2] != 2 or p.shape[1] < 2 or valid.shape != (len(p),):
         raise ValueError('头尾检测的中心线或质量数组尺寸错误')
     n = len(p)
+    if endpoint_visible is not None:
+        endpoint_visible = np.asarray(endpoint_visible, bool)
+        if endpoint_visible.shape != (n, 2):
+            raise ValueError('端点可见性需要与各帧中线的原始两端对应')
+    if pose_gap_allowed is not None:
+        pose_gap_allowed = np.asarray(pose_gap_allowed, bool)
+        if pose_gap_allowed.shape != (n,):
+            raise ValueError('姿态缺口标记需要与视频帧数一致')
     profiles=None if radius_profiles is None else np.asarray(radius_profiles,float)
     if profiles is not None and profiles.shape!=p.shape[:2]:
         raise ValueError('头尾检测的半径轮廓尺寸错误')
@@ -177,6 +194,11 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
     separated = np.linalg.norm(ends[:, 0]-ends[:, 1], axis=1) > cfg['close_endpoints_bl']*lengths
     for i in np.flatnonzero(usable & ~separated): results[i]['head_reason'] = 'endpoints_too_close'
     usable &= separated
+    links = {}
+    if endpoint_visible is not None and mode in ('taper_seed','manual_seed'):
+        from centerline_correspondence import curve_links
+        links = curve_links(p, usable, endpoint_visible, segment_ids, fps, pose_gap_allowed,
+                            {a['frame'] for a in anchors})
     segments = []
     tracked = ends.copy()
     flipped = np.zeros(n, bool)
@@ -195,7 +217,9 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
             flip = reverse < direct
             step = distance[[0, 1], [1, 0] if flip else [0, 1]].max()
             length = min(lengths[last], lengths[i])
-            if step > cfg['max_step_bl']*length or abs(direct-reverse) < cfg['min_assignment_margin_bl']*length:
+            match = links.get((last, i))
+            order_conflict = match is not None and match['flip'] != (flip ^ flipped[last])
+            if order_conflict or step > cfg['max_step_bl']*length or abs(direct-reverse) < cfg['min_assignment_margin_bl']*length:
                 segments.append(current); current = []
             else:
                 flipped[i] = flip
@@ -204,7 +228,8 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
     if current: segments.append(current)
     if mode in ('taper_seed','manual_seed'):
         from head_initialization import initialize
-        return initialize(results,p,segments,flipped,segment_ids,profiles,anchors,cfg,fps,mode)
+        return initialize(results,p,segments,flipped,segment_ids,profiles,anchors,cfg,fps,mode,
+                          endpoint_visible,valid & finite,links,pose_gap_allowed)
     for segment_id, indexes in enumerate(segments):
         idx = np.asarray(indexes)
         head = None; score = 0.; confirmed = False

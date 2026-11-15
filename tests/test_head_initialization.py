@@ -48,6 +48,37 @@ class InitializationTest(unittest.TestCase):
         rows=self.detect(p,v,r,manual={'frame':0,'point':[0,0]})
         self.assertTrue(all(x['head_endpoint'] is None for x in rows))
 
+    def test_visible_tip_carries_both_labels_through_contact(self):
+        poses, valid, radius = self.fixture(4)
+        # One terminal portion folds into the body, then emerges. Reverse the
+        # stored vertex order on both sides of the contact boundary.
+        poses[2, 60:, 1] = poses[2, 60:, 0] - 60
+        poses[2, 60:, 0] = 60
+        poses[1:3] = poses[1:3, ::-1]
+        visible = np.ones((4, 2), bool)
+        visible[2, 0] = False
+        for head in (0, 1):
+            options = dict(mode='manual_seed', manual={'frame': 0, 'point': [100 * head, 0]})
+            rows = self.detect(poses, valid, radius, endpoint_visible=visible, **options)
+            self.assertEqual([r['head_endpoint'] for r in rows], [head, 1-head, 1-head, head])
+            self.assertEqual(rows[2]['head_temporal_link_source'], 'visible_tip')
+            self.assertFalse(rows[2]['head_identity_confirmed'])
+            baseline = self.detect(poses, valid, radius, **options)
+            self.assertIsNone(baseline[2]['head_endpoint'])
+
+        for change in ('hidden', 'different_tip', 'identity_break', 'gap', 'no_seed'):
+            with self.subTest(change=change):
+                v, flags, ids = valid.copy(), visible.copy(), np.zeros(4, int)
+                anchor = {'frame': 0, 'point': [0, 0]}
+                if change == 'hidden': flags[2] = False
+                if change == 'different_tip': flags[1, 1] = False
+                if change == 'identity_break': ids[2:] = 1
+                if change == 'gap': v[1] = False
+                if change == 'no_seed': anchor = None
+                rows = self.detect(poses, v, radius, mode='manual_seed', manual=anchor,
+                                   endpoint_visible=flags, segment_ids=ids)
+                self.assertIsNone(rows[2]['head_endpoint'])
+
     def test_bad_anchor_elsewhere_does_not_cancel_valid_user_input(self):
         p,v,r=self.fixture();v[5:10]=False
         rows=self.detect(p,v,r,manual=[{'frame':0,'point':[0,0]},

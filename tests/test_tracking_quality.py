@@ -3,6 +3,16 @@ from tracking_quality import mark_quality, reference_area
 
 
 class TrackingQualityTests(unittest.TestCase):
+    def test_area_jump_accepts_up_to_twenty_five_percent(self):
+        for area, rejected in [(1215, False), (1250, False), (1251, True),
+                               (750, False), (749, True)]:
+            with self.subTest(area=area):
+                # Repeating the new size keeps the median-area check independent.
+                rows = [dict(frame=i, worm_id=1, area_px=value, ambiguous_overlap_px=0)
+                        for i, value in enumerate([1000, area, area])]
+                mark_quality(rows, [1])
+                self.assertEqual(rows[1]['low_confidence'], rejected)
+
     def test_majority_missing_detections_do_not_erase_valid_initial_frames(self):
         areas=[5800,5700,5900]+[0]*12
         rows=[dict(frame=f,worm_id=1,area_px=a,ambiguous_overlap_px=0) for f,a in enumerate(areas)]

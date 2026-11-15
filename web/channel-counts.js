@@ -1,0 +1,432 @@
+'use strict';
+
+window.createChannelWorkspace = function ({request, token}) {
+  const el = id => document.getElementById(id);
+  const tabs = [...document.querySelectorAll('[data-count-tab]')];
+  const sliders = [...document.querySelectorAll('[data-count-line]')];
+  const svg = el('count-view'), bars = el('cross-chart');
+  const lineNames = {mask_top_ratio:'上边界', tripwire_ratio:'越线 ↑', mask_bottom_ratio:'下边界'};
+  const states = {running:'计数中', paused:'已暂停', interrupted:'计数中断', failed:'计数失败', complete:'已完成'};
+  let file = null, page = 'setup', task = null, run = null, activeRun = null, draft = null, history = [];
+  let setupPhoto = null, setupError = '', drawnPhoto = null, guides, line = null, highlighted = null;
+  let generation = 0, refreshRevision = 0, setupRevision = 0, timer, pending = false, writes = Promise.resolve();
+  const route = (name, params) => '/api/channel/' + name + '?' + new URLSearchParams({file:file.id, ...params});
+  const renderReview = window.createChannelReview({request, route});
+  let live = null, newPreviewRun = null;
+
+  function stopLive() {
+    if (!live) return;
+    clearTimeout(live.timer);
+    live.source.close();
+    live = null;
+  }
+
+  function position(frame) {
+    el('count-position').textContent = task.frames ? frame+' / '+task.frames+' 帧' : '';
+  }
+
+  async function playLive(player) {
+    if (player !== live || player.busy) return;
+    player.busy = true;
+    let delay = 60;
+    try {
+      if (task.status==='paused' || document.hidden || pending) { delay=120; return; }
+      if (player.frame >= task.frame) {
+        if (task.status==='complete') changePage('result');
+        return;
+      }
+      if (!player.frame && task.status==='running' && task.frame<Math.min(task.frames || 6,6)) return;
+      const frame = player.frame+1;
+      const photo = await player.source.read(frame,1);
+      if (!photo || player!==live) return;
+      const interval = 1000/Math.min(task.fps || 24,60);
+      let painted = await new Promise(requestAnimationFrame);
+      while (player===live && !pending && task.status!=='paused' && painted+1 < player.nextPaint) {
+        painted = await new Promise(requestAnimationFrame);
+      }
+      if (player!==live || pending || task.status==='paused') return;
+      const oldCounts = player.photo?.counts;
+      player.frame = frame;
+      player.photo = photo;
+      if (!oldCounts || photo.counts.some((n,i)=>oldCounts[i]!==n)) distribution();
+      draw();
+      position(frame);
+      notice('count-photo-status','');
+      player.source.prefetch(frame,1,task.frame);
+      // Rebase after a stall or pause instead of flashing several catch-up frames.
+      player.nextPaint = (painted-player.nextPaint < interval/2 ? player.nextPaint : painted) + interval;
+      delay = Math.max(0,interval-25);
+    } catch (error) {
+      if (player === live) {
+        notice('count-photo-status',error.message);
+        delay = 800;
+      }
+    } finally {
+      player.busy = false;
+      if (player === live) player.timer=setTimeout(()=>playLive(player),delay);
+    }
+  }
+
+  function syncLive() {
+    if (page!=='count' || !task || (live && live.run!==task.id)) stopLive();
+    if (page!=='count' || !task) return;
+    if (!['running','paused','complete'].includes(task.status)) { stopLive(); return; }
+    if (live || task.status==='complete') return;
+    // Joining an existing job starts at its checkpoint. A new job starts with frame one.
+    const joining = task.picture && task.id!==newPreviewRun;
+    const player = {run:task.id, frame:joining?task.frame:0, photo:joining?{...task.picture,counts:task.counts}:null,
+      source:window.createChannelFrames({request,route,run:task.id}), busy:false, nextPaint:0};
+    live = player;
+    newPreviewRun = null;
+    player.timer=setTimeout(()=>playLive(player),0);
+  }
+
+  function notice(id, text) {
+    el(id).textContent = text || '';
+    el(id).hidden = !text;
+  }
+  async function post(id, action, details) {
+    const key = await token();
+    return request('/api/channel/task', {method:'POST', headers:{'Content-Type':'application/json','X-Annotation-Token':key},
+      body:JSON.stringify({file:id, action, ...details})});
+  }
+  function saveDraft() {
+    const version = generation, id = file.id, settings = {...draft};
+    writes = writes.catch(() => {}).then(() => post(id, 'draft', {settings}));
+    writes.catch(error => { if (generation === version) notice('count-message', error.message); });
+  }
+
+  function svgItem(parent, tag, attrs, text) {
+    const item = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [key, value] of Object.entries(attrs)) item.setAttribute(key, value);
+    if (text != null) item.textContent = text;
+    parent.append(item);
+    return item;
+  }
+
+  function draw() {
+    const setup = page === 'setup', photo = setup ? setupPhoto : live ? live.photo : task?.picture;
+    if (!photo || page === 'result') {
+      svg.replaceChildren();
+      drawnPhoto = null;
+      return;
+    }
+    const {width:w,height:h,bounds} = photo, params = setup ? draft : task.settings;
+    if (!drawnPhoto || drawnPhoto.width!==w || drawnPhoto.height!==h) {
+      svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      svg.replaceChildren();
+      svgItem(svg, 'image', {href:photo.image, width:w, height:h});
+      guides = svgItem(svg,'g',{});
+    } else if (drawnPhoto !== photo) {
+      svg.firstElementChild.setAttribute('href',photo.image);
+    }
+    drawnPhoto = photo;
+    guides.replaceChildren();
+    const unit = 1 / (svg.getScreenCTM()?.a || 1);
+    if (setup) {
+      const bottom = params.mask_bottom_ratio*h;
+      svgItem(guides,'rect',{width:w,height:params.mask_top_ratio*h,fill:'#173429',opacity:.16});
+      svgItem(guides,'rect',{y:bottom,width:w,height:h-bottom,fill:'#173429',opacity:.16});
+    } else if (highlighted != null && bounds.length) {
+      const band = bounds[bounds.length-highlighted];
+      if (band) svgItem(guides,'rect',{x:band[0], width:band[1]-band[0], height:h, fill:'#5cad7d', opacity:.36});
+    }
+    const edge = params.mask_top_ratio*h;
+    bounds.forEach(([a,b],i) => {
+      const ch=bounds.length-i, center=(a+b)/2;
+      svgItem(guides,'line',{x1:center,x2:center,y1:edge,y2:edge+4*unit,stroke:'#f0cc69','stroke-width':unit});
+      if (i===0 || i===bounds.length-1 || (!setup && ch===highlighted)) {
+        svgItem(guides,'text',{x:center,y:Math.min(h-2*unit,edge+17*unit),'font-size':12*unit,'font-weight':600,
+          'text-anchor':'middle',fill:'white',stroke:'#375042','stroke-width':2.5*unit,'paint-order':'stroke'},ch);
+      }
+    });
+    for (const [key, title] of Object.entries(lineNames)) {
+      const y = params[key]*h, crossing = key === 'tripwire_ratio';
+      const group = svgItem(guides, 'g', setup ? {'data-line':key} : {});
+      svgItem(group,'line',{x1:0,x2:w,y1:y,y2:y,stroke:crossing?'#d95545':'#efcd69','stroke-width':crossing?2:1.5,
+        'stroke-dasharray':crossing?'none':'6 4','vector-effect':'non-scaling-stroke'});
+      if (setup) {
+        svgItem(group,'line',{x1:0,x2:w,y1:y,y2:y,stroke:'transparent','stroke-width':16,'vector-effect':'non-scaling-stroke'});
+        // Separate the handles horizontally so closely spaced boundaries remain selectable.
+        const width = 52*unit, height = 22*unit;
+        const x = key === 'mask_bottom_ratio' ? w-width : crossing ? Math.min(width+4*unit,w-width) : 0;
+        const top = Math.max(0, Math.min(y-height/2, h-height));
+        svgItem(group,'rect',{x,y:top,width,height,rx:4*unit,fill:crossing?'#9e4135':'#584a2c'});
+        svgItem(group,'text',{x:x+width/2,y:top+height*.69,'font-size':12*unit,'text-anchor':'middle',fill:'white'},title);
+      }
+    }
+    if (!setup) bounds.forEach(([a,b],i) => {
+      const ch=bounds.length-i;
+      const hit=svgItem(guides,'rect',{x:a,width:b-a,height:h,fill:'transparent','data-channel':ch});
+      svgItem(hit,'title',{},'通道 '+ch+'，'+(photo.counts || task.counts)[ch-1]+' 次越线');
+    });
+  }
+
+  function updateSliders() {
+    for (const input of sliders) {
+      const ratio = draft[input.dataset.countLine], percent = Number((ratio*100).toFixed(1)) + '%';
+      input.value = Math.round(ratio*1000);
+      input.setAttribute('aria-valuetext', percent);
+      input.parentElement.querySelector('output').textContent = percent;
+    }
+  }
+  function moveLine(key, value) {
+    const limits = {mask_top_ratio:[0,draft.tripwire_ratio-.001], mask_bottom_ratio:[draft.tripwire_ratio+.001,1],
+      tripwire_ratio:[draft.mask_top_ratio+.001,draft.mask_bottom_ratio-.001]};
+    const [lo,hi] = limits[key];
+    draft[key] = Math.max(lo,Math.min(hi,Math.round(value*1000)/1000));
+    updateSliders(); draw();
+  }
+  svg.onpointerdown = e => {
+    if (!e.isPrimary || e.button !== 0) return;
+    const target = e.target.closest('[data-line]');
+    if (page==='count') {
+      const band=e.target.closest('rect[data-channel]');
+      if (band) selectChannel(Number(band.dataset.channel));
+      return;
+    }
+    if (!target) return;
+    line = target.dataset.line;
+    e.preventDefault(); svg.setPointerCapture(e.pointerId);
+  };
+  svg.onpointermove = e => {
+    if (!line || !setupPhoto || !e.isPrimary) return;
+    const point = new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+    moveLine(line,point.y/setupPhoto.height);
+  };
+  svg.onlostpointercapture = () => { if (line) { line=null; saveDraft(); } };
+  new ResizeObserver(() => { if (page==='setup' && setupPhoto) draw(); }).observe(svg);
+  for (const input of sliders) {
+    input.oninput = () => moveLine(input.dataset.countLine,Number(input.value)/1000);
+    input.onchange = saveDraft;
+  }
+  el('count-adjust').onclick = () => {
+    const panel = el('count-sliders');
+    panel.hidden = !panel.hidden;
+    el('count-adjust').setAttribute('aria-expanded', String(!panel.hidden));
+  };
+
+  async function loadSetup() {
+    const version = ++setupRevision;
+    setupPhoto = null; setupError = ''; notice('count-message',''); render();
+    try {
+      const photo = await request(route('setup', {channels:draft.num_channels}));
+      if (version !== setupRevision) return;
+      setupPhoto = photo;
+      if (page==='setup') notice('count-message',photo.bounds.length?'':'首帧未识别到通道边界，请核对通道数。');
+    } catch (error) {
+      if (version !== setupRevision) return;
+      setupError = error.message;
+    }
+    render();
+  }
+  el('count-channels').onchange = () => {
+    const n = el('count-channels').valueAsNumber;
+    if (!Number.isInteger(n) || n < 1 || n > 100) { el('count-channels').value=draft.num_channels; return; }
+    if (n === draft.num_channels) return;
+    draft.num_channels=n; saveDraft(); void loadSetup();
+  };
+
+  function selectChannel(ch) { highlighted = ch === highlighted ? null : ch; render(); }
+  bars.onclick = e => {
+    const button=e.target.closest('button[data-channel]');
+    if (button) selectChannel(Number(button.dataset.channel));
+  };
+  el('cross-all').onclick = () => selectChannel(null);
+
+  function distribution() {
+    const counts = live ? (live.photo?.counts || task.counts.map(()=>0)) : task.counts;
+    const max = Math.max(1,...counts);
+    if (bars.childElementCount !== counts.length) {
+      bars.replaceChildren();
+      bars.style.gridTemplateColumns = 'repeat(' + counts.length + ',minmax(22px,1fr))';
+      for (let ch=counts.length; ch>0; ch--) {
+        const button = document.createElement('button');
+        button.type='button'; button.dataset.channel=ch;
+        const label=document.createElement('span');
+        label.textContent=String(ch).padStart(2,'0');
+        button.append(document.createElement('b'), document.createElement('i'), label);
+        bars.append(button);
+      }
+    }
+    for (const button of bars.children) {
+      const ch=Number(button.dataset.channel), n=counts[ch-1];
+      button.firstElementChild.textContent=n||'';
+      button.children[1].style.height=Math.max(2,36*n/max)+'px';
+      button.classList.toggle('count-zero',n===0);
+      button.setAttribute('aria-pressed',String(ch===highlighted));
+      button.title='通道 '+ch+'，'+n+' 次越线';
+      button.setAttribute('aria-label',button.title);
+    }
+    el('cross-total').textContent=counts.reduce((sum,n)=>sum+n,0);
+    el('cross-all').hidden=highlighted==null;
+    const link=el('cross-export');
+    link.hidden=page!=='result';
+    if (!link.hidden) {
+      link.href=route('export',{run:task.id});
+      link.download=file.name+'-通道计数.xlsx';
+    }
+  }
+
+  function render() {
+    syncLive();
+    const setup=page==='setup', result=page==='result';
+    el('count-work').hidden=!draft;
+    el('count-empty').hidden=!!draft;
+    for (const tab of tabs) {
+      const name=tab.dataset.countTab;
+      tab.disabled=!draft || pending || (name==='result' && task?.status!=='complete') || (name==='count' && !task);
+      if (name===page) tab.setAttribute('aria-current','page'); else tab.removeAttribute('aria-current');
+    }
+    renderReview(result ? task : null, file, highlighted);
+    el('count-layout').hidden=!draft || result;
+    if (!draft) return;
+    el('count-config').hidden=!setup;
+    el('count-distribution').hidden=setup;
+    el('count-transport').hidden=page!=='count';
+    for (const b of el('channel-history-list').children) {
+      b.disabled=pending;
+      if (b.dataset.run===task?.id) b.setAttribute('aria-current','true'); else b.removeAttribute('aria-current');
+    }
+    if (setup) {
+      if (document.activeElement!==el('count-channels')) el('count-channels').value=draft.num_channels;
+      updateSliders();
+      el('count-start').disabled=pending || (!activeRun && (!file.available || (!setupPhoto && !setupError)));
+      el('count-start').textContent=activeRun?'查看计数进度':setupError?'重新读取首帧':'开始计数';
+      const status = !file.available ? '原视频不可用' : setupError || (!setupPhoto ? '读取视频首帧…' : '');
+      notice('count-photo-status', status);
+    } else {
+      distribution();
+      if (!result) {
+        el('count-status').textContent=live && task.status==='complete' ? '计数完成 · 预览中' : states[task.status] || task.status;
+        const button=el('count-pause');
+        button.disabled=pending || (task.status==='interrupted' && !file.available);
+        button.textContent=({running:'暂停',paused:'继续计数',interrupted:'继续计数',complete:'查看结果',failed:'调整设置'})[task.status];
+        if (task.status==='interrupted' && activeRun && activeRun!==task.id) {
+          button.textContent='查看当前计数';
+          button.disabled=pending;
+        }
+        const progress=el('count-progress');
+        progress.hidden=!task.frames && !['running','paused'].includes(task.status);
+        if (task.frames>0) {
+          progress.max=task.frames; progress.value=task.frame;
+          progress.title='已处理 '+task.frame+' / '+task.frames+' 帧';
+        }
+        else progress.removeAttribute('value');
+        position(live ? live.frame : task.frame);
+        notice('count-photo-status',(live ? live.photo : task.picture) ? '' : task.status==='running'?'等待首帧…':'暂无计数画面');
+      }
+    }
+    draw();
+  }
+
+  function changePage(next) {
+    if (next === page) return;
+    page=next;
+    const setupNotice=setupPhoto && !setupPhoto.bounds.length ? '首帧未识别到通道边界，请核对通道数。' : '';
+    notice('count-message',page==='setup'?setupNotice:task?.error || task?.warning);
+    if (page==='setup' && !setupPhoto && file.available) void loadSetup(); else render();
+  }
+  function chooseRun(id) {
+    clearTimeout(timer);
+    run=id;
+    void refresh(true);
+  }
+
+  async function refresh(initial=false) {
+    clearTimeout(timer);
+    const version=++refreshRevision;
+    try {
+      const data=await request(route('state',run?{run}:{}));
+      if (version!==refreshRevision) return;
+      if (task?.id!==data.task?.id) highlighted=null;
+      task=data.task; activeRun=data.active_run; draft??=data.draft;
+      if (initial) page=task?.status==='complete'?'result':task?'count':'setup';
+      else if (page==='count' && task?.status==='complete' && !live) page='result';
+      if (page!=='setup' || initial) notice('count-message',page==='setup'?'':task?.error || task?.warning);
+      if (history.join()!==data.history.join()) {
+        history=data.history;
+        el('channel-history-list').replaceChildren(...history.map(id=>{
+          const b=document.createElement('button');
+          b.dataset.run=id;
+          b.textContent=id.slice(4,6)+'月'+id.slice(6,8)+'日 '+id.slice(8,10)+':'+id.slice(10,12)+':'+id.slice(12,14);
+          b.onclick=()=>chooseRun(id); return b;
+        }));
+      }
+      el('channel-history').hidden=!history.length;
+      if (initial && page==='setup' && file.available) void loadSetup(); else render();
+      if (activeRun) timer=setTimeout(refresh, activeRun===task?.id ? 500 : 1500);
+    } catch (error) {
+      if (version!==refreshRevision) return;
+      if (!draft) {
+        el('count-empty-label').textContent=error.message;
+        el('count-retry').hidden=false;
+      } else notice('count-message',error.message);
+      if (activeRun) timer=setTimeout(refresh,1500);
+    }
+  }
+
+  async function action(name) {
+    if (pending) return;
+    const version=generation;
+    pending=true; clearTimeout(timer); refreshRevision++; render();
+    try {
+      await writes;
+      if (version!==generation) return;
+      const data=await post(file.id,name,{settings:draft,run:task?.id});
+      if (version!==generation) return;
+      if (task?.id!==data.task.id) highlighted=null;
+      if (name==='start') newPreviewRun=data.task.id;
+      task=data.task; run=task.id; page='count';
+      await refresh();
+    } catch (error) {
+      if (version===generation) {
+        notice('count-message',error.message);
+        if (activeRun) timer=setTimeout(refresh,1500);
+      }
+    } finally {
+      if (version===generation) { pending=false; render(); }
+    }
+  }
+  el('count-retry').onclick=()=>{
+    el('count-retry').hidden=true;
+    el('count-empty-label').textContent='读取计数记录…';
+    void refresh(true);
+  };
+  el('count-start').onclick=()=>{
+    if (activeRun) chooseRun(activeRun);
+    else if (setupError) void loadSetup();
+    else void action('start');
+  };
+  el('count-pause').onclick=()=>{
+    if (task.status==='failed') changePage('setup');
+    else if (task.status==='complete') changePage('result');
+    else if (activeRun && activeRun!==task.id) chooseRun(activeRun);
+    else void action(task.status==='running'?'pause':'resume');
+  };
+  for (const tab of tabs) tab.onclick=()=>changePage(tab.dataset.countTab);
+
+  return {
+    flush:()=>writes,
+    select(item) {
+      if (file?.id===item?.id && file?.name===item?.name && file?.available===item?.available && file?.path===item?.path) return;
+      file=item?{...item}:null;
+      generation++; setupRevision++; refreshRevision++; clearTimeout(timer);
+      task=draft=run=activeRun=setupPhoto=highlighted=line=newPreviewRun=null;
+      page='setup'; history=[]; pending=false; setupError='';
+      el('count-sliders').hidden=true;
+      el('count-adjust').setAttribute('aria-expanded','false');
+      el('channel-history-list').replaceChildren(); el('channel-history').hidden=true;
+      el('channel-name').textContent=file?.name||'工作台';
+      const video=file?.kind==='video' && file.path;
+      notice('count-message','');
+      el('count-empty-label').textContent=video?'读取计数记录…':file?.persisting?'正在保存视频':'从左侧选择一个视频';
+      el('count-retry').hidden=true;
+      render();
+      if (video) {
+        const version=generation;
+        writes.catch(()=>{}).then(()=>{ if (version===generation) void refresh(true); });
+      }
+    }
+  };
+};

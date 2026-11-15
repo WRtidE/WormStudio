@@ -59,6 +59,7 @@ def report_progress(current=None, total=None, detail='', unit='帧', *, fraction
 
 def stage_label(stage):
     name = stage['name']
+    if name == 'crop-recovery': return '触边扩框与重跟踪'
     label = PHASE_LABELS[stage['phase']]
     if '-worm-' in name: label += ' · 线虫 ' + name.rsplit('-', 1)[1]
     return label
@@ -174,6 +175,8 @@ class PipelineProgress:
                        ('source-video', '原始视频（只读）', Path(config['video']), 'metrics'),
                        ('metrics', '逐帧指标 CSV', result/'per_frame_metrics.csv', 'metrics'),
                        ('summary', '线虫汇总 CSV', result/'worm_summary.csv', 'metrics'),
+                       ('behavior-events', '停顿与倒退事件 CSV', result/'behavior_events.csv', 'metrics'),
+                       ('trajectory-segments', '分段净位移 CSV', result/'trajectory_segments.csv', 'metrics'),
                        ('events', '单向摆动事件 CSV', result/'bend_events.csv', 'metrics'),
                        ('plots', '指标与质心轨迹 PNG', result/'phenotype-plots.png', 'metrics'),
                        ('lines', '正式中线 NPZ', result/'centerlines.npz', 'metrics'),
@@ -188,6 +191,9 @@ class PipelineProgress:
                        ('frame-json', '逐帧指标 JSON', result/'per_frame_metrics.json', 'metrics'),
                        ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
                        ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
+            if config.get('centerline_method')=='self_contact':
+                from crop_recovery import FOLDER
+                outputs.append(('crop-recovery','触边扩框复核记录 JSON',base/'sam2-tracking'/FOLDER/'summary.json','quality'))
             for key, label, path, phase in outputs:
                 if phase in finished and path.is_file():
                     self.artifacts[key] = path
@@ -227,7 +233,10 @@ class PipelineProgress:
                 raise ValueError('本次任务尚未生成逐帧指标')
             if self.frame_metrics is None:
                 self.frame_metrics = load_frame_metrics(path, self.data.get('fps'), self.data['frames'])
-            return dict(self.frame_metrics, sample=sample, crop_xyxy=self.config.get('crop_xyxy') if self.config else None,
+                summary=path.parent/'summary.json'
+                if summary.is_file():
+                    self.frame_metrics['crop_xyxy']=json.loads(summary.read_text(encoding='utf-8')).get('crop_xyxy')
+            return dict(self.frame_metrics, sample=sample, crop_xyxy=self.frame_metrics.get('crop_xyxy') or (self.config.get('crop_xyxy') if self.config else None),
                         head_detection_mode=self.config.get('head_detection','twardis') if self.config else None)
 
     def queue_video(self, annotation, deferred=False):
@@ -282,7 +291,7 @@ class PipelineProgress:
             result['can_edit_preview_masks'] = bool(result['can_reannotate'] and self.preview_dir)
             return result
 
-    def preview(self, run, after=0, sequence=None):
+    def preview(self, run, after=0, sequence=None, *, focus=False):
         from live_preview import preview_batch, latest_sequence
         with self.lock:
             if not self.preview_dir or run != self.run_id:
@@ -292,7 +301,8 @@ class PipelineProgress:
                             status=self.data['status'])
             if not 1 <= sequence <= latest_sequence(self.preview_dir):
                 raise ValueError('预览帧尚未生成')
-            return (self.preview_dir / f'{sequence:09d}.jpg').read_bytes()
+            suffix = '.focus.jpg' if focus else '.jpg'
+            return (self.preview_dir / f'{sequence:09d}{suffix}').read_bytes()
 
     def persist(self):
         if self.path:

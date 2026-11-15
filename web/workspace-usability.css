@@ -38,7 +38,6 @@
 #saved-run-list p { margin:0; font-size:12px; color:#43543a; overflow-wrap:anywhere; }
 .file-label small { font-size:11px; color:#5b684f; line-height:1.7; }
 #draft-status { font-size:12px; line-height:1.6; color:#4d683c; }
-#draft-status[data-state=pending],#draft-status[data-state=saving] { color:#72551e; }
 #draft-status[data-state=error] { color:#a13729; font-weight:600; }
 .workflow .step b { font-size:12px; }.workflow .step small { font-size:11px; }
 .status-line,.viewer-footer { font-size:12px; color:#536149; }
@@ -139,8 +138,6 @@ button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visi
 .annotation-page .annotation-footer>div.action-guidance:first-child { min-width:0; font-size:12px; line-height:1.45; }
 .annotation-page .action-guidance strong { font-size:13px; line-height:1.4; }
 .annotation-page .action-guidance p { font-size:12px; line-height:1.45; margin:2px 0; }
-.annotation-page .save-summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 12px; }
-.annotation-page .save-summary #draft-status { font-size:11px; line-height:1.4; }
 .annotation-page .annotation-footer .footer-actions { gap:6px; margin:0; flex-wrap:nowrap; justify-content:flex-end; }
 .annotation-page .annotation-footer .primary { min-width:150px; min-height:36px; padding:8px 12px; gap:14px; }
 .annotation-page .annotation-footer .secondary,.annotation-page .annotation-footer .repair-button { min-height:36px; padding:8px 10px; white-space:nowrap; }
@@ -171,7 +168,6 @@ button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visi
   .annotation-page .workspace .viewer { min-height:300px; height:60dvh; margin:8px; }
   .annotation-page .annotation-footer { grid-template-columns:minmax(0,1fr); gap:6px; padding:8px 10px; }
   .annotation-page .annotation-footer .footer-actions { width:100%; flex-wrap:wrap; }
-  .annotation-page .save-summary #footer-status { display:none; }
   .studio-page .workspace-header,.studio-page .workspace-tabs { padding-left:12px; padding-right:12px; }
   .studio-page .library { padding-left:8px; padding-right:8px; }
   .studio-page .brand { font-size:12px; }

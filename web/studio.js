@@ -16,6 +16,35 @@
   let stagedIds = [];
   let resultRevision = 0;
 
+  let mode='phenotype';
+  const channel=window.createChannelWorkspace({request:jsonRequest,token:async()=>{
+    if(!progress?.token)progress=await jsonRequest('/api/progress');
+    return progress.token;
+  }});
+  function switchMode(next){
+    if(!['phenotype','channel'].includes(next))return;
+    mode=next;document.body.dataset.mode=next;
+    const counting=next==='channel';
+    for(const button of $$('.task-modes button'))button.setAttribute('aria-pressed',String(button.dataset.mode===next));
+    $('#channel-workspace').hidden=!counting;
+    $('#channel-name').hidden=!counting;
+    $('#mode-crumb').textContent=counting?'通道计数':'表征识别';
+    sessionStorage.setItem('worm-task-mode',mode);
+    if(counting){
+      $('#source-video').pause();
+      frame.contentDocument?.querySelectorAll('video').forEach(video=>video.pause());
+      window.StudioResults.setVisible(false);
+      channel.select(selected());
+      if(!selected())$('#channel-name').textContent='工作台';
+    }else{
+      channel.select(null);
+      if(view!=='evaluation' && selectedId!==analysisId)showView('preview');
+      else showView(view);
+      if(view==='preview')preview(selected());
+    }
+  }
+  for(const b of $$('.task-modes button'))b.onclick=()=>switchMode(b.dataset.mode);
+
   function renderResultNavigation() {
     const navigation = ResultNavigation.build(progress);
     const current = navigation.items[navigation.index];
@@ -110,10 +139,10 @@
     $('#status-text').style.color = error ? '#b17051' : '';
   }
   function renderFiles() {
+    if(mode==='channel')channel.select(selected());
     const query = $('#file-search').value.trim().toLowerCase();
     const visible=explorer?.render() || {count:files.length,empty:!files.length};
     const list=$('#file-list');list.classList.toggle('is-empty',visible.empty);
-    $('#file-total').textContent=files.length;
     $('#library-empty').hidden=view==='evaluation'||!visible.empty;
     $('#clear-file-filter').hidden=!files.length&&!folders.length || (!query&&filter==='all');
     $('#library-empty p').textContent=query||filter!=='all'?'没有匹配的文件':'还没有文件';
@@ -123,14 +152,13 @@
   function renderActions() {
     const file = selected();
     ['#new-folder','#import-folder','#import-files'].forEach(id=>$(id).disabled=organizing||folderImport||pendingUploads>0);
-    $$('#file-list .tree-item').forEach(row=>row.draggable=!organizing&&!folderImport&&!pendingUploads);
     $('#start-analysis').disabled = !file || file.kind !== 'video' || !(file.file || file.path) || file.available === false || !canStart();
     $('#start-analysis').firstChild.textContent = busy ? '正在导入…' : file?.analyzed ? '重新分析' : '开始标注';
     if(stagedIds.length){
       $('#start-analysis').disabled = !canStart();
       $('#start-analysis').firstChild.textContent = `开始顺序标定（${stagedIds.length}）`;
     }
-    $('#start-hint').textContent = localFile ? '双击 start.bat 启动本地服务后，即可标注与分析' : !connected ? '本地服务未连接，请检查启动窗口' : pendingUploads ? '正在保存导入素材，请稍候' : busy ? '正在读取视频，请稍候' : !terminal.includes(progress?.status) ? '当前分析进行中，完成后可开始下一个视频' : !file ? '导入视频后即可开始' : file.kind !== 'video' ? '此文件可预览；分析流程需要视频' : !file.file && !file.path ? '重新分析可在结果页选择“重新标注本视频”' : '进入标注后，先设置区域与实际尺寸';
+    $('#start-hint').textContent = localFile ? '打开 WormStudio 桌面应用即可标注与分析' : !connected ? '本地服务未连接，请检查启动窗口' : pendingUploads ? '正在保存导入素材，请稍候' : busy ? '正在读取视频，请稍候' : !terminal.includes(progress?.status) ? '当前分析进行中，完成后可开始下一个视频' : !file ? '导入视频后即可开始' : file.kind !== 'video' ? '此文件可预览；分析流程需要视频' : !file.file && !file.path ? '重新分析可在结果页选择“重新标注本视频”' : '进入标注后，先设置区域与实际尺寸';
     $('#path-import').disabled = !canStart();
     $$('#path-form input, #path-form button[type="submit"]').forEach(el => el.disabled = busy);
     $('#current-analysis').hidden = !analysisId;
@@ -201,6 +229,7 @@
   function showView(next) {
     if (localFile && next !== 'preview') return;
     view = next;
+    if (next === 'progress' && progress?.status === 'running') status('');
     renderResultNavigation();
     document.body.dataset.workspaceView = next;
     $$('[data-view]').forEach(button => {
@@ -218,7 +247,7 @@
     renderFiles();
     window.EvaluationUI?.setVisible(next === 'evaluation');
     window.EvaluationUI?.filter($('#file-search').value);
-    window.StudioResults.setVisible(next === 'results');
+    window.StudioResults.setVisible(mode==='phenotype' && next === 'results');
     $('#focus-canvas').hidden=!['annotation','progress','results'].includes(next);
     // Stop embedded playback when leaving the processing or annotation view.
     frame.contentDocument?.querySelectorAll('video').forEach(video => video.pause());
@@ -233,14 +262,16 @@
       frame.dataset.route = route; frame.src = route;
     }
   }
-  function selectFile(id) {
-    if(['progress','results'].includes(view) && canStart()){
+  function selectFile(id,{keepSelection=false}={}) {
+    if(!keepSelection)explorer.selectOnly(id);
+    if(!keepSelection && mode==='phenotype' && ['progress','results'].includes(view) && canStart()){
       const file=files.find(item=>item.id===id);
       const latest=file && WorkspaceLinks.runsForFile(file,runs).find(run=>run.complete);
       if(latest){void openSavedResult(latest.sample).catch(e=>status(e.message,true));return;}
     }
     selectedId = id;
-    persistSelection(); renderFiles(); renderDetails(selected()); renderActions(); showView('preview'); preview(selected());
+    persistSelection(); renderFiles(); renderDetails(selected()); renderActions();
+    if(mode==='phenotype'){showView('preview');preview(selected());}
   }
   async function preview(file) {
     const revision = ++mediaRevision;
@@ -293,6 +324,10 @@
       files.splice(0,files.length,...data.files.map(f=>Object.assign(previous.get(f.id)||{},f)));
       folders.splice(0,folders.length,...data.folders);
       if(selectedId&&!files.some(f=>f.id===selectedId)){selectedId=null;if(view==='preview')preview(null);}
+      if(body.op==='remove'&&stagedIds.length){
+        const visible=new Set(files.map(f=>f.id));
+        setStaging(stagedIds.filter(id=>visible.has(id)));
+      }
       if(data.folder&&body.op==='mkdir')explorer.setDestination(data.folder.id);
       renderFiles();renderDetails(selected());
       if(body.op==='remove')status('已从工作区移除 · 原文件、草稿和分析结果保留');
@@ -301,6 +336,7 @@
     }finally{if(!internal)organizing=false;renderActions();}
   }
   async function importFiles(incoming,parent=explorer.destination,emptyFolders=[]) {
+    const importMode=mode;
     if(organizing||folderImport||pendingUploads){status('请等待当前导入完成。',true);return;}
     const videos = [];
     folderImport=true;renderActions();
@@ -335,8 +371,9 @@
       status(added?`已加入 ${added} 个文件 · 文件夹层级已保留`:first?'文件已在此文件夹中':'文件夹已添加，未发现支持的视频、图片或数据文件。');
     }catch(e){status('导入失败：'+e.message,true);return;}
     finally{folderImport=false;$('#files-input').value='';$('#folder-input').value='';renderActions();}
-    if(localFile || videos.length < 2)return;
+    if(localFile || importMode==='channel' || mode==='channel' || videos.length < 2)return;
     await importQueue;
+    if(mode==='channel')return;
     const missing=videos.find(item=>item.persistError || !item.path);
     if(missing){status(`未能保存 ${missing.name}，请重新导入这组视频。`,true);return;}
     try {
@@ -360,7 +397,7 @@
     catch(e){status('无法读取拖入的文件夹：'+e.message,true);}
   }
   async function jsonRequest(route, options) {
-    if (localFile) throw Error('请双击 start.bat 启动本地服务，再使用标注与评测功能。');
+    if (localFile) throw Error('请打开 WormStudio 桌面应用进行标注与评测。');
     const response = await fetch(route, {cache:'no-store', ...options});
     const data = await response.json();
     if (!response.ok) throw Error(data.error || `请求失败（${response.status}）`);
@@ -379,6 +416,7 @@
         const result=await upload(item);
         const oldId=item.id, oldUrl=item.url;
         Object.assign(item,result,{persisting:false,persistError:false});
+        explorer.replaceId(oldId,item.id);
         if(selectedId===oldId)selectedId=item.id;
         if(analysisId===oldId)analysisId=item.id;
         if(selectedId===item.id){renderDetails(item);preview(item);persistSelection();}
@@ -402,6 +440,7 @@
   }
   async function prepareToLeave() {
     if(pendingUploads)throw Error('文件正在保存，请等待导入完成。');
+    await channel.flush();
     await frame.contentWindow?.AnnotationDraft?.flush();
   }
   function renderLinkedRuns() {
@@ -454,6 +493,7 @@
       const data = await jsonRequest('/api/progress');
       if(busy || revision!==resultRevision)return;
       const previousStatus = progress?.status;
+      if (!connected && view === 'progress') status('');
       progress = data; connected = true;
       window.EvaluationUI?.setToken(data.token);
       window.StudioResults.update(data);
@@ -466,7 +506,7 @@
         analysisItem=item;
         analysisId = item.id;
         if(view==='annotation' || view==='progress')$('#current-name').textContent=item.name;
-        if(files.includes(item) && (!selectedId || (view==='annotation' && data.status==='preparing')))selectedId=item.id;
+        if(mode==='phenotype' && files.includes(item) && (!selectedId || (view==='annotation' && data.status==='preparing')))selectedId=item.id;
         renderFiles(); renderDetails(selected());
       }
       if(data.status==='complete'&&analysisItem)analysisItem.analyzed=true;
@@ -475,7 +515,7 @@
         if (analysisId) {
           showView(data.status === 'ready' && !data.batch?.running ? 'preview' : data.status === 'preparing' && !data.batch?.running ? 'annotation' : data.status === 'complete' ? 'results' : 'progress');
         }
-        status(analysisId ? '已恢复当前分析会话' : '工作台已就绪 · 导入视频即可开始');
+        if (view !== 'progress') status(analysisId ? '已恢复当前分析会话' : '工作台已就绪 · 导入视频即可开始');
       }
       if (previousStatus !== data.status) {
         if(data.status==='complete')window.WorkspaceActions?.refresh();
@@ -486,10 +526,10 @@
         if (data.status === 'failed' || data.status === 'cancelled') {
           status(data.error || '处理已停止，请查看处理进度。', true);
           if (view === 'annotation') showView('progress');
-        } else if (data.status === 'complete') status('分析完成 · 可查看逐帧指标并导出结果');
+        } else if (data.status === 'complete' && view !== 'progress') status('分析完成 · 可查看逐帧指标并导出结果');
       }
       if (data.status === 'preparing' && !data.batch?.running) status('正在标注 · 草稿自动保存到本机');
-      if (data.status === 'running') status(`正在处理 ${data.video_name}`);
+      if (data.status === 'running' && view !== 'progress') status(`正在处理 ${data.video_name}`);
       renderActions();
     } catch {
       connected = false; $('#connection-label').textContent = '本地服务未连接';
@@ -525,7 +565,7 @@
     } catch { status('无法读取分析页面，请刷新工作台重试。', true); }
   });
 
-  explorer=LibraryTree.create({getState:()=>({files,folders,query:$('#file-search').value,filter,selectedId,analysisId}),mutate:treeMutation,select:selectFile,icon,status,
+  explorer=LibraryTree.create({getState:()=>({files,folders,query:$('#file-search').value,filter,selectedId,analysisId}),mutate:treeMutation,select:selectFile,stageVideos,icon,status,
     isBusy:()=>organizing||folderImport||pendingUploads>0,
     importFiles:parent=>{pickingParent=parent;$('#files-input').click();},importFolder:parent=>{pickingParent=parent;$('#folder-input').click();},dropFiles:droppedFiles});
   $('#files-input').onchange = event => void importFiles(event.target.files,pickingParent);
@@ -573,11 +613,18 @@
     $('#tab-note').textContent = '选择新的标注起始帧';
   };
   $('#workspace-home').onclick = () => { explorer.setDestination(null);selectedId = null; persistSelection(); renderFiles(); renderDetails(null); renderActions(); showView('preview'); preview(null); };
-  $('#path-import').onclick = () => { $('#path-error').hidden = true; $('#path-dialog').showModal(); $('#path-value').focus(); };
+  $('#path-import').onclick = () => { $('#path-submit-label').textContent=mode==='channel'?'打开视频':'打开并标注'; $('#path-error').hidden = true; $('#path-dialog').showModal(); $('#path-value').focus(); };
   $('#path-form').onsubmit = async event => {
     event.preventDefault(); const path = $('#path-value').value.trim(); if (!path || busy) return;
     $('#path-error').hidden = true;
-    try { await start(null, path); }
+    try {
+      if(mode==='channel'){
+        const key=progress?.token||(await jsonRequest('/api/progress')).token;
+        const item=await jsonRequest('/api/library-link',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':key},body:JSON.stringify({path})});
+        if(!files.some(f=>f.id===item.id))files.push(item);
+        selectFile(item.id);$('#path-dialog').close();
+      }else await start(null, path);
+    }
     catch (error) { $('#path-error').textContent = error.message; $('#path-error').hidden = false; status(error.message, true); }
   };
   const workspaceMenu=$('#workspace-menu'),menuButton=$('#workspace-options');
@@ -599,6 +646,38 @@
   layoutStore.subscribe(restoreSidebar);restoreSidebar();
   narrowWorkspace.addEventListener('change', restoreSidebar);
   document.addEventListener('keydown', event => {
+    if(mode==='channel')return;
+    const {key, target} = event;
+    if (![' ', 'ArrowLeft', 'ArrowRight'].includes(key) || event.defaultPrevented ||
+        event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (view !== 'results' && view !== 'preview') return;
+    if (target.isContentEditable || document.querySelector('dialog[open], .result-action-menu[open], #workspace-menu:not([hidden]), #tree-menu:not([hidden])')) return;
+    const control = target.closest('input, textarea, select, button, a, summary, [role="tab"]');
+    if (control && !control.matches('#result-play, #result-prev, #result-next, #result-frame, .view-tabs [aria-current="page"]')) return;
+
+    if (view === 'results') {
+      const action = key === ' ' ? $('#result-play') : $(key === 'ArrowLeft' ? '#result-prev' : '#result-next');
+      if (key === ' ' && (!$('#studio-result-video').currentSrc || $('#studio-result-video').error)) return;
+      if (action.disabled && $('#result-frame').disabled) return;
+      event.preventDefault();
+      if (key === ' ' && event.repeat) return;
+      if (key !== ' ') $('#studio-result-video').pause();
+      action.click();
+      return;
+    }
+
+    const video = $('#source-video');
+    if (video.hidden || video.readyState < 1 || !Number.isFinite(video.duration)) return;
+    event.preventDefault();
+    if (key === ' ') {
+      if (event.repeat) return;
+      if (video.paused) video.play().catch(() => status('视频未能播放', true));
+      else video.pause();
+    } else {
+      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + (key === 'ArrowRight' ? 1 : -1)));
+    }
+  });
+  document.addEventListener('keydown', event => {
     const editable = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;
     if (event.key.toLowerCase() === 'o' && (event.ctrlKey || event.metaKey)) { event.preventDefault();pickingParent=explorer.destination;$('#files-input').click(); }
     else if (event.key === '/' && !editable && !document.querySelector('dialog[open]')) { event.preventDefault(); collapse(false); $('#file-search').focus(); }
@@ -606,32 +685,16 @@
   document.addEventListener('dragenter', event => {
     if ([...event.dataTransfer.types].includes('Files')) { event.preventDefault(); dragging++; $('#drop-overlay').hidden = false; }
   });
-  const previewPane = $('.preview-main');
-  const isLibraryVideo = event => [...event.dataTransfer.types].includes('application/x-worm-video');
-  previewPane.addEventListener('dragover', event => {
-    if(!isLibraryVideo(event))return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-    previewPane.classList.add('queue-hover');
-  });
-  previewPane.addEventListener('dragleave', event => {
-    if(!previewPane.contains(event.relatedTarget))previewPane.classList.remove('queue-hover');
-  });
-  document.addEventListener('dragend', () => previewPane.classList.remove('queue-hover'));
-  previewPane.addEventListener('drop', event => {
-    if(!isLibraryVideo(event))return;
-    event.preventDefault();
-    event.stopPropagation();
-    previewPane.classList.remove('queue-hover');
-    const id = event.dataTransfer.getData('application/x-worm-video');
-    const file = files.find(item => item.id === id);
+  function stageVideos(ids) {
     if(busy){status('请等待当前视频打开后再添加。');return;}
-    if(!file?.path || file.kind !== 'video' || file.available === false){status('该视频尚未保存或路径不可用。',true);return;}
-    if(stagedIds.includes(id)){status(`${file.name} 已在待标定队列中`);return;}
-    setStaging([...stagedIds,id]);
-    if(!selected())selectFile(id);
-    status(`${file.name} 已加入第 ${stagedIds.length} 位，可继续拖入视频`);
-  });
+    const videos=ids.map(id=>files.find(item=>item.id===id));
+    if(videos.some(file=>!file?.path||file.kind!=='video'||file.available===false)){status('所选视频尚未保存或路径不可用。',true);return;}
+    const added=ids.filter(id=>!stagedIds.includes(id));
+    if(!added.length){status('所选视频已在待标定队列中');return;}
+    setStaging([...stagedIds,...added]);
+    if(!selected())selectFile(added[0]);
+    status(added.length===1?`${files.find(f=>f.id===added[0]).name} 已加入第 ${stagedIds.length} 位`:`已将 ${added.length} 个视频按文件树顺序加入队列`);
+  }
   document.addEventListener('dragover', event => { if ([...event.dataTransfer.types].includes('Files')) event.preventDefault(); });
   document.addEventListener('dragleave', () => { if (--dragging <= 0) { dragging = 0; $('#drop-overlay').hidden = true; } });
   document.addEventListener('drop', event => {
@@ -653,12 +716,13 @@
     } catch {}
     if(stagedIds.length && !selected() && view === 'preview')selectFile(stagedIds[0]);
   }
+  switchMode(sessionStorage.getItem('worm-task-mode')||'phenotype');
   window.StudioWorkspace.ready=restoreLibrary();
   if (localFile) {
     $('#local-file-notice').hidden = false;
     $('.brand').href = './studio.html';
     $('#connection-label').textContent = '文件预览 · 本地服务未连接';
-    status('界面已加载 · 双击 start.bat，使用自动打开的工作台进行标注与评测');
+    status('界面已加载 · 打开 WormStudio 桌面应用进行标注与评测');
   }
   // No overlapping polls; request/upload mutations have priority.
   async function schedulePoll() { await poll(); window.setTimeout(schedulePoll, 2500); }

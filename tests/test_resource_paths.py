@@ -23,7 +23,7 @@ class PortableResources(unittest.TestCase):
 
     def test_override_precedence_and_blank_local_file(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root=Path(folder);(root/'config').mkdir()
+            root=Path(folder).resolve();(root/'config').mkdir()
             setting=root/'config/python_path.txt';setting.write_text('  \n',encoding='utf-8')
             self.assertEqual(paths.runtime_python(root),Path(sys.executable).resolve())
             setting.write_text(str(root/'local-python'),encoding='utf-8')
@@ -33,7 +33,7 @@ class PortableResources(unittest.TestCase):
 
     def test_resources_and_checkpoint_prefer_portable_layout(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root=Path(folder)/'app';root.mkdir()
+            root=Path(folder).resolve()/'app';root.mkdir()
             self.assertEqual(paths.resource_root(root),root/'resources')
             (root.parent/'TWARDISv0.1').mkdir()
             self.assertEqual(paths.resource_root(root),root.parent)
@@ -45,7 +45,7 @@ class PortableResources(unittest.TestCase):
 
     def test_bundled_single_worm_package(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root=Path(folder);package=root/'packages/single-worm-methods'
+            root=Path(folder).resolve();package=root/'packages/single-worm-methods'
             (package/'wormstudio_single').mkdir(parents=True)
             (package/'wormstudio_single/fusion_v4.py').touch()
             (root/'models').mkdir();checkpoint=root/'models/tapnextpp_ckpt.pt';checkpoint.touch()

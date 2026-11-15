@@ -24,11 +24,11 @@ def load_guards(data, ids, frames, required=False):
     return result
 
 
-def run(sample):
+def run(sample, mask_source=None, boundary_frames=None):
     from analyze_phenotypes import ROOT, load_sample, json_safe
     base = ROOT/'outputs'/sample
     config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
-    data, source, ids, get_mask, bad = load_sample(sample, apply_guards=False)
+    data, source, ids, get_mask, bad = load_sample(sample, mask_source or base/'sam2-tracking', apply_guards=False)
     # A lazy sequence avoids holding frames × worms × full-resolution masks in RAM.
     class Masks:
         def __init__(self, worm): self.worm = worm
@@ -39,7 +39,7 @@ def run(sample):
             return get_mask(self.worm, frame)
     guards = sequence_guards({w: Masks(w) for w in ids}, bad,
         source_invalid=config.get('source_invalid_frames', []), fps=source['fps'],
-        identity_confirmations=config.get('identity_confirmations', []))
+        identity_confirmations=config.get('identity_confirmations', []), boundary_frames=boundary_frames)
     report = dict(quality_schema_version=VERSION, guard_version=GUARD_VERSION,
         frames=source['frames'], fps=source['fps'], worm_ids=ids, worms=guards,
         source_invalid_frames=config.get('source_invalid_frames', []),

@@ -84,7 +84,7 @@ def main():
     parser.add_argument('--sample', required=True)
     parser.add_argument('--tracking-only', action='store_true')
     parser.add_argument('--centerline-source',default='wormtracer-temporal',
-        choices=['wormtracer-temporal','centerlines-niu','centerlines-hybrid','centerlines-topology','centerlines-tapnext'])
+        choices=['wormtracer-temporal','centerlines-niu','centerlines-hybrid','centerlines-topology','centerlines-tapnext','centerlines-self-contact'])
     args = parser.parse_args()
     base = ROOT / 'outputs' / args.sample
     _, source, ids, get_mask, _ = load_sample(args.sample)
@@ -136,8 +136,10 @@ def main():
                 crop_h,crop_w=y1-y0,x1-x0
                 if not ok or not ok2 or overlay.shape[:2] != (crop_h+crop_h%2,crop_w+crop_w%2):
                     raise RuntimeError(f'Missing frame or crop mismatch at frame {f}')
-                im[y0:y1, x0:x1] = overlay[:crop_h,:crop_w]
-                report_preview(im,f,source['frames'],'正在合成完整画面')
+                crop = overlay[:crop_h,:crop_w]
+                report_preview(crop, f, source['frames'], '正在合成完整画面', raw=im[y0:y1, x0:x1],
+                               masks=((worm, get_mask(worm, f)) for worm in ids))
+                im[y0:y1, x0:x1] = crop
                 if f in samples:
                     write_png(folder / f'full-preview-{f:04d}.png', im)
                     previews.append(preview(im))

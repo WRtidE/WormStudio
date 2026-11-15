@@ -9,7 +9,7 @@ from skimage.morphology import skeletonize
 from .fusion import feasible_quality
 from .geometry import (topology_candidates,hidden_tip_candidates,
     longest_chain,smooth_chain,extend_tip,connector,resample)
-from .skeleton import extract_niu,valid_line
+from .skeleton import extract_body_geometry
 
 VERSION='whole-contact-event-v1'
 
@@ -53,9 +53,9 @@ def short_tip_candidates(mask):
 
 def candidate_states(mask,reference,mask_valid=True):
     if not mask_valid:return []
-    niu=extract_niu(mask)
-    if niu['topology']=='simple' and valid_line(niu['ordered']):
-        source=[dict(points=niu['ordered'],name='robust_medial',endpoint_observed=[True,True],connection_cost=0.)]
+    niu, path_source = extract_body_geometry(mask)
+    if path_source is not None:
+        source=[dict(points=niu['ordered'],name=path_source,endpoint_observed=[True,True],connection_cost=0.)]
     else:
         graph,_,_=topology_candidates(mask)
         source=[dict(c,endpoint_observed=[True,True]) for c in graph]

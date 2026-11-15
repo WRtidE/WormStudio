@@ -29,7 +29,7 @@
 .live-controls button,.live-controls select { padding:6px 10px; border:1px solid #dde7e0; border-radius:5px; background:white; color:#52675a; font-size:12px; }
 .live-controls button:hover:not(:disabled) { background:#edf5f0; }
 .live-controls label { display:flex; align-items:center; gap:8px; margin-left:10px; color:#75857a; font-size:11px; }
-#live-backlog { margin-left:auto; font-size:11px; color:#6b8173; }
+#preview-retry { margin-left:auto; font-size:11px; color:#6b8173; }
 .live-detail { padding:2px 16px 8px; color:#52675a; font-size:12px; }
 .live-legend { padding:0 16px 12px; color:#7c887f; font-size:10px; line-height:1.7; }
 .processing-details { margin:16px 0; }
