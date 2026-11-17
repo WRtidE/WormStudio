@@ -47,3 +47,21 @@ test('saves complete verified bytes, avoids overwrites and discards corrupted do
   assert.equal(app.state().transfer.status,'error');
   assert.equal(fs.readdirSync(dir).filter(n => n.endsWith('.part') || n.includes('(2)')).length,0);
 });
+
+test('preserves existing downloads on volumes without hard links', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'worm-no-links-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  const existing = path.join(dir, asset.name);
+  fs.writeFileSync(existing, 'previous download');
+  t.mock.method(fs.promises, 'link', async () => {
+    throw Object.assign(new Error('Hard links unavailable'), {code:'EPERM'});
+  });
+  const app = new Updates({directory:dir, downloads:dir, platform:'darwin', arch:'arm64', notify(){},
+    fetch:async url => url === asset.browser_download_url ? new Response(bytes) : Response.json([release])});
+  await app.check();
+  await app.download();
+  assert.equal(app.state().transfer.status, 'done');
+  assert.equal(fs.readFileSync(existing, 'utf8'), 'previous download');
+  assert.equal(path.basename(app.downloaded), 'WormStudio-Mac-arm64 (1).zip');
+  assert.deepEqual(fs.readFileSync(app.downloaded), bytes);
+});

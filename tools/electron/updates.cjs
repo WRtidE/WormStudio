@@ -41,6 +41,17 @@ function findUpdate(releases, platform, arch) {
   return best || null;
 }
 
+async function saveVerifiedFile(temp, destination) {
+  try {
+    await fs.promises.link(temp, destination);
+  } catch (err) {
+    if (!['EPERM', 'EACCES', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(err.code)) throw err;
+    // Some download volumes allow regular files but do not support hard links.
+    // Exclusive creation preserves the caller's numbered-name retry on collision.
+    await fs.promises.copyFile(temp, destination, fs.constants.COPYFILE_EXCL);
+  }
+}
+
 class Updates {
   constructor({directory, downloads, fetch, notify, feed = github, platform = process.platform, arch = process.arch}) {
     Object.assign(this, {downloads, fetch, notify, feed, platform, arch});
@@ -140,7 +151,7 @@ class Updates {
       let destination;
       for (let i = 0; ; i++) {
         destination = path.join(this.downloads, name + (i ? ' (' + i + ')' : '') + ext);
-        try { await fs.promises.link(temp, destination); break; }
+        try { await saveVerifiedFile(temp, destination); break; }
         catch (err) { if (err.code !== 'EEXIST') throw err; }
       }
       this.downloaded = destination;

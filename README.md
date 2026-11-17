@@ -62,7 +62,7 @@ WormStudio/
 
 ## 开发与发布
 
-日常修改直接在本仓库进行。界面在 `web/`，识别、测量和后端在 `src/`，Electron 窗口在 `tools/electron/`。重启源码版即可查看修改。提交后可用 `git archive --format=zip --output=../WormStudio-source.zip HEAD` 生成当前提交的源码包。
+日常修改直接在本仓库进行。界面在 `web/`，识别、测量和后端在 `src/`，Electron 窗口在 `tools/electron/`。重启源码版即可查看修改。提交后可用 `git archive --format=zip --prefix=WormStudio/ --output=../WormStudio-source.zip HEAD` 生成当前提交的源码包。
 
 ```powershell
 python run_tests.py

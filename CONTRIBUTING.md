@@ -1,5 +1,9 @@
 # 贡献说明
 
+## 日常开发
+
+在已经连接 `WRtidE/WormStudio` 的仓库里直接修改并测试，用 `git status` 检查改动，提交后用 `git push origin main` 上传自己的主分支。下一次修改继续打开同一个目录。下文适用于手头只有源码压缩包的情况。
+
 ## 把交付目录放上 GitHub
 
 交付目录中与 `studio.py` 同级的 `README.md` 就是仓库首页。完整保留 `.github/`、`.gitattributes` 和 `.gitignore`；不要将外层研究工作区、离线 App ZIP 或源码 ZIP 本身提交为仓库内容。
