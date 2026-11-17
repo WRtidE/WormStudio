@@ -104,6 +104,29 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     return item;
   }
 
+  function rulerLabels(bounds, unit, selected) {
+    const count = bounds.length;
+    const labels = new Set();
+    if (!count) return labels;
+    const centers = bounds.map(([a,b]) => (a+b)/2);
+    const minGap = 28*unit;
+    const bandWidth = (bounds[count-1][1]-bounds[0][0])/count;
+    const step = 2 ** Math.max(0, Math.ceil(Math.log2(minGap/Math.max(unit,bandWidth))));
+    const positions = [];
+    function add(channel) {
+      if (!(channel >= 1 && channel <= count)) return;
+      const x = centers[count-channel];
+      if (positions.some(other => Math.abs(other-x) < minGap)) return;
+      labels.add(channel);
+      positions.push(x);
+    }
+    add(selected);
+    add(count);
+    add(1);
+    for (let ch = count - count%step; ch >= 1; ch -= step) add(ch);
+    return labels;
+  }
+
   function draw() {
     const setup = page === 'setup', photo = setup ? setupPhoto : live ? live.photo : task?.picture;
     if (!photo || page === 'result') {
@@ -132,10 +155,11 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
       if (band) svgItem(guides,'rect',{x:band[0], width:band[1]-band[0], height:h, fill:'#5cad7d', opacity:.36});
     }
     const edge = params.mask_top_ratio*h;
+    const labels = rulerLabels(bounds, unit, setup ? null : highlighted);
     bounds.forEach(([a,b],i) => {
       const ch=bounds.length-i, center=(a+b)/2;
       svgItem(guides,'line',{x1:center,x2:center,y1:edge,y2:edge+4*unit,stroke:'#f0cc69','stroke-width':unit});
-      if (i===0 || i===bounds.length-1 || (!setup && ch===highlighted)) {
+      if (labels.has(ch)) {
         svgItem(guides,'text',{x:center,y:Math.min(h-2*unit,edge+17*unit),'font-size':12*unit,'font-weight':600,
           'text-anchor':'middle',fill:'white',stroke:'#375042','stroke-width':2.5*unit,'paint-order':'stroke'},ch);
       }
@@ -195,7 +219,7 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     moveLine(line,point.y/setupPhoto.height);
   };
   svg.onlostpointercapture = () => { if (line) { line=null; saveDraft(); } };
-  new ResizeObserver(() => { if (page==='setup' && setupPhoto) draw(); }).observe(svg);
+  new ResizeObserver(() => { if (drawnPhoto) draw(); }).observe(svg);
   for (const input of sliders) {
     input.oninput = () => moveLine(input.dataset.countLine,Number(input.value)/1000);
     input.onchange = saveDraft;
