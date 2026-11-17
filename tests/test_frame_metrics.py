@@ -59,6 +59,15 @@ class FrameMetricsTests(unittest.TestCase):
             result=load_frame_metrics(path,29.97,3)
             self.assertEqual(result['fps'],29.97)
             self.assertEqual(result['frames'][2][0]['length_um'],103)
+            self.assertEqual(result['events'], [])
+            (root/'behavior_events.csv').write_text(
+                'worm_id,event,start_frame,end_frame\n1,pause,0,1\n2,reversal,1,2\n1,pause,3,4\n')
+            (root/'bend_events.csv').write_text('worm_id,frame\n2,0\n3,0\n1,invalid\n')
+            self.assertEqual(load_frame_metrics(path,29.97,3)['events'], [
+                dict(worm_id=1, kind='pause', start=0, end=1),
+                dict(worm_id=2, kind='bend', start=0, end=0),
+                dict(worm_id=2, kind='reversal', start=1, end=2)])
+            self.assertNotIn('events', load_frame_metrics(path,29.97,3,trend_only=True))
             for items in [rows[:-1],rows+[rows[0]],rows+[dict(rows[0],frame=3)]]:
                 write(items)
                 with self.assertRaises(ValueError):load_frame_metrics(path,30,3)

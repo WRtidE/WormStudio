@@ -692,7 +692,7 @@ def create_server(annotation=None, progress=None):
             elif progress and self.path.startswith('/api/library-media?'): self.send_artifact(library=True)
             elif self.path == '/wormstudio-icon.png':
                 self.respond(200, (ROOT/'web/wormstudio-icon.png').read_bytes(), 'image/png')
-            elif self.path in ('/studio', '/studio.css', '/studio-clean.css', '/channel-counts.css', '/channel-counts.js', '/channel-review.js', '/studio.js', '/studio-results.js', '/result-navigation.js', '/result-viewport.js', '/result-player.js', '/workspace-controls.js', '/library-tree.js', '/studio-evaluation.js', '/studio-evaluation.css', '/studio-embed.css', '/draft-autosave.js', '/workspace-usability.css', '/workspace-links.js'):
+            elif self.path in ('/studio', '/studio.css', '/studio-clean.css', '/channel-counts.css', '/channel-counts.js', '/channel-review.js', '/studio.js', '/studio-results.js', '/result-navigation.js', '/result-viewport.js', '/result-player.js', '/result-events.js', '/workspace-controls.js', '/library-tree.js', '/studio-evaluation.js', '/studio-evaluation.css', '/studio-embed.css', '/draft-autosave.js', '/workspace-usability.css', '/workspace-links.js'):
                 name = 'studio.html' if self.path == '/studio' else self.path[1:]
                 kind = 'text/html' if name.endswith('.html') else 'text/css' if name.endswith('.css') else 'text/javascript'
                 self.respond(200, (ROOT/'web'/name).read_bytes(), kind + '; charset=utf-8')

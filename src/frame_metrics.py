@@ -2,6 +2,7 @@
 import csv
 import math
 import json
+from pathlib import Path
 
 from result_metrics import number
 from quality_schema import flag, permissions, describe
@@ -96,6 +97,31 @@ def present_frame(row):
     return result
 
 
+def recorded_events(folder, worm_ids, frame_count):
+    events = []
+    for filename in ('behavior_events.csv', 'bend_events.csv'):
+        path = folder / filename
+        if not path.is_file():
+            continue
+        with path.open(encoding='utf-8-sig', newline='') as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    worm = int(row['worm_id'])
+                    if filename == 'bend_events.csv':
+                        kind = 'bend'
+                        start = end = int(row['frame'])
+                    else:
+                        kind = row['event']
+                        if kind not in ('pause', 'reversal'):
+                            continue
+                        start, end = int(row['start_frame']), int(row['end_frame'])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if worm in worm_ids and 0 <= start <= end < frame_count:
+                    events.append(dict(worm_id=worm, kind=kind, start=start, end=end))
+    return sorted(events, key=lambda e: (e['start'], e['worm_id'], e['kind']))
+
+
 def load_frame_metrics(path, fps, count, trend_only=False):
     if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0:
         raise ValueError('结果缺少有效帧率')
@@ -129,4 +155,5 @@ def load_frame_metrics(path, fps, count, trend_only=False):
     if not trend_only:
         from quality_audit import audit
         result['quality_audit'] = audit(raw_rows)
+        result['events'] = recorded_events(Path(path).parent, ids, count)
     return result

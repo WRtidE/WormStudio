@@ -158,7 +158,7 @@
         const cell=row.insertCell();
         if(worm || (!item.removed&&canStart()&&['failed','cancelled'].includes(item.status))){
           const button=document.createElement('button');button.className='small-button';button.textContent=worm?'查看指标':'重试此项';
-          button.onclick=()=>{if(worm){selectResult(item.sample);renderPhenotypes.select(worm.worm_id);chamberTableKey='';renderResultNavigation();$('#result-summary-panel').scrollIntoView({block:'nearest'});}else batchAction('retry-one',item.id,g);};
+          button.onclick=()=>{if(worm){selectResult(item.sample);renderPhenotypes.select(worm.worm_id,true);chamberTableKey='';renderResultNavigation();$('#result-summary-panel').scrollIntoView({block:'nearest'});}else batchAction('retry-one',item.id,g);};
           cell.append(button);
         }
         const videos = item.sample === progress.sample ? progress.artifacts : data?.videos;
@@ -168,10 +168,11 @@
           play.textContent = '查看视频';
           play.onclick = () => {
             selectResult(item.sample);
-            if (worm) renderPhenotypes.select(worm.worm_id);
+            if (worm) renderPhenotypes.select(worm.worm_id,true);
             const panel = $('#result-video-details');
             panel.open = true;
             panel.scrollIntoView({block:'start'});
+            $('#result-canvas').focus({preventScroll:true});
           };
           cell.append(play);
         }

@@ -170,7 +170,7 @@ const renderPhenotypes=(()=>{
   if(!present){current=null;timeline=null;signature='';return;}const key=JSON.stringify([run,data]);if(key===signature)return;if(sample!==run)timeline=null;
   sample=run;signature=key;current=data;if(!data.worms.some(w=>w.worm_id===selected))selected=data.worms[0].worm_id;draw();
  };
- render.selected=()=>selected;render.select=id=>{if(Number(id)!==selected)select(id,false);};render.setTimeline=data=>{timeline=data;drawTrend();};
+ render.selected=()=>selected;render.select=(id,sync=false)=>{if(Number(id)!==selected)select(id,sync);};render.setTimeline=data=>{timeline=data;drawTrend();};
  el('metric-detail-close').onclick=()=>el('metric-detail-dialog').close();el('summary-trends').addEventListener('toggle',drawTrend);el('summary-trend-metric').onchange=drawTrend;
  el('summary-export').onclick=()=>{if(current)SummaryMetrics.download(SummaryMetrics.csv({...current,worms:current.worms.filter(w=>w.worm_id===selected)}),(sample||'WormStudio')+'_线虫'+selected+'_指标');};
  el('summary-export-all').onclick=()=>{if(current)SummaryMetrics.download(SummaryMetrics.csv(current),(sample||'WormStudio')+'_全部线虫指标');};

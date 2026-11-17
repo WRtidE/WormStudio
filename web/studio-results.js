@@ -3,6 +3,10 @@
 window.StudioResults = (() => {
   const el = id => document.getElementById(id);
   const video = el('studio-result-video');
+  const showEvents = window.createResultEventTrack(el('result-event-track'), el('result-event-legend'), el('result-event-picker'), frame => {
+    seek(frame);
+    el('result-canvas').focus({preventScroll:true});
+  });
   const dimensions = {source:'源帧', mask:'掩膜', pose:'姿态', identity:'个体身份', head:'头尾', scale:'尺度'};
   const statuses = {not_excluded:'未标记异常', excluded:'已排除', passed:'通过', rejected:'未通过',
     provisional_continuous:'暂定连续', reviewed_continuous:'复核后连续', contact_ambiguous:'虫间接触',
@@ -46,6 +50,7 @@ window.StudioResults = (() => {
     text('result-issue-count', `${count} / ${timeline.frame_count} 帧`);
     text('result-issue-note', ranges.length ? `${ranges.length} 个连续问题段 · ${filter === 'all' ? '含头尾候选与未评估项' : dimensions[filter]}` : '当前筛选未发现问题帧。');
     const track = el('result-quality-track'); track.replaceChildren();
+    showEvents(timeline, worm, ranges);
     for (const range of ranges) {
       const span = document.createElement('span');
       span.style.left = `${range.start / timeline.frame_count * 100}%`;
@@ -237,13 +242,36 @@ window.StudioResults = (() => {
   }
   for(const decision of ['same','different','unknown'])el('identity-'+decision).onclick=()=>identitySubmit(decision);
   el('identity-undo').onclick=()=>identitySubmit('undo');
-  function seek(frame) {
+  function seek(frame, pause = true) {
     if (!timeline || !Number.isInteger(frame) || frame < 0 || frame >= timeline.frame_count) return;
-    video.pause(); pending = frame;
+    if (pause) video.pause();
+    pending = frame;
     if (video.hasAttribute('src') && video.readyState >= 1) video.currentTime = (frame + .25) / timeline.fps;
     draw(frame, true);
   }
   function sync(time) { if (timeline && pending === null) draw(Math.floor(time * timeline.fps + 1e-4)); }
+  document.addEventListener('keydown', event => {
+    const panel = el('result-video-details'), target = event.target;
+    if (!visible || !panel.open || !video.hasAttribute('src') || video.error || event.defaultPrevented ||
+        event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.isComposing ||
+        document.querySelector('dialog[open]')) return;
+    if (target !== document.body && !panel.contains(target)) return;
+    if (target.isContentEditable || (target.closest('input,textarea,select,button,a,summary') &&
+        target !== el('result-frame') && target !== el('result-play'))) return;
+    if (event.key === ' ') {
+      event.preventDefault();
+      if (!event.repeat) el('result-play').click();
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const seconds = event.key === 'ArrowLeft' ? -5 : 5;
+      if (timeline) {
+        const from = pending ?? Math.floor(video.currentTime * timeline.fps + 1e-4);
+        seek(Math.max(0, Math.min(timeline.frame_count - 1, from + Math.round(seconds * timeline.fps))), false);
+      } else if (Number.isFinite(video.duration)) {
+        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
+      }
+    }
+  });
   video.addEventListener('timeupdate', () => { if (!video.paused) sync(video.currentTime); });
   video.addEventListener('seeked', () => { const target = pending; pending = null; if (target !== null) draw(target, true); else sync(video.currentTime); });
   video.addEventListener('play', () => { pending = null; });
@@ -280,6 +308,7 @@ window.StudioResults = (() => {
     const version = ++revision; controller?.abort(); controller = new AbortController();
     const activeController = controller;
     timeline = null; pending = null; position = 0; ranges = [];headAnchors={};
+    showEvents(null);
     stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;el('identity-open').hidden=true;
     el('result-original').checked=false;
     window.ResultPlayer.reset();
@@ -365,7 +394,7 @@ window.StudioResults = (() => {
   function update(data) {
     latest = data;
     if (data.status !== 'complete') {
-      if (key) { key = ''; revision++; controller?.abort(); timeline = null; video.pause(); }
+      if (key) { key = ''; revision++; controller?.abort(); timeline = null; showEvents(null); video.pause(); }
       return;
     }
     const nextKey = JSON.stringify([data.sample, data.artifacts, !!data.summaryOnly, data.group]);
@@ -376,6 +405,7 @@ window.StudioResults = (() => {
       if(id==='result-video-details'){
         window.ResultPlayer.setVisible(visible && el(id).open);
         if(!el(id).open)video.pause();
+        else if (document.activeElement === el(id).querySelector('summary')) el('result-canvas').focus({preventScroll:true});
       }
       if(!visible || latest?.status!=='complete' || !el(id).open)return;
       if(!detailsStarted || (id!=='summary-trends' && !fullDetails))load(latest);
