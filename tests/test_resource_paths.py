@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import resource_paths as paths
-import tapnext_support
 
 
 class PortableResources(unittest.TestCase):
@@ -42,15 +41,5 @@ class PortableResources(unittest.TestCase):
             (root/'models').mkdir();checkpoint=root/'models/sam2_hiera_large.pt';checkpoint.touch()
             with patch.object(paths,'PROJECT_ROOT',root),patch.object(paths,'RESOURCE_ROOT',root/'resources'):
                 self.assertEqual(paths.sam2_checkpoint(checkpoint.name),checkpoint)
-
-    def test_bundled_single_worm_package(self):
-        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
-            root=Path(folder).resolve();package=root/'packages/single-worm-methods'
-            (package/'wormstudio_single').mkdir(parents=True)
-            (package/'wormstudio_single/fusion_v4.py').touch()
-            (root/'models').mkdir();checkpoint=root/'models/tapnextpp_ckpt.pt';checkpoint.touch()
-            with patch.object(tapnext_support,'ROOT',root):
-                self.assertEqual(tapnext_support.resources(),(package,checkpoint))
-
 
 if __name__=='__main__':unittest.main()

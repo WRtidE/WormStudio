@@ -173,6 +173,8 @@ def derive_geometry_run(root,sample,config=None):
     checked,info=validate_config(config)
     stages=build_stages(checked,info,old/'pipeline-config.json',root/'config/phenotype_config.json')
     reusable=[s for s in stages if s['phase'] not in ('metrics','export')]
+    if original.get('centerline_method') != checked['centerline_method']:
+        reusable = [s for s in reusable if s['phase'] != 'fit']
     if checked['centerline_method']=='body_sequence' and any(
             original.get(key)!=config.get(key) for key in ('head_annotations','head_detection')):
         reusable=[s for s in reusable if s['phase']!='fit']

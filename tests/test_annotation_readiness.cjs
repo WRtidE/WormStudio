@@ -25,14 +25,14 @@ test('explicit pixel mode needs no fabricated physical scale', () => {
   assert.equal(annotationReadiness({...fixture,pixelMode:false,scale:''}).ready,false);
 });
 test('optional method failure blocks only the selected optional method', () => {
-  const input = {...fixture, scale: 1, tapnextIssue: '依赖不可用'};
+  const input = {...fixture, scale: 1, algorithmIssue: '依赖不可用'};
   assert.equal(annotationReadiness(input).ready, true);
-  const check = annotationReadiness({...input, method: 'tapnext'});
+  const check = annotationReadiness({...input, method: 'body_sequence'});
   assert.deepEqual(check.blockers.map(b => b.key), ['method']);
   assert.equal(annotationReadiness({...input, method: undefined}).methodReady, false);
 });
 test('all missing requirements remain visible together', () => {
-  const check = annotationReadiness({...fixture, worms: [], method: 'tapnext', tapnextIssue: '不可用'});
+  const check = annotationReadiness({...fixture, worms: [], method: 'body_sequence', algorithmIssue: '不可用'});
   assert.deepEqual(check.blockers.map(b => b.step), [1, 2, 3]);
 });
 test('ruler computes physical scale and recomputes when its real length changes', () => {

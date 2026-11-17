@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'src'))
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--code-only',action='store_true');args=parser.parse_args()
-    missing=[name for name in ('numpy','scipy','cv2','skimage','matplotlib','yaml','imageio_ffmpeg','torch','torchvision','einops') if importlib.util.find_spec(name) is None]
+    missing=[name for name in ('numpy','scipy','cv2','skimage','matplotlib','yaml','imageio_ffmpeg','torch','torchvision') if importlib.util.find_spec(name) is None]
     for name in missing:print('Missing dependency:',name)
     if args.code_only:return int(bool(missing))
     from resource_paths import sam2_checkpoint

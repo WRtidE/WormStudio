@@ -110,7 +110,7 @@ def request_edit(progress, root, run, sequence):
         candidate.correction_source = source
         candidate.correction_previous = dict(worms=worms, roi=[0, 0, w, h],
             measurement_mode=source.get('measurement_mode', 'physical'), scale_um_per_px=source['scale_um_per_px'],
-            calibration=None, centerline_method=source['centerline_method'], head_detection=source.get('head_detection', 'twardis'))
+            calibration=None, centerline_method=candidate.settings['centerline_method'], head_detection=source.get('head_detection', 'twardis'))
         progress.cancel_requested.clear()
         progress.queue_video(candidate)
         return dict(annotation_url='/', frame=frame)

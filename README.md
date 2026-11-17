@@ -50,7 +50,7 @@ WormStudio/
 ├── review_saved_result.py    # 已有结果只读查看
 ├── src/                      # 分割适配、姿态、身份、头尾、测量、HTTP服务
 ├── web/                      # 无前端构建依赖的HTML/CSS/JavaScript
-├── packages/single-worm-methods/ # 单虫算法包与注明来源的TAPNet推理子集
+├── packages/single-worm-methods/ # 单虫掩膜几何与自交姿态工具
 ├── config/                   # 公共参数与本机配置示例
 ├── tests/                    # 合成数据与接口回归
 ├── tools/                    # 环境检查、模型下载、源码导出检查
@@ -76,4 +76,4 @@ node --test @tests
 
 ## 第三方与许可
 
-第三方来源、固定提交及 TAPNet Apache-2.0 许可证见 [THIRD_PARTY.md](THIRD_PARTY.md)。项目自有代码尚未指定统一开源许可证；公开上传不等于已授予开源再分发许可。模型和上游源码遵循各自条款。
+第三方来源及固定提交见 [THIRD_PARTY.md](THIRD_PARTY.md)。项目自有代码尚未指定统一开源许可证；公开上传不等于已授予开源再分发许可。模型和上游源码遵循各自条款。

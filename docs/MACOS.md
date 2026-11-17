@@ -29,7 +29,7 @@ python -c "from tools.create_practice_video import create; create('input_videos/
 python tools/macos/run_dev.py
 ```
 
-开发入口和 Finder 桌面应用默认自动选择计算设备。在 Apple 芯片 Mac 上，PyTorch 能使用 MPS 时，SAM2 和 TAPNext++ 会使用 Apple GPU，否则使用 CPU。进度页会显示本次选择的设备。桌面入口允许个别缺少 MPS 实现的算子回到 CPU；骨架、时序融合、指标和视频导出继续使用原有实现。需要整段使用 CPU 时，在源码目录运行 `WORMSTUDIO_DEVICE=cpu .venv/bin/python tools/macos/run_dev.py`。
+开发入口和 Finder 桌面应用默认自动选择计算设备。在 Apple 芯片 Mac 上，PyTorch 能使用 MPS 时，SAM2 会使用 Apple GPU，否则使用 CPU。进度页会显示本次选择的设备。桌面入口允许个别缺少 MPS 实现的算子回到 CPU；骨架、时序融合、指标和视频导出继续使用原有实现。需要整段使用 CPU 时，在源码目录运行 `WORMSTUDIO_DEVICE=cpu .venv/bin/python tools/macos/run_dev.py`。
 
 用文件导入选择 `input_videos/practice/practice.avi`；选择完整画面和像素单位，在深色虫体内点一下，确认轮廓并开始处理。重复开发时只需激活环境并运行桌面入口，不要重复生成同名练习视频。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
 
@@ -87,7 +87,7 @@ python tools/build_macos.py --models models --output ../WormStudio-Mac-arm64
 
 把 Conda 便携目录复制到一个包含空格/中文的新路径，退出 Conda，然后双击启动软件.command。首次启动修复便携环境路径；将目录放到最终位置后再首次运行。此便携包的“启动软件.command”显式选择 CPU，“试验性Metal加速.command”显式选择 MPS。
 
-验收步骤：导入合成练习视频，点选分割并确认，使用像素单位，完成 SAM2/TAPNext/指标/视频导出，重新解码导出视频、读取 CSV，关闭后重开历史结果。然后用真实视频短片分别验证 CPU 和 MPS；记录 Mac 型号、内存、macOS/Python/PyTorch 版本、耗时、结果差异。只有端到端实际完成才能把 BUILD_STATUS.json 中 NOT_YET_VALIDATED 改为通过。
+验收步骤：导入合成练习视频，点选分割并确认，使用像素单位，完成 SAM2 分割、多帧身体连续跟踪、指标计算和视频导出，重新解码导出视频、读取 CSV，关闭后重开历史结果。然后用真实视频短片分别验证 CPU 和 MPS；记录 Mac 型号、内存、macOS/Python/PyTorch 版本、耗时、结果差异。只有端到端实际完成才能把 BUILD_STATUS.json 中 NOT_YET_VALIDATED 改为通过。
 
 MPS 报错时关闭软件，再用默认 CPU 入口启动；不在已运行任务中静默改变设备。MPS 未通过时只交付 CPU 入口。长视频的内存和耗时需另行测量。
 

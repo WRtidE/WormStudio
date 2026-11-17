@@ -7,12 +7,12 @@
 |Electron 窗口与运行时|`tools/electron/main.cjs`、`src/electron_desktop.py`|
 |应用与批处理入口|`studio.py`、`worm_pipeline.py`|
 |本地HTTP、交互标注、任务调度|`src/manual_worm_annotation.py`、`pipeline_progress.py`、`workspace_sessions.py`|
-|分割与方法适配|`track_configured_video.py`、`extract_tapnext.py`、`extract_centerlines.py`、`extract_topology.py`|
+|分割与方法适配|`track_configured_video.py`、`extract_body_sequence.py`、`extract_centerlines.py`、`extract_topology.py`|
 |中线几何与时序|`centerline_topology.py`、`crossing_centerline.py`、`temporal_wormtracer.py`|
 |头尾初始化和关联|`head_initialization.py`、`head_tail.py`、`head_appearance.py`、`head_temporal.py`|
 |身份与质量|`identity_reassociation.py`、`multiworm_quality.py`、`quality_schema.py`、`quality_audit.py`|
 |测量与显示|`analyze_phenotypes.py`、`frame_metrics.py`、`display_centerlines.py`、`result_overlay.py`|
-|资源、缓存与输出|`resource_paths.py`、`tapnext_support.py`、`run_storage.py`、`cache_integrity.py`|
+|资源、缓存与输出|`resource_paths.py`、`run_storage.py`、`cache_integrity.py`|
 |独立算法包|`packages/single-worm-methods/wormstudio_single/`|
 |网页|`web/studio*.js`、`result-player.js`、HTML/CSS与标注脚本|
 |合成验证|`tests/`、算法包`tests/`|

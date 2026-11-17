@@ -3,7 +3,7 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, SELF_CONTACT_VERSION, validate_method, method_source
+from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, SELF_CONTACT_VERSION, analysis_method, method_source
 from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
@@ -183,7 +183,7 @@ def validate_config(config, relative_to=ROOT):
             raise ValueError(f'WormTracer 参数 {key} 必须为正数')
     if fit['rescale'] > 1 or any(not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v <= 1 for v in fit['rescale_by_worm'].values()):
         raise ValueError('缩放比例必须大于 0 且不大于 1')
-    c['centerline_method'] = validate_method(c.get('centerline_method','wormtracer'))
+    c['centerline_method'] = analysis_method(c.get('centerline_method','wormtracer'))
     if c['centerline_method'] in ('self_contact','body_sequence'):
         c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
     if c['centerline_method']=='body_sequence':
@@ -191,11 +191,6 @@ def validate_config(config, relative_to=ROOT):
         if c.get('sam2_model','large')!='large':raise ValueError('当前方法使用SAM2 Large')
         if c.get('tracking_point_count',13)!=13:raise ValueError('当前方法使用13个身体跟踪点')
     c['sam2_model']=model_spec(c.get('sam2_model','large'))['size']
-    if c['centerline_method'] == 'tapnext':
-        from tapnext_support import validate_single_worm, resources, dependency_path
-        validate_single_worm(len(ids), c['sam2_model'])
-        resources()
-        dependency_path()
     c['wormtracer'] = fit
     from quality_schema import VERSION as QUALITY_VERSION
     from tracking_quality import MAX_AREA_JUMP_FRACTION
@@ -222,7 +217,7 @@ def build_stages(config, info, snapshot, phenotype_path):
         [tracking / 'summary.json', tracking / 'tracking-quality.csv', *masks])
     add('cleanup', 'cleanup', 'clean_tracking_components.py', ['--sample', sample], [tracking / 'component-cleanup.json'])
     add('quality', 'quality', 'quality_stage.py', ['--sample', sample], [tracking / 'quality-guards.json'])
-    method = config.get('centerline_method','wormtracer')
+    method = analysis_method(config.get('centerline_method','wormtracer'))
     source = method_source(method)
     if method == 'self_contact':
         from crop_recovery import FOLDER
@@ -245,7 +240,7 @@ def build_stages(config, info, snapshot, phenotype_path):
                 outputs = [out / 'centerlines.npy', out / 'run.json']
                 outputs.append(out / 'quality.json')
                 add(f'{phase}-worm-{worm}', phase, script, args, outputs)
-    if method in ('topology', 'tapnext', 'self_contact','body_sequence'):
+    if method in ('topology', 'self_contact','body_sequence'):
         for worm in info['ids']:
             out=base/source/f'worm-{worm}'
             outputs = [out/'centerlines.npy', out/'run.json', out/'quality.json']
@@ -316,12 +311,6 @@ def complete(stage, config, info):
             if report.get('head_detection_version')!=VERSION: return False
             from display_centerlines import VERSION as DISPLAY_VERSION
             if report.get('display_version')!=DISPLAY_VERSION:return False
-            if config.get('centerline_method') == 'tapnext' and len(info['ids']) == 1:
-                from adaptive_endpoints import VERSION as ENDPOINT_VERSION
-                folder = Path(stage['outputs'][0]).parent/'size-adaptive'
-                if (report.get('adaptive_endpoint_version') != ENDPOINT_VERSION or
-                        not all((folder/name).is_file() for name in ('summary.json','frames.csv'))):
-                    return False
             if report.get('quality_schema_version')!=QUALITY_VERSION: return False
             from phenotype_statistics import VERSION as METRIC_VERSION
             if report.get('metric_definition_version') != METRIC_VERSION: return False
@@ -336,7 +325,7 @@ def complete(stage, config, info):
             try:p = np.load(stage['outputs'][0], allow_pickle=False)
             except (ValueError,EOFError):return False
             if p.shape != (info['frames'], 101, 2): return False
-            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'tapnext-worm-', 'self_contact-worm-','body_sequence-worm-'))
+            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'self_contact-worm-','body_sequence-worm-'))
             if adapter or len(stage['outputs']) > 2:
                 quality=json.loads(Path(stage['outputs'][2]).read_text(encoding='utf-8'))
                 if len(quality)!=len(p): return False
@@ -344,9 +333,6 @@ def complete(stage, config, info):
                     if not np.isfinite(line).all() and not (np.isnan(line).all() and not quality[f]['centerline_valid']): return False
             elif not np.isfinite(p).all(): return False
             meta = json.loads(Path(stage['outputs'][1]).read_text(encoding='utf-8'))
-            if stage['name'].startswith('tapnext-worm-'):
-                from tapnext_support import signature
-                if meta.get('algorithm_signature') != signature(): return False
             if stage['name'].startswith('body_sequence-worm-'):
                 from body_sequence_solver import signature
                 if meta.get('algorithm_signature')!=signature():return False
@@ -511,13 +497,21 @@ def _main(progress, raw_override=None):
     if not (args.dry_run or args.check or CHECK_ONLY):
         state_path = base / 'pipeline-state.json'
         reason = ''
-        if state_path.exists():
+        saved_config = base / 'pipeline-config.json'
+        if saved_config.is_file():
+            try:
+                saved_method = json.loads(saved_config.read_text(encoding='utf-8')).get('centerline_method')
+                if saved_method == 'tapnext':
+                    reason = '旧版点跟踪任务将使用当前算法重新计算'
+            except (ValueError, OSError):
+                reason = '旧任务配置无法读取'
+        if not reason and state_path.exists():
             try:
                 state = json.loads(state_path.read_text(encoding='utf-8'))
                 if not resume: reason = '已选择重新计算'
                 elif not compatible_identity(state.get('identity', {}), identity): reason = '输入、掩膜或分析参数已更新'
             except (ValueError, OSError): reason = '旧处理记录无法复用'
-        elif (base/'sam2-tracking').exists():
+        elif not reason and (base/'sam2-tracking').exists():
             reason = '旧结果缺少可核对的处理记录'
         if not reason and resume:
             try: compatible_tracking(config, info, base)

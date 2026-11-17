@@ -64,8 +64,7 @@ def run(res, base, logfile):
         populate(res, workspace)
         env = dict(os.environ, PYTHONPATH=os.pathsep.join(map(str, [packages, res/'sam2'])),
                    WORM_STUDIO_PYTHON=sys.executable,
-                   WORM_STUDIO_RESOURCES=str(res), WORMSTUDIO_SINGLE_ROOT=str(workspace/'packages/single-worm-methods'),
-                   WORMSTUDIO_TAPNEXT_CHECKPOINT=str(res/'models/tapnextpp_ckpt.pt'),
+                   WORM_STUDIO_RESOURCES=str(res),
                    WORMSTUDIO_SAM2_CHECKPOINT=str(res/'models/sam2_hiera_large.pt'))
         runtime = res/'electron/Electron.app/Contents/MacOS/Electron'
         env.update(WORM_STUDIO_ELECTRON=str(runtime), WORM_STUDIO_WORKSPACE=str(workspace), PYTHONUTF8='1', MPLBACKEND='Agg')

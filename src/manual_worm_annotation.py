@@ -10,7 +10,7 @@ import secrets
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler
-from centerline_methods import METHODS, validate_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
+from centerline_methods import METHODS, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
 from sam2_models import model_spec
 from pathlib import Path
 
@@ -139,7 +139,9 @@ def annotation_worker(connection, image, model_size):
 
 class Annotation:
     def __init__(self, settings, frame=0):
-        self.settings = settings
+        self.settings = dict(settings)
+        if 'centerline_method' in settings:
+            self.settings['centerline_method'] = analysis_method(settings['centerline_method'])
         sample = settings['sample']
         reserved={'all','con','prn','aux','nul'}|{f'{p}{i}' for p in ('com','lpt') for i in range(1,10)}
         if not re.fullmatch(r'[\w][\w.-]{0,79}', sample) or sample.endswith('.') or sample.split('.')[0].lower() in reserved:
@@ -247,7 +249,9 @@ class Annotation:
             return None
         selection = self.output/'last-selection.json'
         if selection.is_file():
-            config['centerline_method'] = validate_method(json.loads(selection.read_text(encoding='utf-8'))['centerline_method'])
+            config['centerline_method'] = analysis_method(json.loads(selection.read_text(encoding='utf-8'))['centerline_method'])
+        if 'centerline_method' in config:
+            config['centerline_method'] = analysis_method(config['centerline_method'])
         # Apply current fit settings; the pipeline will validate cached results.
         config['wormtracer'] = self.settings.get('wormtracer', {})
         config['head_detection'] = self.settings.get('head_detection',config.get('head_detection','twardis'))
@@ -263,7 +267,7 @@ class Annotation:
 
     def initial_state(self):
         """Restore saved, reviewed masks without restoring stale model prompts."""
-        result=dict(tapnext=dict(available=False,checking=True,detail='正在检查分析组件…'),analysis_method=CURRENT_METHOD,sample=self.settings['sample'],frame=self.frame,
+        result=dict(algorithm=dict(available=False,checking=True,detail='正在检查分析组件…'),analysis_method=CURRENT_METHOD,sample=self.settings['sample'],frame=self.frame,
             width=self.image.shape[1],height=self.image.shape[0],token=self.token,
             measurement_mode=self.settings.get('measurement_mode','physical'),scale_um_per_px=self.settings.get('scale_um_per_px'),video_name=Path(self.video).name,
             frame_count=self.n,sam2_model=self.model_size,
@@ -281,7 +285,7 @@ class Annotation:
         config=record['config']
         selection=self.output/'last-selection.json'
         if selection.is_file():
-            config['centerline_method']=validate_method(json.loads(selection.read_text(encoding='utf-8'))['centerline_method'])
+            config['centerline_method']=analysis_method(json.loads(selection.read_text(encoding='utf-8'))['centerline_method'])
         x,y,x1,y1=config['crop_xyxy']
         x-=self.crop[0];x1-=self.crop[0];y-=self.crop[1];y1-=self.crop[1]
         if not 0<=x<x1<=result['width'] or not 0<=y<y1<=result['height']: return result
@@ -300,12 +304,12 @@ class Annotation:
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
         result['previous']=dict(measurement_mode=config.get('measurement_mode','physical'),worms=worms,roi=[x,y,x1,y1],scale_um_per_px=config['scale_um_per_px'],
             calibration=record.get('calibration'),head_detection=config.get('head_detection','twardis'),
-            centerline_method=validate_method(config.get('centerline_method','wormtracer')))
+            centerline_method=analysis_method(config.get('centerline_method','wormtracer')))
         return result
 
     def save(self, body):
         if self.done.is_set(): raise ValueError('本次标注已保存')
-        method=validate_method(body.get('centerline_method',self.settings.get('centerline_method','wormtracer')))
+        method=analysis_method(body.get('centerline_method',self.settings.get('centerline_method','wormtracer')))
         head_mode=body.get('head_detection',self.settings.get('head_detection','twardis'))
         if body.get('analysis_profile')=='current' or self.settings.get('analysis_profile')=='current':
             method=self.settings['centerline_method'] if hasattr(self,'correction_source') else CURRENT_METHOD
@@ -340,11 +344,6 @@ class Annotation:
         if method=='body_sequence':
             if len(entries)!=1:raise ValueError('当前方法每次分析一条线虫')
             if self.model_size!='large':raise ValueError('当前方法使用SAM2 Large')
-        if method == 'tapnext':
-            from tapnext_support import validate_single_worm, resources, dependency_path
-            validate_single_worm(len(entries), self.model_size)
-            resources()
-            dependency_path()
         masks = {}; ids = set(); heads={}
         for entry in entries:
             worm = entry.get('id')
@@ -811,24 +810,21 @@ def create_server(annotation=None, progress=None):
                                        sequence_index=len(saved)+1, sequence_total=len(paths)))
             elif annotation and urlsplit(self.path).path == '/api/algorithms':
                 # Run outside /state and outside the single HTTP request thread.
-                # Slow filesystem/hash checks must not freeze masks or other methods.
+                # Dependency checks must not freeze mask editing.
                 if (parse_qs(urlsplit(self.path).query).get('retry')==['1']
                         and not getattr(self.server,'optional_probe',{}).get('checking')):
                     if hasattr(self.server,'optional_probe'):del self.server.optional_probe
                 if not hasattr(self.server, 'optional_probe'):
-                    self.server.optional_probe = dict(available=False, checking=True, detail='正在检查 TAPNext++ 依赖与权重…')
+                    self.server.optional_probe = dict(available=False, checking=True, detail='正在检查分析组件…')
                     server = self.server
                     def probe():
                         try:
-                            if CURRENT_METHOD=='body_sequence':
-                                from body_sequence_solver import availability
-                            else:
-                                from tapnext_support import availability
+                            from body_sequence_solver import availability
                             server.optional_probe = dict(availability(), checking=False)
                         except Exception as exc:
-                            server.optional_probe = dict(available=False, checking=False, detail=f'可选方法检查失败：{exc}')
+                            server.optional_probe = dict(available=False, checking=False, detail=f'分析组件检查失败：{exc}')
                     threading.Thread(target=probe, daemon=True).start()
-                self.respond(200, dict(tapnext=self.server.optional_probe))
+                self.respond(200, dict(algorithm=self.server.optional_probe))
             else: self.respond(404, {})
 
         def do_POST(self):

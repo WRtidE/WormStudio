@@ -663,13 +663,6 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                          'Anonymous area needs source/mask/scale. Individual posture and trajectories additionally require identity continuity; summaries exclude unverified identities. Continuity is not biological ground truth.',
                          'body-relative endpoint-bending and image-appearance candidates use reliable continuous segments; ambiguous/contact frames remain A/B. Evidence scores are not probabilities. Volume excludes self-contact frames.',
                          'Speed is in the camera coordinate system; no stage drift correction.'])
-    if method == 'tapnext' and len(ids) == 1 and tracking_guards is not None:
-        from adaptive_endpoints import review_output
-        _, endpoint_summary = review_output(output/'size-adaptive', all_rows, display_lines,
-                                            tracking_guards[ids[0]], get_mask, source, sample,
-                                            ROOT/'outputs'/sample/wormtracer_source/f'worm-{ids[0]}')
-        report['adaptive_endpoint_version'] = endpoint_summary['version']
-        report['adaptive_endpoint_body_scale'] = endpoint_summary['body_scale']
     if method=='body_sequence':
         from body_sequence_solver import signature,VERSION as BODY_VERSION
         report.update(body_sequence_version=BODY_VERSION,body_sequence_signature=signature(),body_center_definition='half_centerline_arclength',tracking_point_count=13)
@@ -793,13 +786,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',default='all',help='Sample directory name; all retains the two original samples')
     parser.add_argument('--config',type=Path,default=ROOT/'phenotype_config.json')
-    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','tapnext','self_contact','body_sequence'],default='wormtracer')
+    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','self_contact','body_sequence'],default='wormtracer')
     parser.add_argument('--wormtracer-source',default=None,help='Default: contact correction if present, otherwise temporal')
     parser.add_argument('--render-only',action='store_true',help='Refresh videos and previews using saved measurements')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
     for sample in (['2-1-1314','5-1-910'] if args.sample=='all' else [args.sample]):
         from centerline_methods import method_source
-        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','tapnext','self_contact','body_sequence') else None
+        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','self_contact','body_sequence') else None
         fit_source=args.wormtracer_source or default_source or ('wormtracer-contact-corrected' if (ROOT/'outputs'/sample/'wormtracer-contact-corrected'/'mask-source.json').exists() else 'wormtracer-temporal')
         if args.render_only:
             _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if args.centerline_method!='skeleton' else None)

@@ -15,7 +15,7 @@ def digest(path):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model',choices=['sam2','tapnext','all'],default='all')
+    parser.add_argument('--model',choices=['sam2','all'],default='all')
     parser.add_argument('--output',type=Path,default=Path('models'))
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     records=json.loads((Path(__file__).resolve().parents[1]/'docs/models.json').read_text(encoding='utf-8'))

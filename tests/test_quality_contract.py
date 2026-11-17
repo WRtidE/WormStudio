@@ -1,5 +1,4 @@
 import csv
-import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -17,7 +16,6 @@ import manual_worm_annotation as manual
 import quality_stage
 import result_overlay
 import review_configured_video as review
-import tapnext_support as tap
 from frame_metrics import present_frame
 from multiworm_quality import sequence_guards, validate_reviews
 from pipeline_progress import PipelineProgress
@@ -29,27 +27,6 @@ from worm_pipeline import compatible_identity
 
 
 class OptionalIsolationTests(unittest.TestCase):
-    def test_missing_module_and_permission_are_local_unavailability(self):
-        with patch.object(tap,'resources',return_value=(Path('.'),Path('model'))):
-            for error in (ModuleNotFoundError('einops'), PermissionError('dependency denied'), RuntimeError('broken import')):
-                with patch.object(tap,'prepare_runtime',side_effect=error):
-                    status=tap.availability()
-                    self.assertFalse(status['available']);self.assertTrue(status['detail'])
-
-    def test_missing_dependency_never_falls_back_to_validation(self):
-        with patch.object(tap.importlib.util,'find_spec',return_value=None):
-            with self.assertRaisesRegex(ValueError,'einops==0.8.1'):tap.dependency_path()
-
-    def test_missing_weights_and_corrupt_weights_are_reported(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);(root/'docs').mkdir();model=root/'model.pt'
-            (root/'docs/models.json').write_text(json.dumps(dict(tapnext=dict(sha256=hashlib.sha256(b'good').hexdigest()))))
-            with patch.object(tap,'resources',return_value=(root,model)),patch.object(tap,'prepare_runtime',return_value={}):
-                self.assertFalse(tap.availability()['available'])
-                model.write_bytes(b'bad');self.assertIn('SHA-256',tap.availability()['detail'])
-                model.write_bytes(b'good');self.assertTrue(tap.availability()['available'])
-                model.write_bytes(b'evil');self.assertFalse(tap.availability()['available'])
-
     def test_slow_or_failing_optional_probe_cannot_break_state_or_images(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);config,_,_=make_fixture(root)
@@ -65,13 +42,13 @@ class OptionalIsolationTests(unittest.TestCase):
                 try:
                     self.assertEqual(get('/state')['frame_count'],10)
                     self.assertFalse(entered.is_set())
-                    self.assertTrue(get('/api/algorithms')['tapnext']['checking'])
+                    self.assertTrue(get('/api/algorithms')['algorithm']['checking'])
                     self.assertTrue(entered.wait(1))
                     self.assertEqual(get('/state')['sample'],config['sample'])
                     with urllib.request.urlopen(url+'/image.png',timeout=2) as response:self.assertEqual(response.status,200)
                     release.set()
                     for _ in range(100):
-                        status=get('/api/algorithms')['tapnext']
+                        status=get('/api/algorithms')['algorithm']
                         if not status['checking']:break
                         time.sleep(.01)
                     self.assertFalse(status['available']);self.assertIn('permission',status['detail'])

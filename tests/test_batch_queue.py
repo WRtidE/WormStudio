@@ -176,8 +176,7 @@ class BatchTests(unittest.TestCase):
                 body = dict(measurement_mode='pixels', worms=[worm])
                 if chambers:
                     body = dict(measurement_mode='pixels', chambers=[dict(worm, id=22, roi=[0,0,120,80])])
-                with patch('tapnext_support.resources'), patch('tapnext_support.dependency_path'):
-                    self.assertEqual(post('/save', body, a.token)['progress_url'], '/progress')
+                self.assertEqual(post('/save', body, a.token)['progress_url'], '/progress')
                 settings = progress.wait()
                 self.assertTrue(settings['_resume_saved'])
                 self.assertEqual(settings.get('chamber_id'), 22 if chambers else None)
@@ -298,8 +297,7 @@ class BatchTests(unittest.TestCase):
                     mask = np.zeros((80,128), np.uint8); mask[20:40,30:70] = 255
                     body = dict(worms=[dict(id=1,mask='data:image/png;base64,'+base64.b64encode(manual.png(mask)).decode())],
                                 roi=None, measurement_mode='physical', scale_um_per_px=index+1)
-                    with patch('tapnext_support.resources'), patch('tapnext_support.dependency_path'):
-                        saved = post('/save', body, progress.server.annotation.token)
+                    saved = post('/save', body, progress.server.annotation.token)
                     if automatic:
                         if index == 0:
                             self.assertTrue(saved['next_annotation'])

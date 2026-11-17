@@ -8,10 +8,10 @@ const scratch=document.createElement('canvas');
 let scalePointMethod='manual';
 let calibrationPending=false,repairReturnStep=null,draftSaver=null,allowLeave=false;
 function readiness(){
- const tapnextIssue=!['tapnext','body_sequence'].includes(analysisMethod())?'':!state.chamber_mode&&objects.size!==1?'当前每次分析一条线虫，请保留需要分析的一条。':state.sam2_model!=='large'?'此任务的分析配置需要更新，请从文件列表重新开始标注。':state.tapnext?.checking?'正在检查分析组件，请稍候。':state.tapnext?.available!==true?'分析组件暂不可用，请检查本地安装后重新检查。':'';
- const check=annotationReadiness({scale:$('#scale').value,pixelMode:$('#pixel-mode').checked,calibrationPending,worms:[...objects.values()],method:analysisMethod(),chamberMode:state.chamber_mode,tapnextIssue});
- if(!state.chamber_mode&&['tapnext','self_contact','body_sequence'].includes(analysisMethod())&&objects.size>1){const blocker=check.blockers.find(b=>b.key==='method');blocker.step=2;blocker.action='返回选择线虫';}
- return {...check,tapnextIssue:check.blockers.find(b=>b.key==='method')?.detail || tapnextIssue};
+ const algorithmIssue=analysisMethod()!=='body_sequence'?'':!state.chamber_mode&&objects.size!==1?'当前每次分析一条线虫，请保留需要分析的一条。':state.sam2_model!=='large'?'此任务的分析配置需要更新，请从文件列表重新开始标注。':state.algorithm?.checking?'正在检查分析组件，请稍候。':state.algorithm?.available!==true?'分析组件暂不可用，请检查本地安装后重新检查。':'';
+ const check=annotationReadiness({scale:$('#scale').value,pixelMode:$('#pixel-mode').checked,calibrationPending,worms:[...objects.values()],method:analysisMethod(),chamberMode:state.chamber_mode,algorithmIssue});
+ if(!state.chamber_mode&&['self_contact','body_sequence'].includes(analysisMethod())&&objects.size>1){const blocker=check.blockers.find(b=>b.key==='method');blocker.step=2;blocker.action='返回选择线虫';}
+ return {...check,algorithmIssue:check.blockers.find(b=>b.key==='method')?.detail || algorithmIssue};
 }
 function resolveBlocker(blocker){
  if(!blocker||busy||saved)return;
@@ -225,9 +225,9 @@ function refresh(){
  if(state.sequence_total)$('#view-title').textContent=`标定 ${state.sequence_index}/${state.sequence_total} · ${state.video_name}`;
  const r=roi||[0,0,W,H];refreshRegionChoice();
  $('#review-worms').textContent=`${confirmed} / ${objects.size} 条已确认`;$('#review-roi').textContent=`${r[2]-r[0]} × ${r[3]-r[1]} px`;$('#review-scale').textContent=$('#pixel-mode').checked?'仅像素单位（未标定）':+$('#scale').value>0?`${Number((+$('#scale').value).toPrecision(6))} μm/px`:'尚未标定';
- const check=readiness(),{tapnextIssue,ready}=check;
- $('#analysis-status').textContent=check.methodReady?'分析准备已完成，保存后自动处理。':tapnextIssue;
- $('#retry-analysis').hidden=!['tapnext','body_sequence'].includes(analysisMethod())||!!state.tapnext?.checking||state.tapnext?.available===true;
+ const check=readiness(),{algorithmIssue,ready}=check;
+ $('#analysis-status').textContent=check.methodReady?'分析准备已完成，保存后自动处理。':algorithmIssue;
+ $('#retry-analysis').hidden=analysisMethod()!=='body_sequence'||!!state.algorithm?.checking||state.algorithm?.available===true;
  $('#add').hidden=!state.chamber_mode;
  if(state.chamber_mode){
   $('#add').textContent='＋ 添加培养槽';
@@ -239,7 +239,7 @@ function refresh(){
  const candidates=$('#candidates');candidates.replaceChildren();$('#candidates-panel').hidden=!o||o.candidates.length<2;
  if(o)for(const c of o.candidates){const b=document.createElement('button');b.textContent=`候选 ${c.index+1}`;b.classList.toggle('selected',o.candidate===c.index);b.onclick=async()=>{if(busy||saved)return;remember();setBusy(true);try{o.mask=await decode(c.mask);o.candidate=c.index;o.area=c.area_px;o.headPoint=null;o.confirmed=false;say(`已切换到候选 ${c.index+1}，请检查完整虫体。`)}finally{setBusy(false);draw()}};candidates.append(b)}
  $$('.sidebar .floating-content button,.sidebar input,.sidebar select,.workflow button,.footer-actions button').forEach(e=>e.disabled=busy||saved);
- $('#retry-analysis').disabled=busy||saved||!!state.tapnext?.checking;
+ $('#retry-analysis').disabled=busy||saved||!!state.algorithm?.checking;
  const needsConfirmation=step===2&&!o?.confirmed;
  $('#confirm-worm').hidden=step!==2;$('#confirm-worm').disabled=busy||saved||!o||o.area<20||!!o.confirmed;
  $('#confirm-worm').textContent=`${o?.confirmed?'✓ 已确认':'确认虫体'} · 线虫 ${String(selected).padStart(2,'0')}`;
@@ -409,14 +409,14 @@ async function init(){try{const response=await fetch('/state');if(!response.ok)t
  }catch(e){$('#loading').hidden=true;say(`加载失败：${e.message}`,'error')}}
 async function checkOptionalMethods(retry=false){
  try{
-  if(retry){state.tapnext={available:false,checking:true};refresh();}
+  if(retry){state.algorithm={available:false,checking:true};refresh();}
   const response=await fetch('/api/algorithms'+(retry?'?retry=1':''),{cache:'no-store'});
   if(!response.ok)throw Error('分析组件状态暂不可用');
-  const result=await response.json();state.tapnext=result.tapnext;refresh();
-  if(result.tapnext.checking&&!saved)setTimeout(()=>checkOptionalMethods(),1000);
- }catch(e){state.tapnext={available:false,checking:false};refresh()}
+  const result=await response.json();state.algorithm=result.algorithm;refresh();
+  if(result.algorithm.checking&&!saved)setTimeout(()=>checkOptionalMethods(),1000);
+ }catch(e){state.algorithm={available:false,checking:false};refresh()}
 }
-init().then(()=>{if(state && ['tapnext','body_sequence'].includes(analysisMethod()))void checkOptionalMethods()});
+init().then(()=>{if(state && analysisMethod()==='body_sequence')void checkOptionalMethods()});
 
 function changeMeasurementMode(){
  if($('#pixel-mode').checked){if(isScaleTool(mode))setMode('view');}

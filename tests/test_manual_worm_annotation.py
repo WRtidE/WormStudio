@@ -38,8 +38,7 @@ class ManualAnnotationTests(unittest.TestCase):
     def test_current_profile_overrides_legacy_choices_without_changing_masks(self):
         annotation=manual.Annotation(dict(self.settings,analysis_profile='current'))
         self.assertEqual(annotation.initial_state()['analysis_method'],'body_sequence')
-        with patch('tapnext_support.resources',side_effect=AssertionError('unused tracker')):
-            annotation.save(dict(self.body,centerline_method='niu',head_detection='twardis'))
+        annotation.save(dict(self.body,centerline_method='niu',head_detection='twardis'))
         self.assertEqual(annotation.result['centerline_method'],'body_sequence')
         self.assertEqual(annotation.result['head_detection'],'taper_seed')
         saved=cv2.imdecode(np.fromfile(annotation.result['groups'][0]['worms'][0]['mask_path'],np.uint8),0)
@@ -120,12 +119,28 @@ class ManualAnnotationTests(unittest.TestCase):
         body['worms'][0]['mask'] = 'data:image/png;base64,' + base64.b64encode(manual.png(np.zeros_like(self.mask))).decode()
         with self.assertRaises(ValueError): annotation.save(body)
 
-    def test_tapnext_multiworm_rejected_before_saving_masks(self):
+    def test_retired_method_runs_current_solver_and_preserves_historical_result_path(self):
+        from centerline_methods import method_source
+        from worm_pipeline import build_stages
+        annotation = manual.Annotation(dict(self.settings, centerline_method='tapnext'))
+        annotation.save(dict(self.body, centerline_method='tapnext'))
+        self.assertEqual(annotation.result['centerline_method'], 'body_sequence')
+
+        historical = dict(annotation.result, centerline_method='tapnext')
+        config, info = validate_config(historical)
+        stages = build_stages(config, info, self.root/'pipeline-config.json', self.root/'phenotypes.json')
+        fit = next(stage for stage in stages if stage['phase'] == 'fit')
+        self.assertEqual(Path(fit['command'][2]).name, 'extract_body_sequence.py')
+        self.assertIn('centerlines-body-sequence', stages[-1]['command'])
+        self.assertEqual(method_source(historical['centerline_method']), 'centerlines-tapnext')
+        self.assertEqual(historical['centerline_method'], 'tapnext')
+
+    def test_retired_method_migrates_and_multiworm_is_rejected_before_saving_masks(self):
         annotation = manual.Annotation(self.settings)
         body = json.loads(json.dumps(self.body))
         body['centerline_method'] = 'tapnext'
         body['worms'].append(dict(body['worms'][0], id=10))
-        with self.assertRaisesRegex(ValueError, '仅支持单虫'):
+        with self.assertRaisesRegex(ValueError, '每次分析一条线虫'):
             annotation.save(body)
         self.assertFalse(annotation.path.exists())
         self.assertFalse(annotation.done.is_set())

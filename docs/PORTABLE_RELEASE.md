@@ -1,6 +1,8 @@
 # 实验人员便携交付（2026-11-03）
 
-交付目录为工作区 delivery/WormStudio-Windows-CPU-GPU。完整复制目录给使用者；入口为启动软件.bat，说明为先读我.html。Windows x64，CPU 或 NVIDIA CUDA；其他 GPU 当前走 CPU。包含 Python 3.11、PyTorch 2.7 CUDA 12.8、SAM2 Large、TAPNext++。
+以下为 2026-11-03 的历史交付记录。当前版采用 SAM2 Large 和多帧身体连续跟踪。
+
+当时的交付目录为工作区 delivery/WormStudio-Windows-CPU-GPU。完整复制目录给使用者；入口为启动软件.bat，说明为先读我.html。Windows x64，CPU 或 NVIDIA CUDA；其他 GPU 当前走 CPU。包含 Python 3.11、PyTorch 2.7 CUDA 12.8、SAM2 Large、TAPNext++。
 
 新版便携目录用 Electron 打开工作台。在交付机准备同架构的 Electron 运行时缓存 `app/.electron-runtime/`，使实验电脑可离线启动。
 

@@ -13,9 +13,10 @@ from manual_worm_annotation import create_server
 
 
 def main():
+    from centerline_methods import METHODS
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',required=True)
-    parser.add_argument('--method',choices=['niu','wormtracer','hybrid','topology','tapnext','self_contact'],default=None)
+    parser.add_argument('--method',choices=sorted(METHODS),default=None)
     parser.add_argument('--no-browser',action='store_true')
     args=parser.parse_args()
     base=(PROJECT_ROOT/'outputs'/args.sample).resolve()
@@ -33,7 +34,6 @@ def main():
         progress.data.update(saved_elapsed_seconds=None,saved_finished_at=None)
     stages=[dict(name='metrics',phase='metrics'),dict(name='export',phase='export')]
     # The review server keeps no path for persist(), so saved runs remain unchanged.
-    from centerline_methods import METHODS
     progress.config=config
     progress.data.update(sample=config['sample'],video_name=Path(config['video']).name,
         frames=info['frames'],fps=info['fps'],worm_count=len(info['ids']),

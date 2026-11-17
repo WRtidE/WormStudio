@@ -22,8 +22,6 @@ def main(root=None, mode='auto', check_only=False):
     env = os.environ.copy()
     env.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8',
                WORM_STUDIO_PYTHON=str(python), WORM_STUDIO_RESOURCES=str(app/'resources'),
-               WORMSTUDIO_SINGLE_ROOT=str(app/'packages/single-worm-methods'),
-               WORMSTUDIO_TAPNEXT_CHECKPOINT=str(app/'models/tapnextpp_ckpt.pt'),
                WORMSTUDIO_SAM2_CHECKPOINT=str(app/'models/sam2_hiera_large.pt'),
                PYTHONPATH=str(app/'resources/sam2'), WORMSTUDIO_DEVICE=mode)
     env['PATH'] = os.pathsep.join([*map(str, search), env.get('PATH', '')])
