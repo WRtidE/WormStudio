@@ -1,6 +1,7 @@
 'use strict';
 window.ResultPlayer=(()=>{
   const el=id=>document.getElementById(id),video=el('studio-result-video'),canvas=el('result-canvas');
+  const player=canvas.closest('.result-player'), fullscreenButton=el('result-fullscreen');
   const ctx=canvas.getContext('2d'),math=window.ResultViewport;
   let transform=null,focus=false,box=null,visible=false,pointers=new Map(),vw=0,vh=0;
   let frameInfo=null,original=false,crop=null,frameCount=0,fps=12,callback=null;
@@ -32,9 +33,19 @@ window.ResultPlayer=(()=>{
     ctx.drawImage(video,0,0);ctx.restore();
   }
   function resize(){
-    const rect=canvas.getBoundingClientRect();vw=rect.width;vh=rect.height;
+    const rect=canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const prevWidth=vw, prevHeight=vh;
+    vw=rect.width; vh=rect.height;
     const ratio=window.devicePixelRatio||1;
-    canvas.width=Math.round(vw*ratio);canvas.height=Math.round(vh*ratio);fit();
+    canvas.width=Math.round(vw*ratio); canvas.height=Math.round(vh*ratio);
+    if (!transform || !prevWidth || !prevHeight || !video.videoWidth) { fit(); return; }
+    // Keep the same source point in the center and the same zoom relative to the fitted view.
+    const oldFit=math.fit(...dimensions(),prevWidth,prevHeight,box);
+    const scale=math.fit(...dimensions(),vw,vh,box).s / oldFit.s;
+    transform={s:transform.s*scale, x:vw/2+(transform.x-prevWidth/2)*scale,
+      y:vh/2+(transform.y-prevHeight/2)*scale};
+    apply();
   }
   function zoom(factor,x=vw/2,y=vh/2){
     if(!transform)return;
@@ -70,6 +81,27 @@ window.ResultPlayer=(()=>{
   el('result-zoom-in').onclick=()=>zoom(1.25);el('result-zoom-out').onclick=()=>zoom(.8);
   el('result-fit').onclick=fit;
   el('result-full').onclick=()=>{focus=false;fit();};el('result-focus').onclick=()=>{focus=true;fit();};
+  fullscreenButton.hidden=!document.fullscreenEnabled;
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement===player) await document.exitFullscreen();
+      else await player.requestFullscreen();
+    } catch {
+      el('result-focus-note').textContent='未能切换全屏，请重试。';
+    }
+  }
+  fullscreenButton.onclick=toggleFullscreen;
+  player.addEventListener('keydown',event=>{
+    if (event.key!=='Escape' || event.defaultPrevented || document.fullscreenElement!==player ||
+        player.querySelector('dialog[open]')) return;
+    event.preventDefault();
+    toggleFullscreen();
+  });
+  player.addEventListener('fullscreenchange',()=>{
+    const active=document.fullscreenElement===player;
+    fullscreenButton.textContent=active?'退出全屏':'全屏';
+    if (visible) canvas.focus({preventScroll:true});
+  });
   el('result-play').onclick=async()=>{if(video.paused){if(video.ended)video.currentTime=0;try{await video.play();}catch{el('result-focus-note').textContent='视频未能播放，请重新读取结果或下载视频。';}}else video.pause();};
   const playLabel=()=>{el('result-play').textContent=video.paused?'播放':'暂停';el('result-play').setAttribute('aria-pressed',String(!video.paused));};
   for(const name of ['play','pause','ended'])video.addEventListener(name,playLabel);
@@ -97,6 +129,13 @@ window.ResultPlayer=(()=>{
     },
     source(value){original=value;transform=null;},
     reset(){video.pause();focus=false;box=null;frameInfo=null;transform=null;original=false;pointers.clear();fit();},
-    setVisible(value){visible=value;if(value)resize();else video.pause();}
+    setVisible(value){
+      visible=value;
+      if(value) resize();
+      else {
+        video.pause();
+        if(document.fullscreenElement===player) toggleFullscreen();
+      }
+    }
   };
 })();

@@ -749,6 +749,15 @@ body .panel-dock [data-floating-panel]>.floating-bar,body .panel-dock [data-floa
 }
 .studio-page #results-workspace .result-video-layout>.result-player { height:min(68dvh,620px); min-height:340px; min-width:0; }
 .studio-page #results-workspace .result-video-details .result-screen:has(#result-canvas) { min-height:220px; }
+.studio-page #results-workspace .result-video-layout>.result-player:fullscreen {
+  width:100%; height:100%; min-height:0; margin:0; border:0; border-radius:0;
+}
+.studio-page #results-workspace .result-player:fullscreen .result-screen:has(#result-canvas) {
+  flex:1 1 0; height:auto!important; min-height:0; max-height:none;
+}
+.result-player:fullscreen .result-screen>.resize-handle { display:none; }
+.result-player #result-frame-label { margin-left:auto; }
+.studio-page .result-player #result-fullscreen { flex:none; min-height:26px; padding:2px 8px; font-size:12px; }
 .result-frame-metrics { min-width:0; padding:12px; }
 .result-frame-metrics .result-metrics-heading { display:block; margin:0 0 8px; }
 .result-frame-metrics h2 { margin:0; font-size:14px; color:#354e3e; }
