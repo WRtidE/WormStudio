@@ -8,13 +8,21 @@
 
 ## 当前源码版本
 
-桌面应用版本为 **1.0.0**。新建单虫分析默认使用 **SAM2 Large + 多帧身体连续跟踪**（`body_sequence`）。程序提取 101 点中线，利用 13 个身体点的跨帧运动和绕柱方向选择连续路径。人工头点和自动推断分别记录。详见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
+桌面应用版本为 **1.0.1**。本次更新修复 Mac 启动架构判断、应用图标尺寸和通道计数标签显示，算法保持不变。实测范围与限制见 [v1.0.1 发布说明](docs/releases/v1.0.1.md)。
+
+新建单虫分析默认使用 **SAM2 Large + 多帧身体连续跟踪**（`body_sequence`）。程序提取 101 点中线，利用 13 个身体点的跨帧运动和绕柱方向选择连续路径。人工头点和自动推断分别记录。详见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
 
 工作台支持多培养槽标注、标注帧测量和通道计数。结果页按视频和培养槽汇总形态与运动指标，支持全屏播放、逐帧定位、复核关键节点和导出 CSV。近期改动见[更新记录](CHANGELOG.md)。
 
 运行环境采用 Python 3.11。程序自动选择可用的 NVIDIA CUDA、Apple Metal（MPS）或 CPU。通道计数是独立入口，支持逐帧复核越线记录并导出 Excel，操作见[使用指南](docs/USER_GUIDE.md)。
 
 工作台采用清爽的白色界面：首页聚焦文件导入，选中素材后显示画面与处理面板。左侧以文件树管理素材，支持文件夹层级、拖动排序、重命名与移除，重启后恢复；移除保留原文件和分析记录。文件信息、历史分析和流程说明按需展开，文件夹导入与新建位于文件栏顶部，路径导入、布局重置、评测和帮助收在顶部菜单。支持自动标注草稿，以及按视频查看历史结果。
+
+## 桌面版下载
+
+- **Mac v1.0.1**：[下载离线 ZIP](https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip)，适用于 Apple 芯片、macOS 14+。解压后将应用拖入“应用程序”。首次运行按包内“先读我”完成准备。
+- **Windows x64 v1.0.0**：[下载已发布安装包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.0/WormStudio-Windows-x64.exe)。本次未重新构建 Windows 安装包。
+- [发布页、校验文件与历史版本](https://github.com/WRtidE/WormStudio/releases)。离线安装包包含运行环境和模型；源码归档用于开发。
 
 ## 开始使用
 
