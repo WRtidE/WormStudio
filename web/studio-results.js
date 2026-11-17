@@ -263,13 +263,16 @@ window.StudioResults = (() => {
       if (!event.repeat) el('result-play').click();
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
-      const seconds = event.key === 'ArrowLeft' ? -5 : 5;
-      if (timeline) {
-        const from = pending ?? Math.floor(video.currentTime * timeline.fps + 1e-4);
-        seek(Math.max(0, Math.min(timeline.frame_count - 1, from + Math.round(seconds * timeline.fps))), false);
-      } else if (Number.isFinite(video.duration)) {
-        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
-      }
+      if (event.repeat) return;
+      const fps = timeline?.fps || latest?.fps || latest?.phenotypes?.fps;
+      if (!Number.isFinite(fps) || fps <= 0) return;
+      const count = timeline?.frame_count ?? Math.round(video.duration * fps);
+      if (!Number.isInteger(count) || count < 1) return;
+      const from = pending ?? Math.min(count - 1, Math.floor(video.currentTime * fps + 1e-4));
+      const step = event.key === 'ArrowLeft' ? -1 : 1;
+      const frame = Math.max(0, Math.min(count - 1, from + step));
+      if (timeline) seek(frame, false);
+      else video.currentTime = (frame + .25) / fps;
     }
   });
   video.addEventListener('timeupdate', () => { if (!video.paused) sync(video.currentTime); });
