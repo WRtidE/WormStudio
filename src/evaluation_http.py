@@ -42,7 +42,7 @@ def get(handler):
 
 def save(handler, progress):
     if not progress or handler.headers.get('X-Annotation-Token') != progress.token:
-        handler.respond(403, dict(error='Invalid evaluation session')); return
+        handler.respond_before_body(403, dict(error='Invalid evaluation session')); return
     try:
         size = int(handler.headers.get('Content-Length','0'))
         if not 0 < size <= 16*1024*1024: raise ValueError('标注请求为空或超过 16 MiB')

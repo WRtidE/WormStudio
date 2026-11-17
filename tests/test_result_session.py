@@ -1,10 +1,11 @@
 """Results streaming, next-video session transitions, and immutable reruns."""
 import csv
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import urllib.error
 import urllib.request
 
@@ -220,6 +221,18 @@ class ResultSessionTests(unittest.TestCase):
         unknown=summarize_quality([dict(worm_id=4,frames=12,valid_frames=None,mask_valid_frames=11)])
         self.assertTrue(unknown['worms'][0]['needs_review'])
         self.assertIsNone(unknown['worms'][0]['valid_frames_ratio'])
+
+    def test_reannotation_rejection_consumes_the_body_before_connection_close(self):
+        body = b'{"frame":3}'
+        stream = io.BytesIO(b'POST /api/reannotate HTTP/1.0\r\nContent-Length: '
+                            + str(len(body)).encode() + b'\r\n\r\n' + body)
+        connection = Mock()
+        connection.makefile.return_value = stream
+        with patch.object(stream, 'close'):
+            self.progress.server.RequestHandlerClass(connection, ('127.0.0.1', 1), self.progress.server)
+        response = b''.join(call.args[0] for call in connection.sendall.call_args_list)
+        self.assertTrue(response.startswith(b'HTTP/1.0 403 '))
+        self.assertEqual(stream.read(), b'')
 
     def test_reannotation_previews_and_uses_selected_frame_in_fresh_run(self):
         base=self.root/'outputs'/'old';base.mkdir(parents=True)

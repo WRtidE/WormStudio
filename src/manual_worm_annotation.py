@@ -7,8 +7,10 @@ import math
 import multiprocessing
 import re
 import secrets
+import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler
 from centerline_methods import METHODS, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
 from sam2_models import model_spec
@@ -581,6 +583,30 @@ def create_server(annotation=None, progress=None):
             self.send_header('Cache-Control', 'no-store')
             self.end_headers(); self.wfile.write(data)
 
+        def respond_before_body(self, code, data):
+            """Send the response first, then briefly drain a body already in flight."""
+            self.close_connection = True
+            self.respond(code, data)
+            try:
+                remaining = int(self.headers.get('Content-Length', '0'))
+                if remaining <= 0:
+                    return
+                # Closing with unread TCP data can discard the response on Windows.
+                self.connection.shutdown(socket.SHUT_WR)
+                deadline = time.monotonic() + 0.5
+                while remaining:
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        break
+                    self.connection.settimeout(timeout)
+                    chunk = self.rfile.read1(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except (OSError, ValueError):
+                # A disconnected peer or invalid length needs no further reads.
+                return
+
         def send_artifact(self, library=False):
             from urllib.parse import parse_qs, urlsplit, quote
             query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
@@ -832,7 +858,7 @@ def create_server(annotation=None, progress=None):
             try:
                 if progress and self.path == '/api/channel/task':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('计数请求无效')
                     body = json.loads(self.rfile.read(size))
@@ -841,7 +867,7 @@ def create_server(annotation=None, progress=None):
                     return
                 if progress and self.path == '/api/batch':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('队列请求无效')
                     body = json.loads(self.rfile.read(size))
@@ -864,14 +890,14 @@ def create_server(annotation=None, progress=None):
                 if self.path == '/api/layout':
                     token = progress.token if progress else annotation.token if annotation else None
                     if not token or self.headers.get('X-Annotation-Token') != token:
-                        self.respond(403, dict(error='Invalid layout session')); return
+                        self.respond_before_body(403, dict(error='Invalid layout session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 32768: raise ValueError('布局请求过大或为空')
                     from workspace_layout import update
                     self.respond(200, update(ROOT, json.loads(self.rfile.read(size)))); return
                 if progress and self.path == '/api/edit-preview-mask':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('掩膜修正请求无效')
                     body = json.loads(self.rfile.read(size))
@@ -880,7 +906,7 @@ def create_server(annotation=None, progress=None):
                     self.respond(202 if result.get('waiting') else 200, result); return
                 if progress and (self.path.startswith('/api/library-upload?') or self.path in ('/api/library-selection','/api/library-tree','/api/library-link')):
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403,dict(error='Invalid processing session')); return
+                        self.respond_before_body(403,dict(error='Invalid processing session')); return
                     from workspace_library import upload, select, organize
                     from urllib.parse import parse_qs, urlsplit
                     size = int(self.headers.get('Content-Length', '0'))
@@ -903,7 +929,7 @@ def create_server(annotation=None, progress=None):
                     self.respond(200,result); return
                 if progress and self.path == '/api/remove-history':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('任务请求无效')
                     body = json.loads(self.rfile.read(size))
@@ -913,7 +939,7 @@ def create_server(annotation=None, progress=None):
                     self.respond(200, dict(removed=True)); return
                 if progress and self.path in ('/api/open-run','/api/resume-run','/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review','/api/cancel'):
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403,dict(error='Invalid processing session')); return
+                        self.respond_before_body(403,dict(error='Invalid processing session')); return
                     if self.path == '/api/cancel':
                         status = progress.snapshot()['status']
                         if status not in ('running','preparing'): raise ValueError('当前没有正在运行的任务')
@@ -922,7 +948,7 @@ def create_server(annotation=None, progress=None):
                             annotation.result = None
                             annotation.done.set()
                             progress.fail('已取消标注；保存过的草稿仍可恢复', cancelled=True)
-                        self.respond(200,dict(cancelling=True));return
+                        self.respond_before_body(200,dict(cancelling=True));return
                     if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled') or progress.next_ready.is_set():
                         raise ValueError('请先结束当前任务')
                     if progress.batch and progress.batch.running: raise ValueError('请先停止批处理')
@@ -964,7 +990,7 @@ def create_server(annotation=None, progress=None):
                     self.respond(200,dict(ok=True));return
                 if annotation and self.path in ('/api/annotation-frame','/api/draft','/api/annotation-mode'):
                     if self.headers.get('X-Annotation-Token')!=annotation.token:
-                        self.respond(403,dict(error='Invalid annotation session'));return
+                        self.respond_before_body(403,dict(error='Invalid annotation session'));return
                     if annotation.done.is_set(): raise ValueError('标注已保存')
                     size=int(self.headers.get('Content-Length','0'))
                     if not 0<size<=64*1024*1024: raise ValueError('请求过大或为空')
@@ -989,9 +1015,9 @@ def create_server(annotation=None, progress=None):
                     return
                 if progress and self.path == '/api/reannotate':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     if progress.snapshot()['status'] not in ('complete','failed','cancelled') or not progress.config:
-                        self.respond(409, dict(error='当前没有可重新标注的已结束任务')); return
+                        self.respond_before_body(409, dict(error='当前没有可重新标注的已结束任务')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('标注帧请求无效')
                     frame = json.loads(self.rfile.read(size)).get('frame')
@@ -1005,9 +1031,9 @@ def create_server(annotation=None, progress=None):
                     self.respond(200, dict(annotation_url='/')); return
                 if progress and (self.path == '/api/new-video' or self.path.startswith('/api/upload-video?')):
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled'):
-                        self.respond(409, dict(error='当前任务尚未结束')); return
+                        self.respond_before_body(409, dict(error='当前任务尚未结束')); return
                     from urllib.parse import parse_qs, urlsplit
                     uploaded = None
                     sequence = []
@@ -1065,18 +1091,18 @@ def create_server(annotation=None, progress=None):
                     self.respond(200, dict(annotation_url='/', video_name=video.name, file=library_file)); return
                 if progress and self.path == '/close':
                     if self.headers.get('X-Annotation-Token') != progress.token:
-                        self.respond(403, dict(error='Invalid processing session')); return
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
                     if progress.batch and progress.batch.running:
-                        self.respond(409, dict(error='请先停止批处理')); return
+                        self.respond_before_body(409, dict(error='请先停止批处理')); return
                     if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled'):
-                        self.respond(409, dict(error='处理仍在进行，请等待完成')); return
+                        self.respond_before_body(409, dict(error='处理仍在进行，请等待完成')); return
                     progress.closed.set()
-                    self.respond(200, dict(closed=True))
+                    self.respond_before_body(200, dict(closed=True))
                     return
-                if annotation is None: self.respond(404, {}); return
-                if self.path not in ('/save', '/predict', '/api/annotation-metrics'): self.respond(404, {}); return
+                if annotation is None: self.respond_before_body(404, {}); return
+                if self.path not in ('/save', '/predict', '/api/annotation-metrics'): self.respond_before_body(404, {}); return
                 if self.headers.get('X-Annotation-Token') != annotation.token:
-                    self.respond(403, dict(error='Invalid annotation session')); return
+                    self.respond_before_body(403, dict(error='Invalid annotation session')); return
                 size = int(self.headers.get('Content-Length', '0'))
                 limit = 64 * 1024 * 1024 if self.path in ('/save', '/api/annotation-metrics') else 8192
                 if not 0 < size <= limit: raise ValueError('标注请求过大或为空')
