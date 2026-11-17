@@ -67,7 +67,7 @@ def frame_geometry(masks, proximity_px=2):
     return result
 
 
-def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., identity_confirmations=(), boundary_frames=None):
+def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., identity_confirmations=(), boundary_frames=None, check_centroid_jump=True):
     """Mark contact and keep identity unverified after an interaction.
 
     Post-contact geometries may still be displayed as candidates; per-worm
@@ -98,7 +98,7 @@ def sequence_guards(all_masks, original_bad=None, source_invalid=(), fps=30., id
             # Preserve the previous 30 fps calibration as a speed limit, so
             # identical physical motion is not penalized at a lower frame rate.
             speed=jump/gap*fps
-            jump_review=bool(np.isfinite(speed) and speed>30.*max(20.,.4*np.sqrt(references[w])))
+            jump_review=bool(check_centroid_jump and np.isfinite(speed) and speed>30.*max(20.,.4*np.sqrt(references[w])))
             if (r['contact_ids'] and not input_bad) or jump_review:
                 if not uncertain[w]:segments[w]+=1
                 uncertain[w]=True

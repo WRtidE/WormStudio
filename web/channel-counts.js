@@ -1,6 +1,6 @@
 'use strict';
 
-window.createChannelWorkspace = function ({request, token}) {
+window.createChannelWorkspace = function ({request, token, openVideo, getFiles}) {
   const el = id => document.getElementById(id);
   const tabs = [...document.querySelectorAll('[data-count-tab]')];
   const sliders = [...document.querySelectorAll('[data-count-line]')];
@@ -251,7 +251,7 @@ window.createChannelWorkspace = function ({request, token}) {
     }
     for (const button of bars.children) {
       const ch=Number(button.dataset.channel), n=counts[ch-1];
-      button.firstElementChild.textContent=n||'';
+      button.firstElementChild.textContent=String(n);
       button.children[1].style.height=Math.max(2,36*n/max)+'px';
       button.classList.toggle('count-zero',n===0);
       button.setAttribute('aria-pressed',String(ch===highlighted));
@@ -259,7 +259,14 @@ window.createChannelWorkspace = function ({request, token}) {
       button.setAttribute('aria-label',button.title);
     }
     el('cross-total').textContent=counts.reduce((sum,n)=>sum+n,0);
+    el('cross-selected').textContent=highlighted==null?'':'通道 '+String(highlighted).padStart(2,'0')+' · '+counts[highlighted-1]+' 次越线';
     el('cross-all').hidden=highlighted==null;
+    const scoped=el('cross-export-selected');
+    scoped.hidden=page!=='result'||highlighted==null;
+    if(!scoped.hidden){
+      scoped.href=route('export',{run:task.id,channel:highlighted});
+      scoped.download=file.name+'-通道'+highlighted+'.xlsx';
+    }
     const link=el('cross-export');
     link.hidden=page!=='result';
     if (!link.hidden) {
@@ -327,19 +334,54 @@ window.createChannelWorkspace = function ({request, token}) {
     notice('count-message',page==='setup'?setupNotice:task?.error || task?.warning);
     if (page==='setup' && !setupPhoto && file.available) void loadSetup(); else render();
   }
-  function chooseRun(id) {
+  let matrixRevision=0;
+  async function loadComparison(){
+    const version=++matrixRevision,table=el('channel-matrix'),message=el('matrix-state');
+    table.replaceChildren();message.textContent='正在读取通道结果…';
+    try{
+      const rows=await request('/api/channel/comparison');
+      if(version!==matrixRevision)return;
+      const library=new Map(getFiles().map(f=>[f.id,f]));
+      const available=rows.filter(row=>library.has(row.file));
+      message.textContent=available.length?'':'暂无已完成的通道计数。';
+      if(!available.length)return;
+      const max=available.reduce((n,row)=>Math.max(n,row.counts.length),0);
+      const head=table.createTHead().insertRow();
+      for(const text of ['视频','总次数',...Array.from({length:max},(_,i)=>'通道 '+String(i+1).padStart(2,'0'))]){
+        const th=document.createElement('th');th.scope='col';th.textContent=text;head.append(th);
+      }
+      const body=table.createTBody();
+      for(const entry of available){
+        const tr=body.insertRow(),source=library.get(entry.file),name=document.createElement('th');
+        name.scope='row';name.textContent=source.name;name.title=source.path||source.name;tr.append(name);
+        tr.insertCell().textContent=entry.counts.reduce((sum,n)=>sum+n,0);
+        for(let i=0;i<max;i++){
+          const td=tr.insertCell();
+          if(i>=entry.counts.length){td.textContent='—';continue;}
+          const button=document.createElement('button');button.className='small-button';button.textContent=String(entry.counts[i]);
+          button.setAttribute('aria-label',source.name+' 通道 '+(i+1)+'，'+entry.counts[i]+' 次');
+          button.onclick=()=>{openVideo(entry.file);chooseRun(entry.run,i+1);};
+          td.append(button);
+        }
+      }
+    }catch(error){if(version===matrixRevision)message.textContent=error.message;}
+  }
+  el('count-comparison').addEventListener('toggle',()=>{if(el('count-comparison').open)void loadComparison();});
+  function chooseRun(id, channel=null) {
     clearTimeout(timer);
     run=id;
-    void refresh(true);
+    void refresh(true,channel);
   }
 
-  async function refresh(initial=false) {
+  async function refresh(initial=false,selectedChannel=null) {
     clearTimeout(timer);
     const version=++refreshRevision;
     try {
       const data=await request(route('state',run?{run}:{}));
       if (version!==refreshRevision) return;
-      if (task?.id!==data.task?.id) highlighted=null;
+      if(selectedChannel!=null)highlighted=selectedChannel;
+      else if (task?.id!==data.task?.id) highlighted=null;
+      if(task && task.id===data.task?.id && task.status!=='complete' && data.task.status==='complete' && el('count-comparison').open)void loadComparison();
       task=data.task; activeRun=data.active_run; draft??=data.draft;
       if (initial) page=task?.status==='complete'?'result':task?'count':'setup';
       else if (page==='count' && task?.status==='complete' && !live) page='result';
@@ -425,7 +467,7 @@ window.createChannelWorkspace = function ({request, token}) {
       render();
       if (video) {
         const version=generation;
-        writes.catch(()=>{}).then(()=>{ if (version===generation) void refresh(true); });
+        writes.catch(()=>{}).then(()=>{ if (version===generation && !run) void refresh(true); });
       }
     }
   };

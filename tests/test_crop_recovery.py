@@ -9,6 +9,7 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
+from analyze_phenotypes import read_image, write_png
 from crop_recovery import place, replay_incident, touched, incidents
 from head_tail import anchors_in_crop
 from mask_correction import prepare_recovered_edit
@@ -58,7 +59,7 @@ class CropReplayTests(unittest.TestCase):
             pending,reason=replay_incident(predictor,None,expanded,original,original,[0,1,2],{1},1,ids,get,Path(temp))
             if pending:
                 box,path=pending[1,1]
-                np.testing.assert_array_equal(cv2.imread(str(path),0)>0,real[1])
+                np.testing.assert_array_equal(read_image(path, gray=True)>0,real[1])
             return set(pending),reason
 
     def test_only_boundary_frame_is_replaced_when_rejoin_matches(self):
@@ -69,7 +70,7 @@ class CropReplayTests(unittest.TestCase):
         self.assertEqual(self.replay('contact'),(set(),'other_worm_contact'))
 
     def test_reverse_seed_recovers_first_frames_and_preserves_a_true_edge(self):
-        from analyze_phenotypes import load_sample, read_image, write_png
+        from analyze_phenotypes import load_sample
         from crop_recovery import run
         from quality_stage import run as guard_stage
         with tempfile.TemporaryDirectory() as tmp:
@@ -125,12 +126,12 @@ class CropReplayTests(unittest.TestCase):
             original=np.zeros((60,60),np.uint8)
             original[7:12,8:16]=255
             seed=folder/'manual.png'
-            cv2.imwrite(str(seed),original)
+            write_png(seed,original)
             entry=dict(id=1,mask_path=str(seed))
             source=dict(crop_xyxy=crop,head_annotations={'1':clicks},groups=[dict(crop_xyxy=crop,anchor_frame=0,worms=[entry])])
             report=dict(crop_xyxy=canvas,crop_recovery=dict(events=[dict(worm_id=1,decision='recovered',crop_xyxy=canvas)]))
             prepare_recovered_edit(source,report,folder/'review')
-            np.testing.assert_array_equal(cv2.imread(entry['mask_path'],0),place(original,crop,canvas))
-            np.testing.assert_array_equal(cv2.imread(str(seed),0),original)
+            np.testing.assert_array_equal(read_image(entry['mask_path'], gray=True),place(original,crop,canvas))
+            np.testing.assert_array_equal(read_image(seed, gray=True),original)
             self.assertEqual(source['crop_xyxy'],canvas)
             self.assertEqual(source['head_annotations']['1'],shifted)

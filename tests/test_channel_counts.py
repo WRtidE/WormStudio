@@ -119,6 +119,13 @@ class ChannelIntegration(unittest.TestCase):
                 self.assertEqual(book['越线明细'].max_row, 2)
                 self.assertEqual([c.value for c in book['越线明细'][2]][:3], [1, 4, event['frame']])
                 book.close()
+                for channel, total in [(4, 1), (2, 0)]:
+                    scoped = load_workbook(io.BytesIO(other.export(file, first, channel)), read_only=True)
+                    self.assertEqual(scoped.active['B2'].value, total)
+                    self.assertEqual(scoped.active.max_row, 4)
+                    self.assertEqual(scoped['越线明细'].max_row, total + 1)
+                    scoped.close()
+                self.assertEqual(other.comparison()[0]['counts'], [0,0,0,1])
                 next_run = other.action(file,'start',{'settings':cfg})['task']['id']
                 self.assertEqual(other.state(file,first)['active_run'], next_run)
                 self.assertEqual(len(other.state(file)['history']),2)

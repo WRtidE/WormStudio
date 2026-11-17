@@ -84,7 +84,7 @@ def main():
     parser.add_argument('--sample', required=True)
     parser.add_argument('--tracking-only', action='store_true')
     parser.add_argument('--centerline-source',default='wormtracer-temporal',
-        choices=['wormtracer-temporal','centerlines-niu','centerlines-hybrid','centerlines-topology','centerlines-tapnext','centerlines-self-contact'])
+        choices=['wormtracer-temporal','centerlines-niu','centerlines-hybrid','centerlines-topology','centerlines-tapnext','centerlines-self-contact','centerlines-body-sequence'])
     args = parser.parse_args()
     base = ROOT / 'outputs' / args.sample
     _, source, ids, get_mask, _ = load_sample(args.sample)

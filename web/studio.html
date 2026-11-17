@@ -32,7 +32,7 @@
   <div id="evaluation-library" class="evaluation-library" hidden><p class="section-caption">评测标注任务 <span id="eval-task-count">0</span></p><div id="eval-task-list" class="file-list" aria-label="评测任务列表"></div></div>
   <div id="library-empty" class="library-empty"><svg><use href="#i-file"/></svg><p>还没有文件</p><span>导入视频，开始你的第一次分析</span><button id="clear-file-filter" class="small-button" hidden>清除筛选</button></div>
   <details id="channel-history" hidden><summary>计数记录</summary><div id="channel-history-list"></div></details>
-  <details id="saved-projects"><summary>历史任务</summary><div class="history-content"><div id="target-video-list"></div><div id="saved-run-list"></div><button id="refresh-projects" class="plain-button">刷新任务列表</button></div></details>
+  <details id="saved-projects"><summary>历史任务</summary><div class="history-content"><div id="target-video-list"></div><div id="saved-batches"></div><div id="saved-run-list"></div><button id="refresh-projects" class="plain-button">刷新任务列表</button></div></details>
   <div class="library-bottom"><button id="current-analysis" class="plain-button" hidden><span class="status-dot"></span>返回当前分析<svg><use href="#i-arrow"/></svg></button><div id="layout-feedback" class="layout-feedback" role="status" hidden><span></span><button type="button">重试</button></div><div class="local-footer"><span class="status-dot"></span><span id="connection-label">正在连接本地服务</span></div></div>
 </aside>
 <main class="main-workspace">
@@ -41,10 +41,11 @@
     <nav class="count-tabs" aria-label="通道计数步骤"><button data-count-tab="setup">通道设置</button><button data-count-tab="count">计数进度</button><button data-count-tab="result">结果复核</button></nav>
     <div id="count-message" role="status" hidden></div>
     <div id="count-empty"><span id="count-empty-label" role="status">从左侧选择一个视频</span><button id="count-retry" class="small-button" hidden>重试</button></div>
+    <details id="count-comparison" class="cross-panel"><summary>跨视频通道对照</summary><p>每个视频取最近一次完成的计数。点击数量可查看该次越线记录。</p><div class="summary-table-scroll"><table id="channel-matrix" class="summary-table"></table></div><p id="matrix-state" role="status"></p></details>
     <div id="count-work" hidden>
       <section id="count-distribution" class="cross-panel" aria-label="通道分布" hidden>
-        <div class="cross-heading"><h2>通道分布</h2><span class="cross-total"><b id="cross-total"></b> 次越线</span>
-          <div class="cross-actions"><button id="cross-all" class="small-button" hidden>清除筛选</button><a id="cross-export" class="small-button" hidden>导出 Excel</a></div></div>
+        <div class="cross-heading"><h2>通道分布</h2><span class="cross-total">全视频 <b id="cross-total"></b> 次越线 <span id="cross-selected"></span></span>
+          <div class="cross-actions"><button id="cross-all" class="small-button" hidden>清除筛选</button><a id="cross-export" class="small-button" hidden>导出全部通道 Excel</a><a id="cross-export-selected" class="small-button" hidden>导出所选通道 Excel</a></div></div>
         <div class="cross-scroll"><div id="cross-chart" role="group" aria-label="按通道筛选"></div></div>
       </section>
       <div id="count-layout" hidden>
@@ -92,38 +93,44 @@
       <div id="media-workspace" class="media-workspace" hidden><div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b id="media-kind">视频预览</b></span><span id="media-resolution">原始画面</span></div><div id="media-stage" class="media-stage"><video id="source-video" controls playsinline preload="metadata" hidden></video><img id="source-image" alt="所选实验图片" hidden><pre id="source-text" hidden></pre><div id="unavailable-preview" class="unavailable-preview" hidden><svg><use href="#i-file"/></svg><p id="unavailable-message"></p></div></div><div class="media-caption"><span id="media-description">原始文件 · 尚未进行处理</span><span id="media-size"></span></div></div>
       <div id="drop-overlay" class="drop-overlay" hidden><svg><use href="#i-upload"/></svg><strong>松开鼠标，将文件加入工作区</strong></div>
     </section>
-    <aside class="inspector" aria-label="处理工具"><div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>当前素材</h2></div><div class="inspector-content"><div id="selected-empty" class="selected-empty">从左侧选择一个视频<br><span>这里会显示文件信息与处理选项</span></div><div id="selected-details" hidden><div class="selected-file"><svg><use href="#i-video"/></svg><strong id="selected-name"></strong></div><details class="file-information"><summary>文件信息</summary><dl class="file-facts"><div><dt>文件类型</dt><dd id="selected-type">—</dd></div><div><dt>文件大小</dt><dd id="selected-size">—</dd></div><div><dt>保存位置</dt><dd id="selected-storage">—</dd></div><div><dt>画面尺寸</dt><dd id="selected-resolution">—</dd></div><div><dt>视频时长</dt><dd id="selected-duration">—</dd></div></dl></details></div><details id="selected-history" class="file-history" hidden><summary>分析记录 <span id="selected-run-count"></span></summary><div id="selected-runs"></div></details><details id="batch-panel" hidden open><summary>批处理队列 <span id="batch-count">0</span></summary><p>按加入顺序处理；失败会继续下一项。停止后未运行的任务保留。</p><ol id="batch-list" style="max-height:240px;overflow:auto;padding-left:22px"></ol><button id="batch-start" class="small-button" hidden disabled>继续待处理任务</button> <button id="batch-stop" class="small-button" hidden disabled>停止批处理</button></details><details class="workflow-guide"><summary>分析流程</summary><ol class="pipeline-steps"><li><span>01</span><div><strong>准备画面</strong><p>选择分析区域与测量单位</p></div></li><li><span>02</span><div><strong>识别与标注</strong><p>点选虫体，修正轮廓与头尾</p></div></li><li><span>03</span><div><strong>姿态分析</strong><p>跟踪整段视频，提取身体姿态</p></div></li><li><span>04</span><div><strong>表型与结果</strong><p>查看逐帧指标，导出分析结果</p></div></li></ol><div class="panel-tip"><svg><use href="#i-help"/></svg><p>建议选择虫体清晰、彼此分离的画面作为标注帧。</p></div></details></div><div class="inspector-action"><p id="start-hint">导入视频后即可开始</p><button id="start-analysis" class="primary" disabled>开始标注<svg><use href="#i-arrow"/></svg></button></div></aside>
+    <aside class="inspector" aria-label="处理工具"><div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>当前素材</h2></div><div class="inspector-content"><div id="selected-empty" class="selected-empty">从左侧选择一个视频<br><span>这里会显示文件信息与处理选项</span></div><div id="selected-details" hidden><div class="selected-file"><svg><use href="#i-video"/></svg><strong id="selected-name"></strong></div><details class="file-information"><summary>文件信息</summary><dl class="file-facts"><div><dt>文件类型</dt><dd id="selected-type">—</dd></div><div><dt>文件大小</dt><dd id="selected-size">—</dd></div><div><dt>保存位置</dt><dd id="selected-storage">—</dd></div><div><dt>画面尺寸</dt><dd id="selected-resolution">—</dd></div><div><dt>视频时长</dt><dd id="selected-duration">—</dd></div></dl></details></div><details id="selected-history" class="file-history" hidden><summary>分析记录 <span id="selected-run-count"></span></summary><div id="selected-runs"></div></details><details id="batch-panel" hidden>
+      <summary>任务队列 <span id="batch-count"></span></summary>
+      <ul id="batch-list"></ul>
+      <button id="batch-start" class="small-button" hidden disabled>继续处理</button>
+      <button id="batch-stop" class="small-button" title="停止后，待处理任务保留在队列中" hidden disabled>停止处理</button>
+    </details><details class="workflow-guide"><summary>分析流程</summary><ol class="pipeline-steps"><li><span>01</span><div><strong>准备画面</strong><p>选择分析区域与测量单位</p></div></li><li><span>02</span><div><strong>识别与标注</strong><p>点选虫体，修正轮廓与头尾</p></div></li><li><span>03</span><div><strong>姿态分析</strong><p>跟踪整段视频，提取身体姿态</p></div></li><li><span>04</span><div><strong>表型与结果</strong><p>查看逐帧指标，导出分析结果</p></div></li></ol><div class="panel-tip"><svg><use href="#i-help"/></svg><p>建议选择虫体清晰、彼此分离的画面作为标注帧。</p></div></details></div><div class="inspector-action"><label class="chamber-choice"><input id="chamber-mode" type="checkbox"> 按培养槽标注</label><p id="start-hint">导入视频后即可开始</p><button id="start-analysis" class="primary" disabled>开始标注<svg><use href="#i-arrow"/></svg></button></div></aside>
   </div>
   <section id="analysis-workspace" class="analysis-workspace" hidden aria-label="分析工作区"><iframe id="analysis-frame" title="线虫标注与分析"></iframe></section>
   <section id="results-workspace" class="results-workspace" hidden aria-label="结果与质量工作台">
     <div class="results-main">
-      <div class="results-heading"><div><h1>分析结果</h1></div><div class="result-actions">
-        <button id="result-summary" class="small-button" aria-haspopup="dialog">整段汇总</button>
-        <details id="result-exports" class="result-action-menu result-exports"><summary>导出结果</summary><div class="result-menu-content"><div id="studio-artifacts"></div><details class="extra-exports"><summary>更多数据与质量记录</summary><div id="studio-extra-artifacts"></div></details><p id="result-export-empty" hidden>暂无可导出的文件</p></div></details>
+      <div class="results-heading"><div><h1>线虫指标</h1></div><div class="result-actions">
+        <button id="result-summary" class="small-button" hidden>返回指标</button>
+        <button id="summary-export" class="small-button">导出当前线虫</button><button id="summary-export-all" class="small-button" hidden>导出全部线虫</button>
+        <details id="result-exports" class="result-action-menu result-exports"><summary>其他文件</summary><div class="result-menu-content"><div id="studio-artifacts"></div><details class="extra-exports"><summary>更多数据与质量记录</summary><div id="studio-extra-artifacts"></div></details><p id="result-export-empty" hidden>暂无可导出的文件</p></div></details>
         <details id="result-more" class="result-action-menu"><summary aria-label="更多结果操作">更多</summary><div class="result-menu-content"><button id="result-reannotate" class="small-button" hidden>重新选择标注帧</button><p id="result-review-hint">重新标注会创建新结果，保留已有记录。</p></div></details>
       </div></div>
       <p id="results-notice" class="results-notice" hidden></p>
-      <div class="result-player">
-        <div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b>分析画面</b><label><input id="result-original" type="checkbox">原始画面</label></span><span id="result-frame-label">正在读取结果…</span></div>
-        <div class="result-view-tools" data-resizable="视频观察工具" data-resize-axis="x" role="group" aria-label="视频观察工具"><div class="result-view-modes" role="group" aria-label="观察范围"><button id="result-full" class="small-button" aria-pressed="true">完整画面</button><button id="result-focus" class="small-button" aria-pressed="false">跟随虫体</button></div><button id="result-zoom-out" class="small-button" aria-label="缩小视频">−</button><output id="result-zoom-level">100%</output><button id="result-zoom-in" class="small-button" aria-label="放大视频">＋</button><button id="result-fit" class="small-button" aria-label="复位缩放与位置" title="复位缩放与位置">↺</button></div>
-        <div class="result-screen" data-resizable="结果视频" data-resize-axis="y"><video id="studio-result-video" playsinline preload="metadata" aria-label="分析结果视频" class="result-video-source"></video><canvas id="result-canvas" tabindex="0" aria-label="结果画面，可拖动平移、滚轮或双指缩放"></canvas><p id="result-video-message" hidden></p><aside class="result-floating-metrics" data-floating-panel="当前帧数据">      <div class="result-metrics-heading"><h2>当前帧指标</h2><span id="result-metric-note">不可用的指标显示为 —</span></div>
-      <div id="studio-metric-cards" class="studio-metric-cards"></div><details class="extra-metrics"><summary>更多指标与匿名片段</summary><div id="studio-extra-metrics" class="studio-metric-cards"></div></details></aside></div>
-        <p id="result-frame-error" class="frame-error" role="status" hidden></p><div class="result-transport"><button id="result-play" class="small-button" aria-pressed="false">播放</button><button id="result-prev" class="small-button" aria-label="上一帧">←</button><div class="result-scrubber"><div id="result-quality-track" class="result-quality-track" aria-hidden="true"></div><input id="result-frame" type="range" min="0" max="0" value="0" aria-label="结果视频帧" disabled></div><button id="result-next" class="small-button" aria-label="下一帧">→</button><label>帧 <input aria-describedby="result-frame-error" id="result-frame-number" type="number" min="0" max="0" value="0" aria-label="跳转到帧" disabled></label></div>
-        <div class="media-caption"><span id="result-focus-note">滚轮或双指缩放 · 拖动平移 · 双击复位</span><span><i class="review-dot"></i> 色带：当前筛选的问题帧</span></div>
-      </div>
+      <section id="chamber-results" class="result-dashboard" hidden aria-labelledby="chamber-results-title">
+        <div class="summary-section-title"><h2 id="chamber-results-title">批次结果</h2><span id="chamber-count"></span><button class="small-button" id="export-video">导出本视频</button><button class="small-button" id="export-group">导出整个批次</button><button class="small-button" id="open-result-review" hidden>打开逐帧复核</button><button class="small-button" id="return-group" hidden>返回当前任务</button><button id="chamber-retry" class="small-button" hidden>重新读取指标</button></div>
+        <div class="summary-table-scroll"><table class="summary-table"><thead><tr><th>视频与培养槽</th><th>状态</th><th>中位体长</th><th>平均体宽</th><th>平均运动速度</th><th>中位身体伸展度</th><th>详情</th></tr></thead><tbody id="chamber-rows"></tbody></table></div>
 
-      <dialog id="result-summary-panel" class="result-summary-panel" aria-labelledby="result-summary-title"><div class="summary-dialog-heading"><h2 id="result-summary-title">整段表型汇总</h2><button id="result-summary-close" class="small-button" aria-label="关闭整段汇总">关闭</button></div><p class="summary-help">按各指标有效帧汇总，缺少头尾确认的指标显示 —。单位随本次标定设置显示。</p><section id="phenotype-panel" class="progress-card phenotype-panel" hidden>
-<p class="help">形态指标取有效帧的中位数。路程和直线度按连续轨迹片段汇总，坐标以视频画面为准。</p>
-<div id="phenotype-worms" class="worm-tabs" role="group" aria-label="选择要查看指标的线虫"></div><p id="phenotype-context" class="phenotype-context"></p>
-<h3>形态与姿态</h3><div id="growth-metrics" class="metric-grid"></div><h3>运动指标</h3><div id="motion-metrics" class="metric-grid"></div>
-<h3>头尾与活动分类</h3><div class="behavior-grid"><article class="metric-card"><span class="metric-label">头尾判断</span><strong id="head-result" class="behavior-value"></strong><p id="head-note"></p><p class="metric-definition">形态参考：头部较圆、可见咽部；尾部较尖。A/B 端点不是已确认的头尾。</p></article><article class="metric-card"><span class="metric-label">运动分类 A / B / C</span><strong id="activity-result" class="behavior-value"></strong><p id="activity-note"></p><details class="metric-definitions"><summary>查看 A / B / C 定义</summary><p>A：活跃，在培养池内较快爬行。<br>B：速度较慢，在部分微柱间爬行。<br>C：无明显位移，仅头部左右点动。</p><p>当前分类使用暂定速度、活动范围及头摆规则，尚未用人工真值验证。</p></details></article></div>
-<h3>运动形态</h3><div id="movement-metrics" class="metric-grid"></div><p class="help">以下帧比例以整段视频总帧数为分母，包括无效 / 未知帧；帧数不等于独立行为事件次数。</p><div id="movement-states" class="movement-states"></div>
-<details class="metric-definitions reference-note"><summary>定义与参考值说明</summary><p>头摆幅度采用头部 0–10% 中轴与颈部 10–30% 中轴的夹角，汇总为绝对角度 95 分位数；该分段比例是当前实现的操作性定义。</p><p>头摆频率按当前定义的“单次向一个方向弯曲”计数，单位为次/min，不与完整往返周期的 Hz 混用。体积按分段圆台估算。</p><p>爬行约 135° / 0.5 Hz、游泳约 45° / 1.7 Hz 是芯片外文献参考值，不能据此直接判断本视频的游泳 / 爬行状态。</p></details>
-</section>
-</dialog>
-      <div id="results-load-state" class="results-load-state" role="status"><span id="results-load-message">正在读取逐帧指标…</span><button id="results-retry" class="small-button" hidden>重新读取</button></div>
-    </div>
-    <aside class="inspector result-inspector" data-floating-panel="质量与复核" data-collapsed="true" aria-label="质量与身份复核">
+      </section>
+      <section id="result-summary-panel" class="result-dashboard" aria-label="整段线虫指标">
+        <section id="phenotype-panel" hidden>
+          <div class="summary-context-row"><p id="phenotype-context"></p><div id="phenotype-worms"></div></div>
+          <div id="summary-core" class="summary-core" aria-label="核心指标"></div>
+          <section class="summary-all" aria-labelledby="summary-all-title"><div class="summary-section-title"><h2 id="summary-all-title">详细指标</h2></div>
+            <div class="summary-tables"><section><h3>形态指标</h3><table class="summary-table"><thead><tr><th scope="col">指标</th><th scope="col">结果</th></tr></thead><tbody id="growth-metrics"></tbody></table><details id="growth-more" class="metric-more" hidden><summary>更多形态指标</summary><table class="summary-table" aria-label="更多形态指标"><tbody id="growth-extra"></tbody></table></details></section>
+            <section><h3>运动指标</h3><table class="summary-table"><thead><tr><th scope="col">指标</th><th scope="col">结果</th></tr></thead><tbody id="motion-metrics"></tbody></table><details id="motion-more" class="metric-more" hidden><summary>更多运动指标</summary><table class="summary-table" aria-label="更多运动指标"><tbody id="motion-extra"></tbody></table></details></section></div>
+          </section>
+          <section id="summary-comparison" class="summary-comparison" hidden><h2>线虫对比</h2><div class="summary-table-scroll"><table class="summary-table" id="summary-comparison-table"></table></div></section>
+          <details id="summary-trends" class="summary-disclosure"><summary>指标变化</summary><div class="summary-trend-toolbar"><label>查看指标 <select id="summary-trend-metric"><option value="length">体长</option><option value="speed">运动速度</option><option value="width">平均体宽</option></select></label></div><div id="summary-trend-chart" class="summary-trend-chart"></div><p id="summary-trend-note" class="summary-empty"></p></details>
+        </section>
+        <p id="summary-empty" class="summary-empty" hidden>本次尚无整段指标，请查看分析详情或重新读取结果。</p>
+      </section>
+      <dialog id="metric-detail-dialog" class="metric-detail-dialog" aria-labelledby="metric-detail-title"><div class="metric-detail-heading"><h2 id="metric-detail-title">指标详情</h2><button id="metric-detail-close" class="small-button" aria-label="关闭指标详情">关闭</button></div><p id="metric-detail-value"></p><p id="metric-detail-note"></p><p id="metric-detail-definition"></p><p id="metric-detail-coverage"></p></dialog>
+      <details id="result-analysis-details" class="summary-disclosure result-analysis-details"><summary>查看分析详情</summary>
+    <aside class="inspector result-inspector" aria-label="质量与身份复核">
       <div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>质量与身份</h2><span id="result-quality-badge">逐帧检查</span></div>
       <div class="inspector-content">
         <div id="result-worm-picker" hidden><label class="section-label" for="result-worm">当前个体<span id="result-worm-count"></span></label><select id="result-worm" class="result-select" disabled></select></div>
@@ -151,6 +158,22 @@
       </div>
       
     </aside>
+      </details>
+      <details id="result-video-details" class="summary-disclosure result-video-details"><summary>查看分析视频</summary>
+      <div class="result-player">
+        <div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b>分析画面</b><label><input id="result-original" type="checkbox">原始画面</label></span><span id="result-frame-label">正在读取结果…</span></div>
+        <div class="result-view-tools" data-resizable="视频观察工具" data-resize-axis="x" role="group" aria-label="视频观察工具"><div class="result-view-modes" role="group" aria-label="观察范围"><button id="result-full" class="small-button" aria-pressed="true">完整画面</button><button id="result-focus" class="small-button" aria-pressed="false">跟随虫体</button></div><button id="result-zoom-out" class="small-button" aria-label="缩小视频">−</button><output id="result-zoom-level">100%</output><button id="result-zoom-in" class="small-button" aria-label="放大视频">＋</button><button id="result-fit" class="small-button" aria-label="复位缩放与位置" title="复位缩放与位置">↺</button></div>
+        <div class="result-screen" data-resizable="结果视频" data-resize-axis="y"><video id="studio-result-video" playsinline preload="metadata" aria-label="分析结果视频" class="result-video-source"></video><canvas id="result-canvas" tabindex="0" aria-label="结果画面，可拖动平移、滚轮或双指缩放"></canvas><p id="result-video-message" hidden></p><aside class="result-floating-metrics">      <div class="result-metrics-heading"><h2>当前帧指标</h2><span id="result-metric-note">不可用的指标显示为 —</span></div>
+      <div id="studio-metric-cards" class="studio-metric-cards"></div><details class="extra-metrics"><summary>更多指标与匿名片段</summary><div id="studio-extra-metrics" class="studio-metric-cards"></div></details></aside></div>
+        <p id="result-frame-error" class="frame-error" role="status" hidden></p><div class="result-transport"><button id="result-play" class="small-button" aria-pressed="false">播放</button><button id="result-prev" class="small-button" aria-label="上一帧">←</button><div class="result-scrubber"><div id="result-quality-track" class="result-quality-track" aria-hidden="true"></div><input id="result-frame" type="range" min="0" max="0" value="0" aria-label="结果视频帧" disabled></div><button id="result-next" class="small-button" aria-label="下一帧">→</button><label>帧 <input aria-describedby="result-frame-error" id="result-frame-number" type="number" min="0" max="0" value="0" aria-label="跳转到帧" disabled></label></div>
+        <div class="media-caption"><span id="result-focus-note">滚轮或双指缩放 · 拖动平移 · 双击复位</span><span><i class="review-dot"></i> 色带：当前筛选的问题帧</span></div>
+      </div>
+
+
+      </details>
+      <div id="results-load-state" class="results-load-state" role="status"><span id="results-load-message">正在读取逐帧指标…</span><button id="results-retry" class="small-button" hidden>重新读取</button></div>
+    </div>
+
   </section>
   <section id="evaluation-workspace" class="evaluation-workspace" aria-label="独立评测标注工作台" hidden>
     <div class="eval-main">

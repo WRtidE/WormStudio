@@ -111,7 +111,9 @@ async function launch() {
     await splash.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<meta charset="utf-8"><style>body{font:16px system-ui;padding:18px;color:#183a32}h2{margin:0 0 14px}</style><h2>WormStudio</h2><p>正在准备线虫分析工作台…</p>'));
     splash.on('closed', () => { if (splash) app.quit(); });
     fs.cpSync(path.join(payload,'code'), workspace, {recursive:true});
-    if (await prepareModel() === false) return;
+    const methodSource = fs.readFileSync(path.join(payload,'code','src','centerline_methods.py'),'utf8');
+    const pointTrackerDefault = /^CURRENT_METHOD\s*=\s*['"]tapnext['"]/m.test(methodSource);
+    if (pointTrackerDefault && await prepareModel() === false) return;
     status('正在启动分析工作台…');
     execFileSync(python, ['-c','from pathlib import Path; import sys; sys.path.insert(0,"src"); from workspace_library import register; register(Path.cwd(), Path("examples/practice.avi"), auto=True)'],
       {cwd:workspace,windowsHide:true});

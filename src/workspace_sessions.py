@@ -173,6 +173,9 @@ def derive_geometry_run(root,sample,config=None):
     checked,info=validate_config(config)
     stages=build_stages(checked,info,old/'pipeline-config.json',root/'config/phenotype_config.json')
     reusable=[s for s in stages if s['phase'] not in ('metrics','export')]
+    if checked['centerline_method']=='body_sequence' and any(
+            original.get(key)!=config.get(key) for key in ('head_annotations','head_detection')):
+        reusable=[s for s in reusable if s['phase']!='fit']
     if checked['centerline_method'] == 'self_contact' and any(
             original.get(key) != config.get(key) for key in ('head_annotations','identity_reviews')):
         # A head anchor protects its frame during self-contact fitting. Identity reviews
@@ -233,6 +236,37 @@ def restore_saved_timing(progress,base,sample):
                          saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
 
 
+def chamber_summaries(root, items):
+    from centerline_methods import method_source
+    from result_metrics import phenotype_results
+    reports = {}
+    for item in items:
+        if item['status'] != 'complete':
+            continue
+        sample = item['sample']
+        try:
+            base, config = load_config(root, sample)
+            folder = base / ('phenotypes-' + method_source(config['centerline_method']))
+            data = phenotype_results(folder)
+            if not data['worms']:
+                raise ValueError('缺少线虫指标')
+            data.update(chamber_id=item.get('chamber_id'), video_name=item['video_name'])
+            reports[sample] = data
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            reports[sample] = {'error': '指标文件缺失或无法读取'}
+    return reports
+
+
+def saved_timeline(root, sample):
+    from centerline_methods import method_source
+    from frame_metrics import load_frame_metrics
+    base, config = load_config(root, sample)
+    folder = base / ('phenotypes-' + method_source(config['centerline_method']))
+    summary = json.loads((folder/'summary.json').read_text(encoding='utf-8'))
+    return dict(load_frame_metrics(folder/'per_frame_metrics.csv', summary['fps'],
+                                   summary['worms'][0]['frames'], trend_only=True), sample=sample)
+
+
 def reopen(progress,root,sample):
     base,config=load_config(root,sample)
     from centerline_methods import method_source, METHODS
@@ -281,4 +315,6 @@ def get_draft(annotation):
 
 def draft_folder(annotation):
     signature=hashlib.sha256(json.dumps(annotation.identity,sort_keys=True).encode()).hexdigest()
+    if getattr(annotation, 'chamber_mode', False):
+        signature += '-chambers'
     return annotation.output.parent.parent/'annotation-drafts'/signature

@@ -69,3 +69,13 @@ test('automatic calibration measures between tick centers in either orientation'
     assert.equal(measureCalibration(detectScaleBar(frame, point), '').distance, 100);
   }
 });
+
+test('chamber submissions require a reviewed mask and ROI in every slot', () => {
+    const worm = {area:100, confirmed:true, roi:[0,0,50,50]};
+    const inputs = {pixelMode:true, method:'body_sequence', worms:[worm,{...worm,roi:[50,0,100,50]}]};
+    assert.equal(annotationReadiness(inputs).ready, false);
+    assert.equal(annotationReadiness({...inputs,chamberMode:true}).ready, true);
+    for (const change of [{roi:null},{confirmed:false}]) {
+        assert.equal(annotationReadiness({...inputs,chamberMode:true,worms:[worm,{...worm,...change}]}).ready,false);
+    }
+});

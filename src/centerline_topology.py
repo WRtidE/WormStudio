@@ -118,7 +118,7 @@ def prune_short_spurs(sk,radius):
     return sk
 
 
-def topology_candidates(mask,prune=False):
+def topology_candidates(mask,prune=False,contact_radius_fraction=1.25):
     """Return native-pixel candidates, contact region, and observable topology."""
     ys,xs=np.nonzero(mask)
     if len(xs)<30:return [],np.zeros_like(mask),dict(kind='empty')
@@ -142,7 +142,7 @@ def topology_candidates(mask,prune=False):
         # Only resolve one compact contact region with two observable body ends.
         # Hidden tips and multiple separate contacts remain uncertain.
         if len(endpoints)==2 and 1<=len(centers)<=4 and np.ptp(centers,axis=0).max()<max(8*radius,30):
-            r=max(6,int(round(1.25*radius)))
+            r=max(6,int(round(contact_radius_fraction*radius)))
             for c in centers:cv2.circle(zone,tuple(np.rint(c).astype(int)),r,1,-1)
             for c in centers[1:]:cv2.line(zone,tuple(np.rint(centers[0]).astype(int)),tuple(np.rint(c).astype(int)),1,2*r)
             rest=sk&~zone.astype(bool);lab,num=ndi.label(rest,np.ones((3,3)))

@@ -32,7 +32,11 @@ def init_tracking_state(model, directory, count):
     # Upstream warms its backbone on frame zero during init_state. Give it only
     # that frame, then supply random access for prompts and both directions.
     with TemporaryDirectory(prefix='wormstudio-sam2-init-') as seed:
-        (Path(seed) / '000000.jpg').symlink_to((directory / '000000.jpg').resolve())
+        try:
+            (Path(seed) / '000000.jpg').symlink_to((directory / '000000.jpg').resolve())
+        except OSError:
+            import shutil
+            shutil.copy2(directory / '000000.jpg', Path(seed) / '000000.jpg')
         state = model.init_state(seed, **options)
     state['images'] = TrackingFrames(directory, count, model.image_size)
     state['num_frames'] = count

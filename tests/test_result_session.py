@@ -80,7 +80,7 @@ class ResultSessionTests(unittest.TestCase):
         with self.post('/api/new-video', {'video_path':str(self.video)}) as response:
             self.assertEqual(json.load(response)['annotation_url'], '/')
         self.assertEqual(self.progress.snapshot()['status'], 'preparing')
-        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'self_contact')
+        self.assertEqual(self.progress.server.annotation.settings['centerline_method'], 'body_sequence')
         with self.assertRaises(urllib.error.HTTPError) as error:
             self.post('/api/new-video', {'video_path':str(self.video)})
         self.assertEqual(error.exception.code,409)

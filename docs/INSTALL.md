@@ -59,6 +59,8 @@ python studio.py
 
 ## 本机配置
 
+Windows 已有一套可运行的 Python、Electron 和模型时，可将相应环境变量写在 `config/runtime.local.cmd` 中。`start.bat` 在本次启动时读取它。该文件只在本机使用，源码 ZIP 会排除它。
+
 默认使用当前 `sys.executable`。如需双击启动固定环境，可设置 `WORM_STUDIO_PYTHON`，或创建忽略提交的 `config/python_path.txt`，文件中仅写解释器绝对路径。Windows 双击启动的查找顺序为环境变量、非空本机文件、已激活的 venv 或 Conda 环境、项目内的 `.venv\Scripts\python.exe`，最后是 PATH 中的 Python。配置文件使用 UTF-8（可带 BOM），路径无需引号。旧工作区配置继续兼容。
 
 资源优先使用项目 `models/` 和 `resources/`。高级覆盖变量：`WORM_STUDIO_RESOURCES`、`WORMSTUDIO_SAM2_CHECKPOINT`、`WORMSTUDIO_SINGLE_ROOT`、`WORMSTUDIO_TAPNEXT_CHECKPOINT`。参考 [模型说明](MODELS.md)。

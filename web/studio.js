@@ -9,15 +9,17 @@
   const terminal = ['ready', 'complete', 'failed', 'cancelled'];
   const videoExtensions = /\.(mp4|avi|mov|mkv|m4v|mpg|mpeg|wmv|webm)$/i;
   const imageExtensions = /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i;
+  let setupSession = null;
   let selectedId = null, analysisId = null, filter = 'all', view = 'preview';
   let progress = null, busy = false, connected = false, initialized = false;
   let currentSample = '', mediaRevision = 0, dragging = 0;
   const frame = $('#analysis-frame');
   let stagedIds = [];
   let resultRevision = 0;
+  let chamberRequestKey = '', chamberTableKey = '', chamberReports = {}, chamberReadFailed = false;
 
   let mode='phenotype';
-  const channel=window.createChannelWorkspace({request:jsonRequest,token:async()=>{
+  const channel=window.createChannelWorkspace({request:jsonRequest,getFiles:()=>files,openVideo:id=>selectFile(id),token:async()=>{
     if(!progress?.token)progress=await jsonRequest('/api/progress');
     return progress.token;
   }});
@@ -45,22 +47,135 @@
   }
   for(const b of $$('.task-modes button'))b.onclick=()=>switchMode(b.dataset.mode);
 
-  function renderResultNavigation() {
-    const navigation = ResultNavigation.build(progress);
-    const current = navigation.items[navigation.index];
-    $('#result-switcher').hidden = view !== 'results' || !current;
-    $('#result-switcher .result-scope-label').textContent = navigation.grouped ? '本次结果' : '当前结果';
-    $('#result-video-name').textContent = current?.name || '';
-    $('#result-video-name').title = current?.name || '';
-    $('#result-position').textContent = current ? `${navigation.index + 1} / ${navigation.items.length}` : '';
-    $('#result-previous-video').disabled = !canStart() || !navigation.previous;
-    $('#result-next-video').disabled = !canStart() || !navigation.next;
-    $('#result-previous-video').title = navigation.previous ? `上一个：${navigation.previous.name}` : '已是本次第一个已完成视频';
-    $('#result-next-video').title = navigation.next ? `下一个：${navigation.next.name}` : '已是本次最后一个已完成视频';
-  }
+  let historyGroup='', historyItems=[], pickedSample='', groupSignature='', historySignature='';
+  let reportsReady=false;
+  const resultItems=()=>historyGroup?historyItems:ResultNavigation.group(progress);
+  const groupId=()=>historyGroup||progress?.batch?.group_id||'';
+  const sourceKey=item=>item.video_path||item.video_name;
+  const stateLabels={complete:'已完成',running:'处理中',pending:'待处理',failed:'失败',cancelled:'已中断',removed:'已移出'};
 
+  function viewGroup(id){
+    historyGroup=id;historyItems=[];pickedSample='';chamberRequestKey='';chamberTableKey='';
+    showView('results');
+  }
+  function renderHistory(){
+    const groups=progress?.batch?.groups||[], signature=JSON.stringify(groups);
+    if(signature===historySignature)return;
+    historySignature=signature;
+    const list=$('#saved-batches');list.replaceChildren();
+    if(groups.length){
+      const title=document.createElement('strong');title.textContent='历史批次';list.append(title);
+    }
+    for(const g of groups){
+      const button=document.createElement('button');button.className='small-button';
+      button.textContent=[g.created?.slice(5,16).replace('T',' '),g.name,g.videos+' 个视频',g.complete+'/'+g.total+' 已完成'].filter(Boolean).join(' · ');
+      button.onclick=()=>{if(mode!=='phenotype')switchMode('phenotype');viewGroup(g.id);};list.append(button);
+    }
+  }
+  function metricText(metric) {
+    const {value,unit}=SummaryMetrics.display(metric);
+    return value==='—' || !unit ? value : value+' '+unit;
+  }
+  function selectResult(sample){
+    pickedSample=sample;renderResultNavigation();
+  }
+  function renderResultNavigation(){
+    renderHistory();
+    const pane=$('#results-workspace'), shown=view==='results' && (historyGroup || ResultNavigation.group(progress).length);
+    $('#chamber-results').hidden=!shown;
+    $('#return-group').hidden=!historyGroup;
+    if(!shown){
+      pane.classList.remove('group-summary','chambers-only');
+      $('#result-switcher').hidden=true;
+      if(progress)window.StudioResults.update(progress);
+      return;
+    }
+    const g=groupId();
+    const currentItems=ResultNavigation.group(progress);
+    const meta=progress?.batch?.groups?.find(x=>x.id===g);
+    const signature=g || JSON.stringify(currentItems.map(i=>i.id||i.sample));
+    if(signature!==groupSignature){groupSignature=signature;pickedSample='';}
+    const requestKey=JSON.stringify([historyGroup,g,historyGroup?meta?.complete:currentItems.filter(i=>i.status==='complete').map(i=>i.sample)]);
+    if(chamberRequestKey!==requestKey){
+      chamberRequestKey=requestKey;chamberReadFailed=false;reportsReady=false;chamberTableKey='';
+      const visible=historyGroup?historyItems:currentItems;
+      chamberReports=Object.fromEntries(visible.filter(i=>chamberReports[i.sample]?.worms).map(i=>[i.sample,chamberReports[i.sample]]));
+      const query=g?'?group='+encodeURIComponent(g):'';
+      jsonRequest('/api/batch-results'+query,{signal:AbortSignal.timeout(20000)}).then(data=>{
+        if(requestKey!==chamberRequestKey)return;
+        if(historyGroup)historyItems=data.items;
+        chamberReports=data.reports;reportsReady=true;
+        chamberReadFailed=data.items.some(i=>i.status==='complete' && !data.reports[i.sample]?.worms?.length);
+      },()=>{if(requestKey===chamberRequestKey)chamberReadFailed=true;}).finally(()=>{
+        if(requestKey===chamberRequestKey){chamberTableKey='';renderResultNavigation();}
+      });
+    }
+    const items=resultItems(), completed=items.filter(i=>i.status==='complete');
+    const chosen=completed.find(i=>i.sample===pickedSample) || completed.find(i=>i.sample===progress?.sample) || completed[0];
+    if(chosen)pickedSample=chosen.sample;
+    const live=chosen && chosen.sample===progress?.sample && progress.status==='complete';
+    const report=chosen && (chamberReports[chosen.sample]?.worms?.length?chamberReports[chosen.sample]:live?progress.phenotypes:null);
+    pane.classList.toggle('group-summary',!live);
+    pane.classList.toggle('chambers-only',!report?.worms?.length);
+    if(chosen)$('#current-name').textContent=chosen.name;
+    const display=live?progress:report?{status:'complete',sample:chosen.sample,phenotypes:report,video_name:chosen.video_name,summaryOnly:true,group:g,artifacts:[]}: {status:'ready'};
+    window.StudioResults.update(display);
+    const index=completed.indexOf(chosen);
+    $('#result-switcher').hidden=completed.length<2;
+    $('#result-switcher .result-scope-label').textContent='批次内';
+    $('#result-video-name').textContent=chosen?.name||'';
+    $('#result-position').textContent=index>=0?(index+1)+' / '+completed.length:'';
+    for(const [id,offset] of [['result-previous-video',-1],['result-next-video',1]]){
+      const target=completed[index+offset],button=$('#'+id);
+      button.disabled=!target;button.title=target?.name||'';button.onclick=()=>target&&selectResult(target.sample);
+    }
+    $('#export-group').disabled=!reportsReady || !completed.length;
+    $('#open-result-review').hidden=live||!chosen;
+    $('#open-result-review').disabled=!canStart();
+    $('#open-result-review').onclick=()=>chosen&&openSavedResult(chosen.sample).catch(e=>status(e.message,true));
+    $('#export-group').textContent=new Set(items.map(sourceKey)).size===1?'导出整个视频':'导出整个批次';
+    $('#export-video').disabled=!reportsReady || !chosen;
+    $('#export-video').hidden=new Set(items.map(sourceKey)).size<2;
+    const tableKey=JSON.stringify([items,pickedSample,renderPhenotypes.selected(),chamberReadFailed,reportsReady,!!canStart()]);
+    if(chamberTableKey===tableKey)return;
+    chamberTableKey=tableKey;
+    $('#chamber-results-title').textContent=historyGroup?'历史批次结果':'本次分析结果';
+    $('#chamber-count').textContent=items.length?new Set(items.map(sourceKey)).size+' 个视频 · '+completed.length+' / '+items.length+' 项已完成':chamberReadFailed?'读取失败':'正在读取批次…';
+    $('#chamber-retry').hidden=!chamberReadFailed;
+    const rows=$('#chamber-rows');rows.replaceChildren();
+    for(const item of items){
+      const data=chamberReports[item.sample] || (item.sample===progress.sample?progress.phenotypes:null);
+      for(const worm of data?.worms?.length?data.worms:[null]){
+        const row=rows.insertRow();row.setAttribute('aria-current',String(item.sample===pickedSample && (!worm || data.worms.length===1 || renderPhenotypes.selected()===worm.worm_id)));
+        const name=document.createElement('th');name.scope='row';
+        name.textContent=item.chamber_id==null?item.video_name:'培养槽 '+item.chamber_id;
+        if(item.chamber_id!=null){const video=document.createElement('small');video.textContent=item.video_name;name.append(video);}
+        if(data?.worms?.length>1)name.append(document.createTextNode(' · 线虫 '+worm.worm_id));
+        name.title=item.video_path||item.video_name;row.append(name);
+        const state=row.insertCell();state.textContent=item.status==='complete'&&!worm?(chamberReadFailed?'指标未读出':'正在读取指标'):stateLabels[item.status]||item.status;
+        if(item.error){const why=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看原因';why.append(summary,document.createTextNode(item.error));state.append(why);}
+        for(const key of SummaryMetrics.coreKeys){const metric=worm&&SummaryMetrics.find(worm,key);row.insertCell().textContent=metric?metricText(metric):'—';}
+        const cell=row.insertCell();
+        if(worm || (!item.removed&&canStart()&&['failed','cancelled'].includes(item.status))){
+          const button=document.createElement('button');button.className='small-button';button.textContent=worm?'查看指标':'重试此项';
+          button.onclick=()=>{if(worm){selectResult(item.sample);renderPhenotypes.select(worm.worm_id);chamberTableKey='';renderResultNavigation();$('#result-summary-panel').scrollIntoView({block:'nearest'});}else batchAction('retry-one',item.id,g);};
+          cell.append(button);
+        }
+      }
+    }
+  }
+  $('#chamber-retry').onclick=()=>{chamberRequestKey='';chamberTableKey='';renderResultNavigation();};
+  $('#return-group').onclick=()=>{viewGroup('');if(!ResultNavigation.group(progress).length&&progress?.status!=='complete')showView(progress?.sample?'progress':'preview');};
+  for(const [id,whole] of [['export-video',false],['export-group',true]]){
+    $('#'+id).onclick=()=>{
+      const all=resultItems(),selected=all.find(i=>i.sample===pickedSample);
+      const items=whole?all:all.filter(i=>selected&&sourceKey(i)===sourceKey(selected));
+      if(items.length&&reportsReady)SummaryMetrics.download(SummaryMetrics.groupCsv(items,chamberReports),(whole?'批次_'+(groupId()||'结果'):selected.video_name)+'_指标');
+    };
+  }
   async function openSavedResult(sample) {
     if(!canStart())throw Error('请等待当前任务结束后再切换结果');
+    historyGroup='';pickedSample=sample;
     busy=true;
     resultRevision++;
     renderActions();
@@ -79,13 +194,6 @@
       status(`正在查看 ${data.video_name} 的分析结果`);
     }finally{busy=false;renderActions();}
   }
-  for (const [id, direction] of [['result-previous-video','previous'],['result-next-video','next']]) {
-    $('#'+id).onclick=()=>{
-      const target=ResultNavigation.build(progress)[direction];
-      if(target)openSavedResult(target.sample).catch(error=>status(error.message,true));
-    };
-  }
-
   function displayStaging() {
     const list = $('#staging-list');
     document.body.classList.toggle('has-staged', stagedIds.length > 0);
@@ -120,7 +228,9 @@
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
     use.setAttribute('href', '#i-' + name); svg.append(use); return svg;
   }
-  const selected = () => files.find(file => file.id === selectedId);
+  const selected = () => files.find(file=>file.id===selectedId) || (setupSession?.file.id===selectedId?setupSession.file:null);
+  const editingSetup = () => setupSession && view==='preview' && selectedId===setupSession.file.id
+    && progress?.sample===setupSession.sample && progress.status==='preparing' && !progress.batch?.running;
   const canStart = () => connected && progress && terminal.includes(progress.status) && !progress.batch?.running && !busy && !pendingUploads && !organizing && !folderImport;
   function sizeLabel(size) {
     if (size == null) return '本机文件';
@@ -149,23 +259,38 @@
     $('#library-empty span').textContent=query||filter!=='all'?'试试其他关键词，或清除筛选':'导入文件夹，或点击上方图标新建文件夹';
   }
 
+  let selectionKey='';
+  function selectionUpdated(ids){
+    const key=JSON.stringify(ids);
+    if(key!==selectionKey){selectionKey=key;renderActions();}
+  }
+  function batchSelection(){
+    const videos=(explorer?.selectedIds()||[]).filter(id=>files.some(f=>f.id===id && f.kind==='video'));
+    return videos.length>1?videos:stagedIds;
+  }
   function renderActions() {
     const file = selected();
     ['#new-folder','#import-folder','#import-files'].forEach(id=>$(id).disabled=organizing||folderImport||pendingUploads>0);
     $('#start-analysis').disabled = !file || file.kind !== 'video' || !(file.file || file.path) || file.available === false || !canStart();
     $('#start-analysis').firstChild.textContent = busy ? '正在导入…' : file?.analyzed ? '重新分析' : '开始标注';
-    if(stagedIds.length){
+    const selection=batchSelection();
+    if(selection.length){
       $('#start-analysis').disabled = !canStart();
-      $('#start-analysis').firstChild.textContent = `开始顺序标定（${stagedIds.length}）`;
+      $('#start-analysis').firstChild.textContent = `开始顺序标定（${selection.length}）`;
     }
     $('#start-hint').textContent = localFile ? '打开 WormStudio 桌面应用即可标注与分析' : !connected ? '本地服务未连接，请检查启动窗口' : pendingUploads ? '正在保存导入素材，请稍候' : busy ? '正在读取视频，请稍候' : !terminal.includes(progress?.status) ? '当前分析进行中，完成后可开始下一个视频' : !file ? '导入视频后即可开始' : file.kind !== 'video' ? '此文件可预览；分析流程需要视频' : !file.file && !file.path ? '重新分析可在结果页选择“重新标注本视频”' : '进入标注后，先设置区域与实际尺寸';
+    if(editingSetup()){
+      $('#start-analysis').disabled=busy||!connected;
+      $('#start-analysis').firstChild.textContent='继续标注';
+      $('#start-hint').textContent='选择标注方式后继续当前视频。两种方式分别保存草稿。';
+    }
     $('#path-import').disabled = !canStart();
     $$('#path-form input, #path-form button[type="submit"]').forEach(el => el.disabled = busy);
     $('#current-analysis').hidden = !analysisId;
     const isAnnotation = progress?.status === 'preparing' && !progress?.batch?.running && analysisId;
     $('[data-view="annotation"]').disabled = !connected || !isAnnotation;
     $('[data-view="progress"]').disabled = !connected || !analysisId || isAnnotation;
-    $('[data-view="results"]').disabled = !connected || progress?.status !== 'complete';
+    $('[data-view="results"]').disabled = !connected || (progress?.status !== 'complete' && !ResultNavigation.group(progress).length && !historyGroup);
     $('[data-view="evaluation"]').disabled = localFile;
     $('#eval-return').textContent = progress?.status === 'complete' ? '返回分析结果' : analysisId ? '返回当前分析' : '返回文件预览';
     renderLinkedRuns();
@@ -173,38 +298,72 @@
     renderResultNavigation();
     $('#session-badge').textContent = localFile ? '文件预览模式' : {ready:'本地工作区',preparing:'正在标注',running:'分析进行中',complete:'分析已完成',failed:'需要检查',cancelled:'已中断'}[progress?.status] || '连接中';
   }
-  async function batchAction(action,id) {
+  async function batchAction(action,id,group) {
     try {
-      progress=await jsonRequest('/api/batch',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token},body:JSON.stringify({action,id})});
+      progress=await jsonRequest('/api/batch',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token},body:JSON.stringify({action,id,group})});
       renderActions();
-      if(action==='start'){frame.dataset.route='';showView('progress');status('批处理已启动');}
+      if(action==='start'||action==='retry-one'){historyGroup='';frame.dataset.route='';showView('progress');status('批处理已启动');}
       if(action==='stop')status('正在停止批处理，待处理任务保留');
     }catch(e){status(e.message,true);}
   }
   function renderBatch() {
-    const batch=progress?.batch || {items:[],running:false};
-    $('#batch-count').textContent=`${batch.items.filter(i=>i.status==='pending').length} 待处理 / ${batch.items.length} 项`;
-    $('#batch-start').disabled=!canStart() || !batch.items.some(i=>i.status==='pending');
-    $('#batch-stop').disabled=!batch.running;
-    $('#batch-panel').hidden=!batch.items.length;
-    $('#batch-start').hidden=$('#batch-start').disabled;
-    $('#batch-stop').hidden=!batch.running;
-    const list=$('#batch-list'),signature=JSON.stringify([batch,canStart()]);
-    if(list.dataset.signature===signature)return;list.dataset.signature=signature;list.replaceChildren();
-    const labels={pending:'待处理',running:'处理中',complete:'已完成',failed:'失败',cancelled:'已中断'};
-    for(const item of batch.items){
-      const row=document.createElement('li');row.style.marginBottom='8px';
-      const text=document.createElement('span');text.textContent=`${item.name} · ${labels[item.status] || item.status}`;row.append(text);
-      if(item.error){
-        const details=document.createElement('details'), summary=document.createElement('summary');
-        summary.textContent=item.error.trim().split(/\r?\n/).pop().replace(/^ValueError:\s*/, '');
-        const log=document.createElement('p');log.textContent=item.error;
-        details.append(summary,log);row.append(details);
+    const batch = progress?.batch || {items: [], running: false};
+    const items = batch.items.filter(item => item.status !== 'complete');
+    const panel = $('#batch-panel');
+    if (!items.length && !batch.running) {
+      panel.hidden = true;
+      panel.open = false;
+      return;
+    }
+    panel.hidden = false;
+    const labels = {running: '处理中', pending: '待处理', failed: '失败', cancelled: '已中断'};
+    const counts = Object.entries(labels).flatMap(([key, label]) => {
+      const count = items.filter(item => item.status === key).length;
+      return count ? [count + ' ' + label] : [];
+    });
+    $('#batch-count').textContent = counts.join(' · ') || '处理中';
+    const editable = canStart();
+    const start = $('#batch-start'), stop = $('#batch-stop');
+    start.hidden = start.disabled = !editable || !items.some(item => item.status === 'pending');
+    stop.hidden = stop.disabled = !batch.running;
+
+    const list = $('#batch-list');
+    const signature = JSON.stringify([items, editable]);
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    list.replaceChildren();
+    for (const item of items) {
+      const row = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'batch-name';
+      name.textContent = name.title = item.name;
+      const state = document.createElement('span');
+      state.className = 'batch-state';
+      state.textContent = labels[item.status] || item.status;
+      row.append(name, state);
+      if (editable) {
+        const action = (label, description, operation) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = label;
+          button.title = description + '：' + item.name;
+          button.setAttribute('aria-label', button.title);
+          button.onclick = () => batchAction(operation, item.id);
+          row.append(button);
+        };
+        if (['failed', 'cancelled'].includes(item.status)) action('重试', '重试', 'retry');
+        action('×', '移出队列', 'remove');
       }
-      const action=(label,fn)=>{const b=document.createElement('button');b.className='small-button';b.textContent=label;b.disabled=!canStart();b.onclick=fn;row.append(b);};
-      if(item.status==='complete')action('查看结果',()=>window.WorkspaceActions.run('/api/open-run',{sample:item.sample}).catch(e=>status(e.message,true)));
-      if(['failed','cancelled'].includes(item.status))action('重试',()=>batchAction('retry',item.id));
-      action('移出队列',()=>batchAction('remove',item.id));list.append(row);
+      if (item.error) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = '查看原因';
+        const log = document.createElement('p');
+        log.textContent = item.error;
+        details.append(summary, log);
+        row.append(details);
+      }
+      list.append(row);
     }
   }
   $('#batch-start').onclick=()=>batchAction('start');
@@ -253,7 +412,7 @@
     frame.contentDocument?.querySelectorAll('video').forEach(video => video.pause());
     $('#source-video').pause();
     const file = next === 'preview' ? selected() : (files.find(item => item.id === analysisId)||analysisItem);
-    $('#current-name').textContent = file?.name || '工作台';
+    $('#current-name').textContent = (next==='results' && resultItems().find(i=>i.sample===pickedSample)?.name) || file?.name || '工作台';
     $('#tab-note').textContent = next === 'preview' ? (file ? '原始文件预览' : '从一个视频开始') : next === 'annotation' ? '在右侧完成当前步骤' : next === 'results' ? '查看与导出分析结果' : '实时处理状态';
     if (next === 'evaluation') { $('#current-name').textContent = '独立评测标注（可选）'; $('#tab-note').textContent = '用于算法评测 · 日常分析可跳过'; }
     if (['preview', 'results', 'evaluation'].includes(next)) return;
@@ -460,7 +619,45 @@
       target.append(card);
     }
   }
-  window.StudioWorkspace={prepareToLeave,openSavedResult,updateRuns(data){
+  async function editAnnotationSetup(){
+    if(busy)return;
+    const active=frame.contentWindow?.AnnotationDraft?.setup();
+    if(!active)throw Error('此任务无法更改标注方式');
+    busy=true;resultRevision++;
+    try{
+      await prepareToLeave();
+      const current=await jsonRequest('/api/progress');
+      if(current.status!=='preparing'||current.sample!==active.sample||current.batch?.running)throw Error('标注会话已改变，请返回当前分析');
+      const file=files.find(f=>f.path && current.video_path && WorkspaceLinks.pathKey(f.path)===WorkspaceLinks.pathKey(current.video_path))
+        || (analysisItem?.path===current.video_path?analysisItem:null)
+        || {id:active.sample,kind:'video',path:current.video_path,name:current.video_name};
+      progress=current;currentSample=current.sample;
+      setupSession={...active,file};analysisItem=file;selectedId=analysisId=file.id;explorer.selectOnly(file.id);
+      persistSelection();renderDetails(file);
+      window.WorkspaceLinks.setFocusMode(false);
+      showView('preview');void preview(file);
+      $('#chamber-mode').checked=active.chamberMode;$('#chamber-mode').focus();
+      status('已返回当前视频的标注设置');
+    }finally{busy=false;renderActions();}
+  }
+  async function resumeAnnotationSetup(){
+    if(!editingSetup()||busy)return;
+    const session=setupSession,chosen=$('#chamber-mode').checked;
+    busy=true;resultRevision++;renderActions();
+    try{
+      if(chosen!==session.chamberMode){
+        const current=await jsonRequest('/state');
+        if(current.sample!==session.sample || !current.can_edit_mode)throw Error('标注会话已改变，请返回当前分析');
+        if(current.chamber_mode!==chosen){
+          if(current.token!==session.token)throw Error('标注方式已在另一个窗口更改，请重新打开标注设置');
+          await jsonRequest('/api/annotation-mode',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':session.token},body:JSON.stringify({chamber_mode:chosen})});
+        }
+        frame.dataset.route='';
+      }
+      setupSession=null;showView('annotation');
+    }finally{busy=false;renderActions();}
+  }
+  window.StudioWorkspace={prepareToLeave,openSavedResult,editAnnotationSetup,updateRuns(data){
     runs=data;
     for(const run of runs){if(run.file&&!files.some(f=>f.id===run.file.id))files.push(run.file);}
     renderFiles();renderLinkedRuns();renderResultNavigation();
@@ -469,10 +666,10 @@
     if (!canStart()) throw Error('请等待当前任务结束后再开始下一个视频。');
     if (!path && item?.size > 8 * 1024 ** 3) throw Error('视频超过 8 GB，请使用右上角“通过路径打开”。');
     await prepareToLeave();
-    busy = true; renderActions(); status('正在读取视频…');
+    historyGroup='';pickedSample='';busy = true; renderActions(); status('正在读取视频…');
     try {
       if(!path){const stored=await upload(item);Object.assign(item,stored);path=stored.path;}
-      const data = await jsonRequest('/api/new-video', {method:'POST', headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token}, body:JSON.stringify({video_path:path,sequence})});
+      const data = await jsonRequest('/api/new-video', {method:'POST', headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token}, body:JSON.stringify({video_path:path,sequence,edit_setup:true,chamber_mode:$('#chamber-mode').checked})});
       if (!item) {
         item = files.find(f=>f.id===data.file.id) || data.file;
         if(!files.includes(item))files.push(item);
@@ -493,10 +690,11 @@
       const data = await jsonRequest('/api/progress');
       if(busy || revision!==resultRevision)return;
       const previousStatus = progress?.status;
+      const batchEnded=!!progress?.batch?.running && !data.batch?.running;
       if (!connected && view === 'progress') status('');
       progress = data; connected = true;
+      if(setupSession && (data.sample!==setupSession.sample || data.status!=='preparing'))setupSession=null;
       window.EvaluationUI?.setToken(data.token);
-      window.StudioResults.update(data);
       $('#connection-label').textContent = '本地服务已连接';
       if (data.video_name && (!analysisId || data.sample !== currentSample)) {
         currentSample = data.sample;
@@ -517,10 +715,14 @@
         }
         if (view !== 'progress') status(analysisId ? '已恢复当前分析会话' : '工作台已就绪 · 导入视频即可开始');
       }
-      if (previousStatus !== data.status) {
+      if (previousStatus !== data.status || batchEnded) {
         if(data.status==='complete')window.WorkspaceActions?.refresh();
         renderFiles();
-        // Stay on processing so queued frames can finish playing. Results remain one click away.
+        // Once this analysis finishes, show its total metrics. Keep batch work in place.
+        const finishedChambers=!data.batch?.running && ['complete','cancelled','failed'].includes(data.status) && ResultNavigation.group(data).some(i=>i.status==='complete');
+        if((AnalysisPresentation.totalsReady(data) || finishedChambers) && ['annotation','progress'].includes(view)) {
+          showView('results');status(finishedChambers?'已显示本批次结果':'分析完成 · 已显示线虫指标');
+        }
         if (data.status === 'ready' && !data.batch?.running && view === 'annotation') { showView('preview'); preview(selected()); status('标注已加入队列，可继续标定下一个视频'); }
         if (data.status === 'running' && view === 'annotation') showView('progress');
         if (data.status === 'failed' || data.status === 'cancelled') {
@@ -565,7 +767,7 @@
     } catch { status('无法读取分析页面，请刷新工作台重试。', true); }
   });
 
-  explorer=LibraryTree.create({getState:()=>({files,folders,query:$('#file-search').value,filter,selectedId,analysisId}),mutate:treeMutation,select:selectFile,stageVideos,icon,status,
+  explorer=LibraryTree.create({getState:()=>({files,folders,query:$('#file-search').value,filter,selectedId,analysisId}),mutate:treeMutation,select:selectFile,stageVideos,icon,status,selectionChanged:selectionUpdated,
     isBusy:()=>organizing||folderImport||pendingUploads>0,
     importFiles:parent=>{pickingParent=parent;$('#files-input').click();},importFolder:parent=>{pickingParent=parent;$('#folder-input').click();},dropFiles:droppedFiles});
   $('#files-input').onchange = event => void importFiles(event.target.files,pickingParent);
@@ -580,25 +782,31 @@
     renderFiles();
   });
   $$('[data-view]').forEach(button => button.onclick = () => {
+    if(button.dataset.view==='preview' && view==='annotation' && frame.contentWindow?.AnnotationDraft?.setup()){
+      editAnnotationSetup().catch(error=>status(error.message,true));return;
+    }
+    if(button.dataset.view==='annotation' && editingSetup()){resumeAnnotationSetup().catch(error=>status(error.message,true));return;}
     if (button.dataset.view === 'preview') { showView('preview'); preview(selected()); }
     else showView(button.dataset.view);
   });
   $('#start-analysis').onclick = async () => {
     try {
-      if(!stagedIds.length){await start(selected(), selected()?.path);return;}
-      const staged = stagedIds.map(id => files.find(file => file.id === id));
+      if(editingSetup()){await resumeAnnotationSetup();return;}
+      const ids=batchSelection();
+      if(!ids.length){await start(selected(), selected()?.path);return;}
+      const staged = ids.map(id => files.find(file => file.id === id));
       if(staged.some(file => !file?.path || file.available === false))throw Error('队列中有不可用的视频，请先将它移出。');
       const paths = [...new Set(staged.map(file => file.path))];
       await start(staged[0], paths[0], paths);
-      setStaging([]);
+      if(ids===stagedIds)setStaging([]);
     } catch(error) { status(error.message,true); }
   };
   $('#current-analysis').onclick = () => {
+    if(editingSetup()){resumeAnnotationSetup().catch(error=>status(error.message,true));return;}
     selectedId=files.some(f=>f.id===analysisId)?analysisId:null;renderFiles();
     showView(progress.status === 'preparing' ? 'annotation' : progress.status === 'complete' ? 'results' : 'progress');
   };
-  $('#result-summary').onclick = () => $('#result-summary-panel').showModal();
-  $('#result-summary-close').onclick = () => $('#result-summary-panel').close();
+  $('#result-summary').onclick = () => $('#result-summary-panel').scrollIntoView({block:'start',behavior:'smooth'});
   const resultMenus=[...document.querySelectorAll('.result-action-menu')];
   resultMenus.forEach(menu=>menu.addEventListener('toggle',()=>{if(menu.open)resultMenus.forEach(other=>{if(other!==menu)other.open=false;});}));
   document.addEventListener('click',event=>resultMenus.forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));

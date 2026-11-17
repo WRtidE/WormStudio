@@ -26,6 +26,8 @@ def source_files():
         base=ROOT/folder
         for p in sorted(base.rglob('*')):
             if any(part in ('__pycache__', '.git', '.pytest_cache') for part in p.relative_to(base).parts):continue
+            if '.before-' in p.name or p == ROOT/'tools/electron/local.json':
+                continue
             if p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction()):
                 raise ValueError(f'Source links are not allowed: {p.relative_to(ROOT)}')
             if p.is_file() and p.suffix not in ('.pyc', '.pyo'):

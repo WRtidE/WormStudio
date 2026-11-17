@@ -83,6 +83,7 @@ window.StudioResults = (() => {
     headReasons.centerline_overlap_orientation='根据两帧重合虫身的位置和切线方向接回头尾';
     headReasons.endpoint_continuity_conflict='前后轨迹给出的头端与虫身对应关系冲突，头尾待复核';
     text('result-head-explanation',row.head_confirmed?'H 为已确认头，T 为尾。此连续片段无需重复确认；发现错误时可展开纠正或撤销锚点。':row.head_candidate?'H? / T? 为候选头尾。':'A / B 表示当前片段内的两个端点，头尾方向待确认。');
+    Object.assign(headReasons,{initial_mark:'结合前后帧身体运动和绕柱顺序保持初始标记端',auto_taper_seed:'端部外形初始化后持续跟踪，仍为候选',short_gap_body_candidate:'短缺口后多个身体对应支持接回同一端',multi_frame_appearance_candidate:'多帧端部外观支持认回初始端',unresolved:'身体运动和外观证据不足',no_supported_body_path:'没有通过检查的完整身体路径'});
     text('result-head-evidence',`依据：${headReasons[row.head_reason]||row.head_reason||'旧结果未记录'}${row.head_candidate&&Number.isFinite(row.head_evidence_score)?` · 规则分 ${row.head_evidence_score.toFixed(2)}（非准确率）`:''}。正式头摆指标使用人工确认的可靠片段。`);
     if(row.head_candidate&&Number.isFinite(row.head_shape_votes))el('result-head-evidence').textContent+=` 本片段形状有效票 ${row.head_shape_votes}，运动窗口票 ${row.head_motion_votes}。`;
     if(row.head_trajectory_frames?.length)el('result-head-evidence').textContent+=` 轨迹参考帧 ${row.head_trajectory_frames.join('、')}。`;
@@ -164,7 +165,7 @@ window.StudioResults = (() => {
     try{const state=await(await fetch('/api/progress')).json();const r=await fetch('/api/confirm-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,worm_id:worm,frame:position,endpoint})});const d=await r.json();if(!r.ok)throw Error(d.error);location.reload();}
     catch(e){text('head-review-message',e.message);draw(position,true);}
   };
-  el('head-first').onclick=()=>{el('result-original').checked=false;el('result-original').dispatchEvent(new Event('change'));seek(0,true);el('head-correction').open=true;};
+  el('head-first').onclick=()=>{el('result-video-details').open=true;el('result-video-details').scrollIntoView({block:'start',behavior:'smooth'});el('result-original').checked=false;el('result-original').dispatchEvent(new Event('change'));seek(0,true);el('head-correction').open=true;};
   el('head-auto').onclick=async()=>{
     el('head-auto').disabled=true;text('head-auto-message','正在另存结果并计算候选…');
     try{const state=await(await fetch('/api/progress')).json();const response=await fetch('/api/auto-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,head_mode:'taper_seed'})});const data=await response.json();if(!response.ok)throw Error(data.error);location.reload();}
@@ -261,9 +262,14 @@ window.StudioResults = (() => {
   el('result-next').onclick = () => seek(position + 1);
   el('result-prev-issue').onclick = () => { const range = ranges.filter(range => range.start < position).at(-1); if (range) seek(range.start); };
   el('result-next-issue').onclick = () => { const range = ranges.find(range => range.start > position); if (range) seek(range.start); };
-  el('result-worm').onchange = event => { worm = Number(event.target.value); issueRanges(); draw(position, true); };
+  el('result-worm').onchange = event => { worm = Number(event.target.value); renderPhenotypes.select(worm); issueRanges(); draw(position, true); };
   el('result-issue-filter').onchange = () => { if (timeline) { issueRanges(); draw(position, true); } };
 
+  let detailsStarted=false, fullDetails=false;
+  function attachVideo(data) {
+    if(el('result-video-details').open && data.artifacts?.some(item=>item.key==='video') && !video.hasAttribute('src'))
+      video.src='/artifact?key=video&inline=1&run='+encodeURIComponent(data.sample);
+  }
   async function load(data) {
     const version = ++revision; controller?.abort(); controller = new AbortController();
     const activeController = controller;
@@ -271,7 +277,8 @@ window.StudioResults = (() => {
     stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;el('identity-open').hidden=true;
     el('result-original').checked=false;
     window.ResultPlayer.reset();
-    renderPhenotypes(data.phenotypes,data.sample);
+    renderPhenotypes(data.phenotypes && {...data.phenotypes,video_name:data.video_name||data.phenotypes.video_name},data.sample);
+    el('result-summary').disabled=!data.phenotypes?.worms?.length;
     text('head-review-message','');el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
     video.pause(); video.removeAttribute('src'); video.load();
     controls.forEach(id => el(id).disabled = true);
@@ -298,23 +305,29 @@ window.StudioResults = (() => {
     }
     el('result-video-message').hidden = true;
     if (data.artifacts?.some(item => item.key === 'video')) {
-      video.hidden = false; video.src = '/artifact?key=video&inline=1&run=' + encodeURIComponent(data.sample);
+      video.hidden = false; attachVideo(data);
     } else {
       video.hidden = true; el('result-video-message').hidden = false;
       text('result-video-message', '本次未生成标注视频。已生成的逐帧指标仍可查看。');
     }
-    if (!data.artifacts?.some(item => item.key === 'metrics')) {
+    fullDetails=!data.summaryOnly && (el('result-analysis-details').open || el('result-video-details').open);
+    detailsStarted=fullDetails || el('summary-trends').open;
+    if(!detailsStarted){el('results-load-state').hidden=true;return;}
+    if (fullDetails && !data.artifacts?.some(item => item.key === 'metrics')) {
       text('results-load-message', '本次任务尚未生成逐帧指标。请在“处理进度”查看已完成的阶段。');
       text('result-identity-title', '尚无逐帧质量记录'); return;
     }
     const timeout = setTimeout(() => activeController.abort(), 15000);
     try {
-      const response = await fetch('/api/frame-metrics?run=' + encodeURIComponent(data.sample), {cache:'no-store', signal:activeController.signal});
+      const endpoint=!fullDetails?'/api/saved-timeline?group='+encodeURIComponent(data.group||'')+'&run=':'/api/frame-metrics?run=';
+      const response = await fetch(endpoint + encodeURIComponent(data.sample), {cache:'no-store', signal:activeController.signal});
       const result = await response.json();
       if (!response.ok) throw Error(result.error || '逐帧指标不可用');
       if (version !== revision) return;
       if (result.sample !== data.sample || !result.worm_ids?.length || result.frames?.length !== result.frame_count) throw Error('结果会话或逐帧记录不完整，请重新读取。');
-      timeline = result; worm = result.worm_ids[0];
+      timeline = result; worm = result.worm_ids.includes(renderPhenotypes.selected()) ? renderPhenotypes.selected() : result.worm_ids[0];
+      renderPhenotypes.setTimeline(result);
+      if(!fullDetails){el("results-load-state").hidden=true;timeline=null;return;}
       el('head-auto').hidden=result.head_detection_mode==='taper_seed';el('head-auto').disabled=false;text('head-auto-message','');
       window.ResultPlayer.configure(result,frame=>sync(frame/timeline.fps));
       const anchorsResponse=await fetch('/api/head-anchors?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
@@ -329,6 +342,7 @@ window.StudioResults = (() => {
       }
       text('result-worm-count', result.worm_ids.length + ' 条');
       el('result-worm-picker').hidden=result.worm_ids.length<2;
+      el('result-worm').value=worm;
       controls.forEach(id => el(id).disabled = false);
       el('result-frame').max = el('result-frame-number').max = result.frame_count - 1;
       el('result-issue-filter').value = 'all';
@@ -346,9 +360,20 @@ window.StudioResults = (() => {
       if (key) { key = ''; revision++; controller?.abort(); timeline = null; video.pause(); }
       return;
     }
-    const nextKey = JSON.stringify([data.sample, data.artifacts]);
+    const nextKey = JSON.stringify([data.sample, data.artifacts, !!data.summaryOnly, data.group]);
     if (visible && key !== nextKey) { key = nextKey; load(data); }
   }
+  for(const id of ['result-analysis-details','result-video-details','summary-trends']){
+    el(id).addEventListener('toggle',()=>{
+      if(id==='result-video-details'){
+        window.ResultPlayer.setVisible(visible && el(id).open);
+        if(!el(id).open)video.pause();
+      }
+      if(!visible || latest?.status!=='complete' || !el(id).open)return;
+      if(!detailsStarted || (!latest.summaryOnly && id!=='summary-trends' && !fullDetails))load(latest);
+      else if(id==='result-video-details')attachVideo(latest);
+    });
+  }
   el('results-retry').onclick = () => { if (latest?.status === 'complete') load(latest); };
-  return {update, setVisible(value) { visible = value; window.ResultPlayer.setVisible(value); if (!value) video.pause(); else if (latest) update(latest); }};
+  return {update, setVisible(value) { visible = value; window.ResultPlayer.setVisible(value && el('result-video-details').open); if (!value) video.pause(); else if (latest) update(latest); }};
 })();

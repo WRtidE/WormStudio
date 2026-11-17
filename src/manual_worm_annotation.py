@@ -252,6 +252,8 @@ class Annotation:
         config['wormtracer'] = self.settings.get('wormtracer', {})
         config['head_detection'] = self.settings.get('head_detection',config.get('head_detection','twardis'))
         config['review_intervals'] = self.settings.get('review_intervals', [])
+        if 'chamber_id' in self.settings:
+            config['chamber_id'] = self.settings['chamber_id']
         for key in ('identity_confirmations', 'source_invalid_frames'):
             if key in self.settings:config[key]=self.settings[key]
         if self.settings.get('scale_um_per_px') is not None:
@@ -335,6 +337,9 @@ class Annotation:
         if method == 'self_contact' and len(entries) != 1 and (
                 body.get('analysis_profile') == 'current' or self.settings.get('analysis_profile') == 'current'):
             raise ValueError('当前工作台仅支持单虫标注，请保留本次分析的线虫')
+        if method=='body_sequence':
+            if len(entries)!=1:raise ValueError('当前方法每次分析一条线虫')
+            if self.model_size!='large':raise ValueError('当前方法使用SAM2 Large')
         if method == 'tapnext':
             from tapnext_support import validate_single_worm, resources, dependency_path
             validate_single_worm(len(entries), self.model_size)
@@ -409,6 +414,8 @@ class Annotation:
                       review_intervals=self.settings.get('review_intervals', []), wormtracer=self.settings.get('wormtracer', {}),
                       centerline_method=method,sam2_model=self.model_size,
                       head_annotations=heads,head_detection=head_mode)
+        if "chamber_id" in self.settings:
+            config["chamber_id"] = self.settings["chamber_id"]
         for key in ('identity_confirmations', 'source_invalid_frames'):
             if key in self.settings and (key=='source_invalid_frames' or not has_run or same_inputs):
                 config[key] = self.settings[key]
@@ -422,10 +429,18 @@ class Annotation:
                       overlap_px=int((np.stack(list(masks.values())).sum(axis=0) > 1).sum()))
         if not keep_original: self.path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
         (self.output/'last-selection.json').write_text(json.dumps({'centerline_method':method}), encoding='utf-8')
+        from annotation_metrics import measure_mask, VERSION as ANNOTATION_METRICS_VERSION
+        frame_metrics = dict(version=ANNOTATION_METRICS_VERSION, scope='annotation_frame', frame=self.frame,
+                             worms=[measure_mask(mask, frame=self.frame, worm_id=worm,
+                                                 measurement_mode=unit_config['measurement_mode'],
+                                                 scale_um_per_px=scale, origin=(x, y))
+                                    for worm, mask in masks.items()])
+        metrics_path = self.output/'annotation-frame-metrics.json'
+        metrics_path.write_text(json.dumps(frame_metrics, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         self.result = config
         self.done.set()
         return dict(saved=True, path=str(self.path), worm_count=len(worms), overlap_px=record['overlap_px'],
-                    centerline_method=method,method_label=METHODS[method]['label'])
+                    centerline_method=method,method_label=METHODS[method]['label'],frame_metrics_path=str(metrics_path))
 
 
 def new_video_annotation(video, defaults):
@@ -437,16 +452,117 @@ def new_video_annotation(video, defaults):
     return Annotation(settings)
 
 
+def can_edit_annotation_mode(annotation, progress):
+    return bool(progress and progress.batch and not hasattr(annotation, 'correction_source')
+                and (getattr(annotation, 'start_on_submit', False) or hasattr(annotation, 'sequence')))
+
+
+def change_annotation_mode(annotation, progress, chamber_mode):
+    if type(chamber_mode) is not bool:
+        raise ValueError('请选择标注方式')
+    with progress.lock:
+        if (not can_edit_annotation_mode(annotation, progress) or progress.server.annotation is not annotation
+                or annotation.done.is_set() or progress.data['status'] != 'preparing' or progress.batch.running):
+            raise ValueError('当前标注已结束或无法更改标注方式')
+        if chamber_mode != getattr(annotation, 'chamber_mode', False):
+            if chamber_mode and not hasattr(annotation, 'sequence'):
+                annotation.sequence = ([Path(annotation.video)], [])
+            elif not chamber_mode and getattr(annotation, 'start_on_submit', False):
+                del annotation.sequence
+            annotation.chamber_mode = chamber_mode
+            annotation.release_predictor()
+            # A still-open page for the old mode must not write to the other draft.
+            annotation.token = secrets.token_urlsafe(24)
+
+
+def save_chambers(progress, annotation, body):
+    """Save one single-worm run per ROI and publish the video to the queue as a unit."""
+    from contextlib import ExitStack
+    from shutil import rmtree
+    from run_storage import fresh_sample
+    from workspace_sessions import save_draft
+
+    chambers = body.get('chambers')
+    if not isinstance(chambers, list) or not chambers:
+        raise ValueError('请先框选培养槽并确认虫体')
+    ids = set()
+    for chamber in chambers:
+        if not isinstance(chamber, dict):
+            raise ValueError('培养槽格式错误')
+        number = chamber.get('id')
+        if type(number) is not int or not 1 <= number <= 10000 or number in ids:
+            raise ValueError('槽号须为 1 至 10000 之间的唯一整数')
+        if not isinstance(chamber.get('mask'), str):
+            raise ValueError(f'槽 {number} 缺少虫体掩膜')
+        if not chamber.get('roi'):
+            raise ValueError(f'槽 {number} 缺少分析区域')
+        ids.add(number)
+
+    paths, finished_videos = annotation.sequence
+    outputs = ROOT / 'outputs'
+    outputs.mkdir(parents=True, exist_ok=True)
+    configs = []
+    with progress.lock, ExitStack() as rollback:
+        if annotation.done.is_set() or progress.batch.running:
+            raise ValueError('当前标注已提交或队列正在处理')
+        for chamber in chambers:
+            number = chamber['id']
+            sample = fresh_sample(f'{Path(annotation.video).stem[:35]}-槽{number}', outputs)
+            run = outputs / sample
+            run.mkdir()
+            rollback.callback(rmtree, run)
+            child = copy.copy(annotation)
+            child.settings = dict(annotation.settings, sample=sample, chamber_id=number)
+            child.done = threading.Event()
+            child.output = run / 'manual-initialization'
+            child.path = child.output / 'annotation.json'
+            child.save(dict(body, roi=chamber['roi'], worms=[dict(id=1, mask=chamber.get('mask'),
+                           head_point=chamber.get('head_point'))]))
+            configs.append(child.result)
+        samples = getattr(annotation, 'prior_chamber_samples', finished_videos) + [c['sample'] for c in configs]
+        last_video = len(finished_videos) + 1 == len(paths)
+        progress.batch.add_many(configs, start_samples=samples if last_video else None)
+        rollback.pop_all()
+        annotation.result = configs[-1]
+        annotation.done.set()
+        finished_videos.append(configs[-1]['sample'])
+        progress.config = copy.deepcopy(annotation.result)
+        progress.data.update(status='ready', detail='培养槽标注已保存')
+        annotation.release_predictor()
+        try:
+            save_draft(annotation, dict(submitted=True))
+        except OSError:
+            pass  # The committed queue and masks are already durable.
+        if last_video:
+            return dict(progress_url='/progress')
+        video = paths[len(finished_videos)]
+        try:
+            candidate = new_video_annotation(video, annotation.settings)
+            candidate.chamber_mode = True
+            candidate.sequence = (paths, finished_videos)
+            candidate.prior_chamber_samples = samples
+            progress.queue_video(candidate, deferred=True)
+        except (OSError, ValueError) as error:
+            progress.fail(f'培养槽标注已保存，无法打开下一项 {video.name}：{error}')
+            return dict(progress_url='/progress')
+        return dict(next_annotation=True)
+
+
 def advance_sequence(progress, annotation):
     paths, saved = annotation.sequence
     saved.append(annotation.result['sample'])
+    samples = getattr(annotation, 'prior_chamber_samples', None)
+    if samples is not None:
+        samples = samples + [annotation.result['sample']]
     if len(saved) == len(paths):
-        progress.batch.start(samples=saved)
+        progress.batch.start(samples=samples if samples is not None else saved)
         return dict(progress_url='/progress')
     video = paths[len(saved)]
     try:
         candidate = new_video_annotation(video, annotation.settings)
         candidate.sequence = (paths, saved)
+        if samples is not None:
+            candidate.prior_chamber_samples = samples
         progress.queue_video(candidate, deferred=True)
     except (OSError, ValueError) as error:
         progress.fail(f'前 {len(saved)} 个标注已保存。无法打开下一项 {video.name}：{error}')
@@ -529,6 +645,8 @@ def create_server(annotation=None, progress=None):
                         if view['task'] and view['task']['status'] != 'complete':
                             view['task'].pop('events', None)
                         self.respond(200, view)
+                    elif route.path == '/api/channel/comparison':
+                        self.respond(200, counts.comparison())
                     elif route.path == '/api/channel/setup':
                         self.respond(200, counts.setup(file, int(query.get('channels', [32])[0]), int(query.get('frame', [0])[0]), run))
                     elif route.path == '/api/channel/frames':
@@ -536,7 +654,8 @@ def create_server(annotation=None, progress=None):
                     elif route.path == '/api/channel/event':
                         self.respond(200, counts.event(file, run, int(query.get('id', [0])[0])))
                     elif route.path == '/api/channel/export':
-                        self.respond(200, counts.export(file, run), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                        channel = int(query['channel'][0]) if 'channel' in query else None
+                        self.respond(200, counts.export(file, run, channel), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                     else: self.respond(404, {})
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
@@ -589,6 +708,26 @@ def create_server(annotation=None, progress=None):
                 self.respond(200,get_draft(annotation))
             elif progress and self.path == '/api/progress':
                 self.respond(200, progress.snapshot())
+            elif progress and urlsplit(self.path).path in ('/api/chamber-summaries', '/api/batch-results', '/api/saved-timeline'):
+                from workspace_sessions import chamber_summaries, saved_timeline
+                route = urlsplit(self.path)
+                query = parse_qs(route.query)
+                try:
+                    with progress.lock:
+                        items = progress.batch.group_items(query.get('group', [None])[0]) if progress.batch else []
+                    if route.path == '/api/saved-timeline':
+                        sample = query.get('run', [''])[0]
+                        with progress.lock:
+                            active = progress.data['status'] == 'complete' and progress.data['sample'] == sample
+                        if not active and not any(i['sample'] == sample and i['status'] == 'complete' for i in items):
+                            raise ValueError('所选任务没有已完成的结果')
+                        self.respond(200, saved_timeline(ROOT, sample))
+                    elif route.path == '/api/batch-results':
+                        self.respond(200, dict(items=items, reports=chamber_summaries(ROOT, items)))
+                    else:
+                        self.respond(200, chamber_summaries(ROOT, items))
+                except (KeyError, OSError, TypeError, ValueError) as exc:
+                    self.respond(400, dict(error=str(exc)))
             elif progress and self.path.startswith('/api/live-preview?'):
                 from urllib.parse import parse_qs, urlsplit
                 try:
@@ -649,7 +788,9 @@ def create_server(annotation=None, progress=None):
             elif annotation and self.path == '/state':
                 paths, saved = getattr(annotation, 'sequence', ([], []))
                 self.respond(200, dict(annotation.initial_state(), progress_enabled=progress is not None,
+                                       can_edit_mode=can_edit_annotation_mode(annotation, progress),
                                        batch_deferred=getattr(annotation, 'batch_deferred', False),
+                                       chamber_mode=bool(getattr(annotation, "chamber_mode", False)),
                                        sequence_index=len(saved)+1, sequence_total=len(paths)))
             elif annotation and urlsplit(self.path).path == '/api/algorithms':
                 # Run outside /state and outside the single HTTP request thread.
@@ -662,7 +803,10 @@ def create_server(annotation=None, progress=None):
                     server = self.server
                     def probe():
                         try:
-                            from tapnext_support import availability
+                            if CURRENT_METHOD=='body_sequence':
+                                from body_sequence_solver import availability
+                            else:
+                                from tapnext_support import availability
                             server.optional_probe = dict(availability(), checking=False)
                         except Exception as exc:
                             server.optional_probe = dict(available=False, checking=False, detail=f'可选方法检查失败：{exc}')
@@ -701,6 +845,7 @@ def create_server(annotation=None, progress=None):
                             if action == 'start': progress.batch.start()
                             elif action == 'remove': progress.batch.remove(body.get('id'))
                             elif action == 'retry': progress.batch.retry(body.get('id'))
+                            elif action == 'retry-one': progress.batch.retry(body.get('id'), start=True, group=body.get('group'))
                             else: raise ValueError('未知队列操作')
                     self.respond(200, progress.snapshot()); return
                 if self.path == '/api/layout':
@@ -804,13 +949,16 @@ def create_server(annotation=None, progress=None):
                         progress.data.update(status='preparing',sample=settings['sample'],detail='正在恢复保存的任务')
                         progress.next_ready.set()
                     self.respond(200,dict(ok=True));return
-                if annotation and self.path in ('/api/annotation-frame','/api/draft'):
+                if annotation and self.path in ('/api/annotation-frame','/api/draft','/api/annotation-mode'):
                     if self.headers.get('X-Annotation-Token')!=annotation.token:
                         self.respond(403,dict(error='Invalid annotation session'));return
                     if annotation.done.is_set(): raise ValueError('标注已保存')
                     size=int(self.headers.get('Content-Length','0'))
                     if not 0<size<=64*1024*1024: raise ValueError('请求过大或为空')
                     body=json.loads(self.rfile.read(size))
+                    if self.path=='/api/annotation-mode':
+                        change_annotation_mode(annotation, progress, body.get('chamber_mode'))
+                        self.respond(200, dict(ok=True));return
                     if self.path=='/api/draft':
                         from workspace_sessions import save_draft
                         self.respond(200,save_draft(annotation,body));return
@@ -839,6 +987,7 @@ def create_server(annotation=None, progress=None):
                     settings = dict(progress.config, sample=fresh_sample(progress.config['sample'], ROOT/'outputs'),
                                     previous_sample=progress.config['sample'], crop_xyxy=None, groups=[], review_intervals=[])
                     candidate = Annotation(settings, frame=frame)
+                    candidate.start_on_submit = progress.batch is not None
                     progress.queue_video(candidate)
                     self.respond(200, dict(annotation_url='/')); return
                 if progress and (self.path == '/api/new-video' or self.path.startswith('/api/upload-video?')):
@@ -885,6 +1034,9 @@ def create_server(annotation=None, progress=None):
                     try:
                         defaults = (annotation.result or annotation.settings) if annotation else getattr(self.server, 'studio_defaults', {})
                         candidate = new_video_annotation(video, defaults)
+                        if self.path == '/api/new-video' and body.get('chamber_mode') is True:
+                            candidate.chamber_mode = True
+                            sequence = sequence or [video]
                         if sequence: candidate.sequence = (sequence, [])
                     except Exception:
                         if uploaded:
@@ -894,6 +1046,8 @@ def create_server(annotation=None, progress=None):
                     library_file = register(ROOT, video)
                     deferred = bool(sequence) or (self.path == '/api/new-video' and body.get('batch') is True)
                     if deferred and progress.batch is None: raise ValueError('请使用 Worm Studio 启动批处理')
+                    candidate.start_on_submit = bool(self.path == '/api/new-video' and body.get('edit_setup') is True
+                                                     and progress.batch and not deferred)
                     progress.queue_video(candidate, deferred=deferred)
                     self.respond(200, dict(annotation_url='/', video_name=video.name, file=library_file)); return
                 if progress and self.path == '/close':
@@ -907,20 +1061,35 @@ def create_server(annotation=None, progress=None):
                     self.respond(200, dict(closed=True))
                     return
                 if annotation is None: self.respond(404, {}); return
-                if self.path not in ('/save', '/predict'): self.respond(404, {}); return
+                if self.path not in ('/save', '/predict', '/api/annotation-metrics'): self.respond(404, {}); return
                 if self.headers.get('X-Annotation-Token') != annotation.token:
                     self.respond(403, dict(error='Invalid annotation session')); return
                 size = int(self.headers.get('Content-Length', '0'))
-                limit = 64 * 1024 * 1024 if self.path == '/save' else 8192
+                limit = 64 * 1024 * 1024 if self.path in ('/save', '/api/annotation-metrics') else 8192
                 if not 0 < size <= limit: raise ValueError('标注请求过大或为空')
                 body = json.loads(self.rfile.read(size))
-                action = {'/predict': annotation.predict, '/save': annotation.save}
+                if self.path == '/save' and annotation.done.is_set():
+                    raise ValueError('当前标注已提交')
+                if self.path == '/save' and getattr(annotation, 'chamber_mode', False):
+                    result = save_chambers(progress, annotation, body)
+                    self.respond(200, result)
+                    return
+                from annotation_metrics import measure_annotation
+                action = {'/predict': annotation.predict, '/save': annotation.save,
+                          '/api/annotation-metrics': lambda request: measure_annotation(annotation, request)}
                 result = action[self.path](body)
                 if self.path == '/save':
                     from workspace_sessions import save_draft
                     save_draft(annotation, dict(submitted=True))
                 if self.path == '/save' and progress:
-                    if getattr(annotation, 'batch_deferred', False):
+                    if getattr(annotation, 'start_on_submit', False):
+                        with progress.lock:
+                            progress.config = copy.deepcopy(annotation.result)
+                            progress.next_settings = dict(annotation.result, _resume_saved=True)
+                            progress.next_ready.set()
+                        annotation.release_predictor()
+                        result['progress_url'] = '/progress'
+                    elif getattr(annotation, 'batch_deferred', False):
                         with progress.lock:
                             try:
                                 progress.batch.add(annotation.result)

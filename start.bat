@@ -4,6 +4,7 @@ pushd "%~dp0" || exit /b 1
 chcp 65001 >nul
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
+if exist "config\runtime.local.cmd" call "config\runtime.local.cmd"
 set "STUDIO_PYTHON="
 if defined WORM_STUDIO_PYTHON set "STUDIO_PYTHON=%WORM_STUDIO_PYTHON%"
 if not defined STUDIO_PYTHON if exist "config\python_path.txt" for /f "usebackq delims=" %%P in (`powershell.exe -NoProfile -Command "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding; [IO.File]::ReadAllText((Join-Path (Get-Location) 'config\python_path.txt')).Trim()"`) do set "STUDIO_PYTHON=%%P"

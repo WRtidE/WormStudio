@@ -1,12 +1,12 @@
 'use strict';
 
 // Shared by the step indicators, repair links, and save guard.
-function annotationReadiness({scale, pixelMode = false, calibrationPending = false, worms, method, tapnextIssue = ''}) {
+function annotationReadiness({scale, pixelMode = false, calibrationPending = false, worms, method, chamberMode = false, tapnextIssue = ''}) {
     const scaleReady = pixelMode || (Number.isFinite(Number(scale)) && Number(scale) > 0 && !calibrationPending);
-    const confirmed = worms.filter(w => w.area >= 20 && w.confirmed).length;
+    const confirmed = worms.filter(w => w.area >= 20 && w.confirmed && (!chamberMode || w.roi)).length;
     const masksReady = worms.length > 0 && confirmed === worms.length;
-    const methodReady = ['self_contact', 'topology', 'wormtracer', 'niu', 'hybrid', 'tapnext'].includes(method)
-        && (method !== 'tapnext' || !tapnextIssue) && (method !== 'self_contact' || worms.length <= 1);
+    const methodReady = ['body_sequence', 'self_contact', 'topology', 'wormtracer', 'niu', 'hybrid', 'tapnext'].includes(method)
+        && (!['tapnext','body_sequence'].includes(method) || !tapnextIssue) && (method!=='body_sequence' || chamberMode || worms.length===1) && (method !== 'self_contact' || worms.length <= 1);
     const blockers = [];
     if (!scaleReady) blockers.push({
         key: 'scale', step: 1, title: calibrationPending ? '标尺测量尚未完成' : '尺寸标定未完成',

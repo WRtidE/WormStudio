@@ -8,7 +8,9 @@
 
 ## 当前源码版本
 
-桌面应用版本为 **1.0.0**。新建单虫分析默认使用 **SAM2 + 101 点中线**（`self-contact-101-v3`）。虫体自接触时，程序结合交叠前后的清晰帧选择路径，并记录各端点的可见性。头尾采用 `taper_seed`：优先使用人工头点，缺少人工头点时，比较两端的渐细程度并在起始可靠帧上投票。跨帧方向仍有歧义时保留复核状态。详见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
+桌面应用版本为 **1.0.0**。新建单虫分析默认使用 **SAM2 Large + 多帧身体连续跟踪**（`body_sequence`）。程序提取 101 点中线，利用 13 个身体点的跨帧运动和绕柱方向选择连续路径。人工头点和自动推断分别记录。详见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
+
+工作台支持双槽标注、标注帧测量和通道计数。结果页汇总整段视频的形态与运动指标，也可按需展开曲线、查看视频或导出 CSV。
 
 运行环境采用 Python 3.11。程序自动选择可用的 NVIDIA CUDA、Apple Metal（MPS）或 CPU。通道计数是独立入口，支持逐帧复核越线记录并导出 Excel，操作见[使用指南](docs/USER_GUIDE.md)。
 
@@ -59,6 +61,8 @@ WormStudio/
 运行时产生的 `models/`、`resources/`、`input_videos/`、`outputs/` 和 `evaluation_data/` 都在 Git 忽略规则内。
 
 ## 开发与发布
+
+日常修改直接在本仓库进行。界面在 `web/`，识别、测量和后端在 `src/`，Electron 窗口在 `tools/electron/`。重启源码版即可查看修改。提交后可用 `git archive --format=zip --output=../WormStudio-source.zip HEAD` 生成当前提交的源码包。
 
 ```powershell
 python run_tests.py

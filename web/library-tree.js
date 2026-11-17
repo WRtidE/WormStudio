@@ -1,6 +1,6 @@
 'use strict';
 // The explorer only edits workspace references; source media stays untouched.
-window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolder, importFiles, dropFiles, icon, status, isBusy}) {
+window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolder, importFiles, dropFiles, icon, status, isBusy, selectionChanged}) {
   const host=document.getElementById('file-list'), menu=document.getElementById('tree-menu');
   const dialog=document.getElementById('tree-dialog'), form=document.getElementById('tree-form');
   const input=document.getElementById('tree-name'), error=document.getElementById('tree-error');
@@ -8,6 +8,7 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
   let renderPending=false, lastRow=null;
   let picked=new Set(), anchor=null, activeId=null, visibleFiles=[], ctrlPicked=null;
   let visible={count:0,empty:true};
+  let searchQuery='', searchCollapsed=new Map();
   const all=()=>{const s=getState();return [...s.folders.map(f=>({...f,isFolder:true})),...s.files];};
   const children=parent=>all().filter(n=>(n.parent||null)===parent).sort((a,b)=>(a.order??1e12)-(b.order??1e12)||a.name.localeCompare(b.name,'zh-CN'));
   const node=id=>all().find(n=>n.id===id);
@@ -128,6 +129,14 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
     if(s.selectedId!==activeId)selectOnly(s.selectedId);
     if(destination&&!s.folders.some(f=>f.id===destination))destination=null;
     const query=s.query.trim().toLowerCase(),matches=f=>(s.filter==='all'||(s.filter==='video'?f.kind==='video':f.kind!=='video'))&&(!query||path(f).toLowerCase().includes(query));
+    if(query!==searchQuery){searchQuery=query;searchCollapsed.clear();}
+    function expandFolder(folder,expanded){
+      destination=folder.id;
+      // Search initially reveals matches, then respects the user's disclosure
+      // choices without overwriting the normal saved folder layout.
+      if(query){searchCollapsed.set(folder.id,!expanded);render();}
+      else void act({op:'collapse',id:folder.id,collapsed:!expanded});
+    }
     const matching=new Set(s.files.filter(matches).map(f=>f.id)), showFolders=new Set();
     const includeParents=n=>{const seen=new Set();while(n?.parent&&!seen.has(n.parent)){seen.add(n.parent);showFolders.add(n.parent);n=node(n.parent);}};
     for(const file of s.files)if(matching.has(file.id))includeParents(file);
@@ -138,13 +147,14 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
       for(const n of children(parent)){
         if(n.isFolder?!showFolders.has(n.id):!matching.has(n.id))continue;
         const entry=document.createElement('div');entry.className='tree-entry';entry.dataset.node=n.id;entry.style.setProperty('--depth',depth);
-        const row=button('',event=>{destination=n.isFolder?n.id:n.parent||null;if(n.isFolder)void act({op:'collapse',id:n.id,collapsed:!n.collapsed});else pick(n.id,event);});
+        const expanded=n.isFolder&&(query?!searchCollapsed.get(n.id):!n.collapsed);
+        const row=button('',event=>{destination=n.isFolder?n.id:n.parent||null;if(n.isFolder)expandFolder(n,!expanded);else pick(n.id,event);});
         const selected=!n.isFolder&&picked.has(n.id);
         row.className='tree-item'+(selected?' selected':'')+(n.isFolder&&n.id===destination?' folder-selected':'');
         row.setAttribute('role','treeitem');row.setAttribute('aria-level',depth+1);row.setAttribute('aria-label',n.name);
         if(!n.isFolder){row.setAttribute('aria-selected',String(selected));visibleFiles.push(n.id);}
         row.title=path(n)+(n.isFolder?' · 拖动可移动或排序':' · 右键管理，拖动排序');
-        const expanded=n.isFolder&&(!n.collapsed||!!query||s.filter!=='all');if(n.isFolder)row.setAttribute('aria-expanded',String(expanded));
+        if(n.isFolder)row.setAttribute('aria-expanded',String(expanded));
         const arrow=document.createElement('span');arrow.className='tree-arrow';arrow.setAttribute('aria-hidden','true');
         if(n.isFolder)arrow.innerHTML='<svg viewBox="0 0 16 16" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         const title=document.createElement('span');title.className='tree-name';title.textContent=n.name;
@@ -155,8 +165,8 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
         row.onkeydown=event=>{
           const key=event.key;if(key==='Delete'){event.preventDefault();remove(n);}else if(key==='F2'){event.preventDefault();prompt('重命名','只修改工作区显示名称。',n.name,name=>mutate({op:'rename',id:n.id,name}));}
           else if(event.altKey&&['ArrowUp','ArrowDown'].includes(key)){event.preventDefault();void reorder(n,key==='ArrowUp'?-1:1);}
-          else if(key==='ArrowRight'&&n.isFolder){event.preventDefault();if(!expanded)void act({op:'collapse',id:n.id,collapsed:false});else host.querySelector(`[data-parent="${CSS.escape(n.id)}"] .tree-item`)?.focus();}
-          else if(key==='ArrowLeft'){event.preventDefault();if(n.isFolder&&expanded)void act({op:'collapse',id:n.id,collapsed:true});else if(n.parent)host.querySelector(`[data-node="${CSS.escape(n.parent)}"] .tree-item`)?.focus();}
+          else if(key==='ArrowRight'&&n.isFolder){event.preventDefault();if(!expanded)expandFolder(n,true);else host.querySelector(`[data-parent="${CSS.escape(n.id)}"] .tree-item`)?.focus();}
+          else if(key==='ArrowLeft'){event.preventDefault();if(n.isFolder&&expanded)expandFolder(n,false);else if(n.parent)host.querySelector(`[data-node="${CSS.escape(n.parent)}"] .tree-item`)?.focus();}
           else if(['ArrowUp','ArrowDown','Home','End'].includes(key)){event.preventDefault();const rows=[...host.querySelectorAll('.tree-item')],index=rows.indexOf(row);rows[key==='Home'?0:key==='End'?rows.length-1:Math.max(0,Math.min(rows.length-1,index+(key==='ArrowUp'?-1:1)))].focus();}
           else if(key==='F10'&&event.shiftKey){event.preventDefault();const r=row.getBoundingClientRect();context(n,r.left,r.bottom);}
         };
@@ -171,6 +181,7 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
     const count=visibleFiles.filter(id=>picked.has(id)).length;
     document.getElementById('file-total').textContent=count>1?`已选 ${count} 个`:s.files.length;
     visible={count:matching.size,empty:!host.children.length};
+    selectionChanged?.(visibleFiles.filter(id=>picked.has(id)));
     return visible;
   }
   const preview=document.querySelector('.preview-main');
@@ -266,5 +277,5 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
   menu.addEventListener('keydown',event=>{const buttons=[...menu.querySelectorAll('button:not(:disabled)')],i=buttons.indexOf(document.activeElement);if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();buttons[(i+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}if(event.key==='Escape'){const id=menuNode?.id;closeMenu();host.querySelector(`[data-node="${CSS.escape(id||'')}"] .tree-item`)?.focus();}});
   form.onsubmit=async event=>{event.preventDefault();const submit=document.getElementById('tree-submit');submit.disabled=true;error.hidden=true;try{await dialogAction(input.value);dialog.close();}catch(e){error.hidden=false;error.textContent=e.message;}finally{submit.disabled=false;}};
   window.addEventListener('resize',closeMenu);host.addEventListener('scroll',closeMenu);
-  return {render,selectOnly,replaceId,get destination(){return destination;},setDestination(id){destination=id;},closeMenu};
+  return {render,selectOnly,replaceId,selectedIds:()=>visibleFiles.filter(id=>picked.has(id)),get destination(){return destination;},setDestination(id){destination=id;},closeMenu};
 }};

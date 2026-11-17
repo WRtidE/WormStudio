@@ -325,7 +325,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             row={'sample':sample,'worm_id':worm,'frame':frame,'time_s':timebase['timestamps_s'][frame],
                  'mask_bbox_crop_xyxy':json.dumps([int(xs.min()),int(ys.min()),int(xs.max()+1),int(ys.max()+1)]) if len(xs) else '',
                  'time_valid':True,'time_status':timebase['status'],
-                 'centroid_x_source_px':float(xs.mean()+source['crop_xyxy'][0]) if len(xs) else np.nan,
+                 'body_center_x_source_px':np.nan,'body_center_y_source_px':np.nan,'centroid_x_source_px':float(xs.mean()+source['crop_xyxy'][0]) if len(xs) else np.nan,
                  'centroid_y_source_px':float(ys.mean()+source['crop_xyxy'][1]) if len(ys) else np.nan,
                  'area_um2':float(mask.sum()*scale**2),'centroid_x_um':float(xs.mean()*scale) if len(xs) else np.nan,
                  'centroid_y_um':float(ys.mean()*scale) if len(ys) else np.nan,
@@ -392,6 +392,13 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                 radius_profiles[frame]=r
                 if qa.get('skeleton_path_fraction',1)<.7:reasons.append('branched_or_contact_skeleton')
                 if method != 'self_contact' and qa['centerline_inside_fraction']<.97:reasons.append('centerline_outside_mask')
+                if method=='body_sequence':
+                    from framewise_pose import arc_midpoint
+                    mid=arc_midpoint(p)
+                    if mid is not None:
+                        mx,my=np.rint(mid).astype(int)
+                        if 0<=my<mask.shape[0] and 0<=mx<mask.shape[1] and mask[my,mx]:
+                            row['body_center_x_source_px'],row['body_center_y_source_px']=mid+source['crop_xyxy'][:2]
                 length=float(np.linalg.norm(np.diff(p,axis=0),axis=1).sum()*scale)
                 row.update(length_um=length,volume_estimate_um3=frustum_volume(p,r)*scale**3,
                            mean_width_um=float(2*r.mean()*scale),head_candidate_angle_deg=signed_angle(p),
@@ -441,14 +448,18 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         seed_mode = video_config.get('head_detection','twardis') in ('taper_seed','manual_seed')
         intensity_profiles = (None if method == 'self_contact' and seed_mode else
                               extract_profiles(source,poses,radius_profiles,head_valid))
-        heads=detect_head_tail(poses,head_valid,manual=manual,
-            mode=video_config.get('head_detection','twardis'),parameters=config.get('head_detection_parameters'),
-            segment_ids=[r['identity_segment'] for r in rows],radius_profiles=radius_profiles,intensity_profiles=intensity_profiles,
-            fps=fps,endpoint_visible=endpoint_visible,
-            pose_gap_allowed=[not r['centerline_valid'] and r['source_valid'] and r['mask_valid'] and r['identity_valid']
-                              for r in rows] if endpoint_visible is not None else None)
-        from head_temporal import apply_contact_directions
-        apply_contact_directions(heads,rows,fit_quality,video_config.get('head_detection','twardis'))
+        if method=='body_sequence':
+            from body_sequence_solver import head_results
+            heads=head_results(fit_quality)
+        else:
+            heads=detect_head_tail(poses,head_valid,manual=manual,
+                mode=video_config.get('head_detection','twardis'),parameters=config.get('head_detection_parameters'),
+                segment_ids=[r['identity_segment'] for r in rows],radius_profiles=radius_profiles,intensity_profiles=intensity_profiles,
+                fps=fps,endpoint_visible=endpoint_visible,
+                pose_gap_allowed=[not r['centerline_valid'] and r['source_valid'] and r['mask_valid'] and r['identity_valid']
+                                  for r in rows] if endpoint_visible is not None else None)
+            from head_temporal import apply_contact_directions
+            apply_contact_directions(heads,rows,fit_quality,video_config.get('head_detection','twardis'))
         candidate_path=ROOT/'outputs'/sample/wormtracer_source/f'worm-{worm}'/'diagnostic-candidates.npy'
         candidates={}
         if candidate_path.exists():
@@ -459,12 +470,12 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         # Display geometry is still in its native point order here.
         for row in rows:
             row['pose_valid'] = row['centerline_valid']
-        visible = build_display(rows,lines,candidates,get_mask,centerline)
+        visible = build_display(rows,lines,candidates,get_mask,centerline,allow_fallback=method!='body_sequence')
         if method == 'self_contact' and fit_quality and video_config.get('head_detection') != 'manual_only':
             from head_temporal import orient_loop_reviews
             orient_loop_reviews(rows, heads, fit_quality, visible, worm)
         mode = video_config.get('head_detection','twardis')
-        if seed_mode and method != 'self_contact':
+        if seed_mode and method not in ('self_contact','body_sequence'):
             from endpoint_order import order_endpoints
             order_endpoints(rows, heads, visible, worm, fps, manual, len(ids)==1,
                             intensity_profiles, config.get('head_detection_parameters'))
@@ -659,6 +670,9 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                                             ROOT/'outputs'/sample/wormtracer_source/f'worm-{ids[0]}')
         report['adaptive_endpoint_version'] = endpoint_summary['version']
         report['adaptive_endpoint_body_scale'] = endpoint_summary['body_scale']
+    if method=='body_sequence':
+        from body_sequence_solver import signature,VERSION as BODY_VERSION
+        report.update(body_sequence_version=BODY_VERSION,body_sequence_signature=signature(),body_center_definition='half_centerline_arclength',tracking_point_count=13)
     report=json_safe(report)
     (output/'summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
     np.savez_compressed(output/'diagnostic-centerlines.npz',**{f'w{w}_f{f}':p for (w,f),p in lines.items()})
@@ -779,13 +793,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',default='all',help='Sample directory name; all retains the two original samples')
     parser.add_argument('--config',type=Path,default=ROOT/'phenotype_config.json')
-    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','tapnext','self_contact'],default='wormtracer')
+    parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','tapnext','self_contact','body_sequence'],default='wormtracer')
     parser.add_argument('--wormtracer-source',default=None,help='Default: contact correction if present, otherwise temporal')
     parser.add_argument('--render-only',action='store_true',help='Refresh videos and previews using saved measurements')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
     for sample in (['2-1-1314','5-1-910'] if args.sample=='all' else [args.sample]):
         from centerline_methods import method_source
-        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','tapnext','self_contact') else None
+        default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','tapnext','self_contact','body_sequence') else None
         fit_source=args.wormtracer_source or default_source or ('wormtracer-contact-corrected' if (ROOT/'outputs'/sample/'wormtracer-contact-corrected'/'mask-source.json').exists() else 'wormtracer-temporal')
         if args.render_only:
             _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if args.centerline_method!='skeleton' else None)

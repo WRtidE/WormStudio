@@ -219,6 +219,8 @@ class PipelineProgress:
                         self.data['detail'] = '计算已完成，部分线虫结果需要复核。'
                 from result_metrics import phenotype_results
                 self.data['phenotypes'] = phenotype_results(result)
+                if config.get('chamber_id') is not None:
+                    self.data['phenotypes'].update(chamber_id=config['chamber_id'], video_name=Path(config['video']).name)
                 if self.data.get('fps') is None:
                     self.data['fps'] = self.data['phenotypes'].get('fps')
             self.persist()
@@ -260,7 +262,7 @@ class PipelineProgress:
             self.server.annotation = annotation
             annotation.batch_deferred = deferred
             self.cancel_requested.clear()
-            if not deferred:
+            if not deferred and not getattr(annotation, 'start_on_submit', False):
                 self.next_settings = annotation.settings
                 self.next_ready.set()
 

@@ -37,19 +37,19 @@ class ManualAnnotationTests(unittest.TestCase):
 
     def test_current_profile_overrides_legacy_choices_without_changing_masks(self):
         annotation=manual.Annotation(dict(self.settings,analysis_profile='current'))
-        self.assertEqual(annotation.initial_state()['analysis_method'],'self_contact')
+        self.assertEqual(annotation.initial_state()['analysis_method'],'body_sequence')
         with patch('tapnext_support.resources',side_effect=AssertionError('unused tracker')):
             annotation.save(dict(self.body,centerline_method='niu',head_detection='twardis'))
-        self.assertEqual(annotation.result['centerline_method'],'self_contact')
+        self.assertEqual(annotation.result['centerline_method'],'body_sequence')
         self.assertEqual(annotation.result['head_detection'],'taper_seed')
-        saved=cv2.imread(annotation.result['groups'][0]['worms'][0]['mask_path'],0)
+        saved=cv2.imdecode(np.fromfile(annotation.result['groups'][0]['worms'][0]['mask_path'],np.uint8),0)
         np.testing.assert_array_equal(saved,self.mask[5:55,5:95])
 
     def test_current_profile_cannot_submit_multiple_worms_from_legacy_draft(self):
         annotation=manual.Annotation(self.settings)
         body=dict(self.body,analysis_profile='current',centerline_method='niu',
                   worms=[self.body['worms'][0],dict(self.body['worms'][0],id=10)])
-        with self.assertRaisesRegex(ValueError,'仅支持单虫'):annotation.save(body)
+        with self.assertRaisesRegex(ValueError,'每次分析一条线虫'):annotation.save(body)
         self.assertFalse(annotation.output.exists())
 
     def test_corrupt_video_is_not_reported_as_an_out_of_range_frame(self):
@@ -78,6 +78,39 @@ class ManualAnnotationTests(unittest.TestCase):
         checked, info = validate_config(config)
         self.assertEqual(info['ids'], [9])
         self.assertEqual(manual.Annotation(self.settings).previous()['groups'], checked['groups'])
+        measured = json.loads(Path(result['frame_metrics_path']).read_text(encoding='utf-8'))
+        self.assertEqual(measured['scope'], 'annotation_frame')
+        self.assertEqual(measured['frame'], 0)
+        self.assertEqual(measured['worms'][0]['worm_id'], 9)
+        area = next(m for m in measured['worms'][0]['metrics'] if m['key'] == 'area')
+        self.assertEqual(area['value'], np.count_nonzero(self.mask)*4)
+
+    def test_frame_metrics_endpoint_is_read_only_and_session_scoped(self):
+        annotation = manual.Annotation(self.settings)
+        server = manual.create_server(annotation)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        body = dict(self.body, frame=0, worm_id=9, confirmed=True,
+                    mask=self.body['worms'][0]['mask'])
+        url = f'http://127.0.0.1:{server.server_port}/api/annotation-metrics'
+        try:
+            request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type':'application/json'})
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request)
+            self.assertEqual(error.exception.code, 403)
+            request.add_header('X-Annotation-Token', annotation.token)
+            with urllib.request.urlopen(request) as response:
+                result = json.load(response)
+            self.assertEqual(result['frame'], 0)
+            self.assertTrue(result['pose_available'])
+            self.assertFalse(annotation.output.exists())
+            self.assertFalse(annotation.done.is_set())
+            body['frame'] = 1
+            stale = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type':'application/json','X-Annotation-Token':annotation.token})
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(stale)
+            self.assertEqual(error.exception.code, 400)
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
 
     def test_empty_mask_and_wrong_crop_are_rejected(self):
         annotation = manual.Annotation(self.settings)

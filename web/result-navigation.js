@@ -13,7 +13,18 @@
     return {items, index, grouped, previous: index > 0 ? items[index - 1] : null,
       next: index >= 0 && index < items.length - 1 ? items[index + 1] : null};
   }
-  const api = {build};
+  function chambers(progress) {
+    const items = (progress?.batch?.result_items || []).filter(item => item.chamber_id != null);
+    const belongs = items.some(item => item.sample === progress?.sample);
+    return belongs || (progress?.status === 'ready' && !progress.sample) ? items : [];
+  }
+  function group(progress) {
+    const batch=progress?.batch, items=batch?.result_items || [];
+    if (!items.some(item=>item.chamber_id!=null) && items.length<2) return [];
+    if (batch.running || items.some(item=>item.sample===progress.sample) || (!progress.sample && progress.status==='ready')) return items;
+    return [];
+  }
+  const api = {build, chambers, group};
   if (typeof window !== 'undefined') window.ResultNavigation = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

@@ -184,8 +184,12 @@ def validate_config(config, relative_to=ROOT):
     if fit['rescale'] > 1 or any(not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v <= 1 for v in fit['rescale_by_worm'].values()):
         raise ValueError('缩放比例必须大于 0 且不大于 1')
     c['centerline_method'] = validate_method(c.get('centerline_method','wormtracer'))
-    if c['centerline_method'] == 'self_contact':
+    if c['centerline_method'] in ('self_contact','body_sequence'):
         c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
+    if c['centerline_method']=='body_sequence':
+        if len(ids)!=1:raise ValueError('当前方法每次分析一条线虫')
+        if c.get('sam2_model','large')!='large':raise ValueError('当前方法使用SAM2 Large')
+        if c.get('tracking_point_count',13)!=13:raise ValueError('当前方法使用13个身体跟踪点')
     c['sam2_model']=model_spec(c.get('sam2_model','large'))['size']
     if c['centerline_method'] == 'tapnext':
         from tapnext_support import validate_single_worm, resources, dependency_path
@@ -200,7 +204,7 @@ def validate_config(config, relative_to=ROOT):
     from identity_reassociation import validate_reviews as validate_fragment_reviews
     validate_fragment_reviews(c,ids,n)
     c['quality_schema_version'] = QUALITY_VERSION
-    c['quality_rules_version'] = GUARD_VERSION
+    c['quality_rules_version'] = 'quality-guards-v6-single-body' if c['centerline_method']=='body_sequence' else GUARD_VERSION
     c['max_area_jump_fraction'] = MAX_AREA_JUMP_FRACTION
     return c, dict(frames=n, fps=fps, width=width, height=height, ids=ids)
 
@@ -241,7 +245,7 @@ def build_stages(config, info, snapshot, phenotype_path):
                 outputs = [out / 'centerlines.npy', out / 'run.json']
                 outputs.append(out / 'quality.json')
                 add(f'{phase}-worm-{worm}', phase, script, args, outputs)
-    if method in ('topology', 'tapnext', 'self_contact'):
+    if method in ('topology', 'tapnext', 'self_contact','body_sequence'):
         for worm in info['ids']:
             out=base/source/f'worm-{worm}'
             outputs = [out/'centerlines.npy', out/'run.json', out/'quality.json']
@@ -301,6 +305,9 @@ def complete(stage, config, info):
         from quality_stage import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
         except (OSError, ValueError, KeyError, TypeError): return False
+    if stage['phase']=='metrics' and config.get('centerline_method')=='body_sequence':
+        from body_sequence_solver import signature
+        if json.loads(Path(stage['outputs'][0]).read_text(encoding='utf8')).get('body_sequence_signature')!=signature():return False
     if stage['phase']=='metrics':
         from head_tail import VERSION
         from quality_schema import VERSION as QUALITY_VERSION
@@ -329,7 +336,7 @@ def complete(stage, config, info):
             try:p = np.load(stage['outputs'][0], allow_pickle=False)
             except (ValueError,EOFError):return False
             if p.shape != (info['frames'], 101, 2): return False
-            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'tapnext-worm-', 'self_contact-worm-'))
+            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'tapnext-worm-', 'self_contact-worm-','body_sequence-worm-'))
             if adapter or len(stage['outputs']) > 2:
                 quality=json.loads(Path(stage['outputs'][2]).read_text(encoding='utf-8'))
                 if len(quality)!=len(p): return False
@@ -340,6 +347,10 @@ def complete(stage, config, info):
             if stage['name'].startswith('tapnext-worm-'):
                 from tapnext_support import signature
                 if meta.get('algorithm_signature') != signature(): return False
+            if stage['name'].startswith('body_sequence-worm-'):
+                from body_sequence_solver import signature
+                if meta.get('algorithm_signature')!=signature():return False
+                if meta.get('head_annotations')!=config.get('head_annotations',{}):return False
             if stage['name'].startswith('self_contact-worm-') and meta.get('version') != SELF_CONTACT_VERSION:
                 return False
             if stage['name'].startswith('topology-worm-'):

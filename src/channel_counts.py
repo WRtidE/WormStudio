@@ -468,23 +468,44 @@ class ChannelCounts:
         source = self.review_source(file, state)
         return event_images(source, events[number-1], state['frame'])
 
-    def export(self, file, run):
+    def comparison(self):
+        rows = []
+        directory = self.root/'outputs'/'channel-counts'
+        for folder in sorted(directory.glob('*')):
+            if not re.fullmatch('[0-9a-f]{32}', folder.name):
+                continue
+            for path in sorted(folder.glob('*/state.json'), reverse=True):
+                state = read(path)
+                if state.get('status') == 'complete':
+                    rows.append(dict(file=folder.name, run=state['id'], name=state['name'], counts=state['counts']))
+                    break
+        return rows
+
+    def export(self, file, run, channel=None):
         state = self.completed(file, run)
+        if channel is not None and not 1 <= channel <= len(state['counts']):
+            raise ValueError('通道编号超出范围')
         from openpyxl import Workbook
         book = Workbook()
         sheet = book.active
         sheet.title = '通道计数'
         sheet.append(['视频', state['name']])
         sheet['B1'].data_type = 's'
-        sheet.append(['累计通过', sum(state['counts'])])
+        if channel is None:
+            sheet.append(['累计通过', sum(state['counts'])])
+        else:
+            sheet.append([f'通道 {channel:02d} 越线次数', state['counts'][channel - 1]])
         sheet.append(['通道', '数量'])
         for i, count in enumerate(state['counts'], 1):
-            sheet.append([i, count])
+            if channel is None or i == channel:
+                sheet.append([i, count])
         if 'events' in state:
             detail = book.create_sheet('越线明细')
             detail.append(['记录号', '通道', '越线帧', '视频时间（秒）', '轨迹号',
                            '前次 X（px）', '前次 Y（px）', '越线 X（px）', '越线 Y（px）', '检测线 Y（px）', '前次观测帧', '越线判据'])
             for event in state['events']:
+                if channel is not None and event['channel'] != channel:
+                    continue
                 detail.append([event[key] for key in ('id', 'channel', 'frame', 'time_s', 'track',
                                                       'prev_x', 'prev_y', 'x', 'y', 'line_y')]
                               + [event.get('prev_frame', event['frame'] - 1),

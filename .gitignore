@@ -47,6 +47,10 @@ docs/conda-validation.json
 PROJECT_MANIFEST.json
 SOURCE_MANIFEST.json
 config/*.local.json
+config/*.local.*
+tools/electron/local.json
+*.before-*
+user-data/
 
 # Historical research notes remain local; publish the maintained documentation.
 docs/*

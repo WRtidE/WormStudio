@@ -27,8 +27,8 @@
 </div><div class="note"><span>✦</span><p>建议选择虫体清晰、彼此分离的一帧。先用画面上方的帧号选择清晰帧；更换帧前保存草稿。</p></div>
 </section>
 <section class="step-panel" data-panel="2" hidden>
-<p class="eyebrow">SEGMENT &amp; REVIEW</p><div class="section-title"><h1>逐条点选线虫</h1><span id="worm-count" class="count-badge">0</span></div><p class="intro">每次分析一条线虫。在虫体内部点击，检查轮廓后确认。</p>
-<div id="worm-list" class="worm-list" aria-label="线虫列表"></div><button id="add" class="wide add-button">＋ 添加一条线虫</button>
+<p class="eyebrow">SEGMENT &amp; REVIEW</p><div class="section-title"><h1 id="slot-heading">逐条点选线虫</h1><span id="worm-count" class="count-badge">0</span></div><p class="intro" id="slot-intro">每次分析一条线虫。在虫体内部点击，检查轮廓后确认。</p>
+<label id="chamber-number-field" hidden>当前培养槽编号 <input id="chamber-number" type="number" min="1" max="10000" step="1" aria-label="芯片上的培养槽编号" style="width:6em"></label><div id="worm-list" class="worm-list" aria-label="线虫列表"></div><button id="add" class="wide add-button">＋ 添加一条线虫</button>
 <div class="divider"></div><div class="section-title"><h2>分割工具</h2><span id="model-label" class="tag">智能分割</span></div>
 <div class="tool-grid">
 <button data-mode="sam_positive" class="tool active"><span class="tool-icon positive">＋</span><b>点选虫体</b><small>添加属于这条虫的点</small></button>
@@ -49,11 +49,18 @@
 <div class="review-card"><h2>头尾识别</h2><p id="review-heads" class="detail-line"></p></div>
 <div class="review-card"><h2>处理前确认</h2><dl><div><dt>线虫掩膜</dt><dd id="review-worms">—</dd></div><div><dt>分析尺寸</dt><dd id="review-roi">—</dd></div><div><dt>像素比例</dt><dd id="review-scale">—</dd></div><div><dt>中线显示</dt><dd><i class="line-swatch"></i>绿色轮廓 · 白色中线</dd></div></dl></div>
 </section>
+<section id="annotation-metrics-panel" class="annotation-metrics-panel" aria-label="标注帧指标" hidden>
+<div class="section-title"><h2>标注帧指标</h2><span id="annotation-metrics-frame" class="tag"></span></div>
+<button id="calculate-frame-metrics" class="wide secondary" type="button">计算当前帧指标</button>
+<p id="annotation-metrics-status" class="help" role="status">确认虫体轮廓后自动计算。</p>
+<table id="annotation-metrics-table" class="annotation-metrics-table" hidden><tbody id="annotation-metrics-values"></tbody></table>
+<p class="help">仅测量当前标注帧。速度、摆动频率等需在整段分析后查看；体积为估算。</p>
+</section>
 </aside>
 <section class="viewer" aria-label="标注画面">
 <div class="viewer-toolbar" data-resizable="画面快捷工具"><div><span class="viewer-dot"></span><b id="view-title">视频标注帧</b><span id="dimensions">—</span></div><div class="view-controls"><label class="mask-toggle"><input id="show-mask" type="checkbox" checked>掩膜</label><label class="opacity-control">透明度<input id="opacity" type="range" min="10" max="80" value="38"></label><button id="undo" title="撤销 Ctrl+Z" disabled>↶ 撤销</button><select id="zoom" aria-label="画面缩放"><option value="fit">适应窗口</option><option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></div></div>
 <details class="annotation-more" data-resizable="画面工具" data-resize-axis="x"><summary>画面工具</summary><div class="viewer-toolbar annotation-tools"><div><label>清晰帧 <input id="anchor-frame" type="number" min="0" value="0" style="width:80px"></label><button id="load-anchor">切换标注帧</button></div><div><button id="locate-worm" type="button">定位当前虫</button><button id="pan-tool" type="button">拖动画面</button><button id="save-draft" type="button">保存草稿</button></div></div></details><div id="viewport"><div id="stage"><img id="base" alt="待标注的线虫视频帧" draggable="false"><canvas id="overlay" aria-label="点击标注线虫的画布"></canvas></div><div id="loading" class="loading"><span class="spinner"></span><p>正在载入标注画面</p></div></div>
-<div class="viewer-footer" data-resizable="标注操作" data-resize-axis="x"><span><i id="mode-dot"></i><b id="mode-label">查看画面</b><span id="mode-hint">选择区域，或直接进入点选</span></span><div class="canvas-actions"><span id="cursor-position">—</span></div></div><div id="status" class="status-line" role="status" aria-live="polite">准备加载…</div>
+<div class="viewer-footer" data-resizable="标注操作" data-resize-axis="x"><span><i id="mode-dot"></i><b id="mode-label">查看画面</b><span id="mode-hint">选择区域，或直接进入点选</span></span><div class="canvas-actions"><span>空格 + 拖动平移 · 滚轮缩放</span><span id="cursor-position">—</span></div></div><div id="status" class="status-line" role="status" aria-live="polite">准备加载…</div>
 </section></main>
 <footer class="app-footer annotation-footer" data-resize-label="底部操作区" data-resize-edge="n"><div class="action-guidance" aria-live="polite"><strong id="action-title">正在检查标注…</strong><p id="draft-status" role="status" hidden></p><span id="save-state" class="save-dot" hidden></span></div><div class="footer-actions"><button id="resolve-blocker" class="repair-button" hidden></button><button id="previous" class="secondary" hidden>上一步</button><button id="confirm-worm" class="primary confirm-button" hidden disabled>确认虫体</button><button id="next" class="primary" aria-describedby="action-title">下一步：点选线虫 <span>→</span></button><button id="save" class="primary" aria-describedby="action-title" hidden>保存并开始处理 <span>→</span></button></div></footer>
 <div id="success" class="success-shade" hidden><section class="success-card" role="dialog" aria-modal="true" aria-labelledby="success-title"><span class="success-icon">✓</span><p class="eyebrow">ANNOTATION SAVED</p><h2 id="success-title">标注已保存</h2><p id="success-summary"></p><div class="success-flow">掩膜跟踪 <span>→</span> 中线提取 <span>→</span> 指标与视频</div><p class="help">已交给处理程序。请在运行窗口查看计算进度，完成后视频与指标将保存到样本输出目录。</p><code id="saved-path"></code><button id="close-success" class="wide secondary">查看已保存的标注</button></section></div>

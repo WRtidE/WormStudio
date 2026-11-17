@@ -52,6 +52,13 @@ def present_frame(row):
         head_review_allowed=posture and row.get('centerline_topology','simple')=='simple' and not flag(row,'endpoint_a_inferred') and not flag(row,'endpoint_b_inferred'),
         endpoint_labels=['H','T'] if confirmed else ['H?','T?'] if candidate else ['A','B'],
         head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown')
+    if row.get('body_sequence_version'):
+        result['head_section_status']=row.get('head_section_status','')
+        result['head_display_estimated_end']=number(row.get('head_display_estimated_end'))
+        result['tail_display_estimated_end']=number(row.get('tail_display_estimated_end'))
+        result['body_center_x_source_px']=value('body_center_x_source_px',posture)
+        result['body_center_y_source_px']=value('body_center_y_source_px',posture)
+        if result['head_section_status']=='body_sequence_estimate':result['head_status']='多帧身体跟踪 · 隐藏端点位置估计'
     result['self_contact_state'] = row.get('self_contact_state')
     refs = row.get('head_trajectory_frames')
     if isinstance(refs, str):
@@ -89,7 +96,7 @@ def present_frame(row):
     return result
 
 
-def load_frame_metrics(path, fps, count):
+def load_frame_metrics(path, fps, count, trend_only=False):
     if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0:
         raise ValueError('结果缺少有效帧率')
     if not isinstance(count, int) or count <= 0:
@@ -103,11 +110,23 @@ def load_frame_metrics(path, fps, count):
             if not 0 <= frame < count or (frame, worm) in seen:
                 raise ValueError('逐帧指标存在越界或重复记录')
             seen.add((frame, worm)); ids.add(worm)
-            raw_rows.append(row)
-            frames[frame].append(present_frame(row))
+            if trend_only:
+                allowed = permissions(row)
+                unit = 'px' if row.get('measurement_mode') == 'pixels' else 'um'
+                data = {'worm_id': worm}
+                for field, gate in [(f'length_{unit}', 'posture'), (f'mean_width_{unit}', 'posture'),
+                                    (f'speed_{unit}_s', 'motion')]:
+                    data[field] = number(row.get(field)) if allowed[gate] else None
+            else:
+                data = present_frame(row)
+                raw_rows.append(row)
+            frames[frame].append(data)
     if not ids or len(seen) != count * len(ids):
         raise ValueError('逐帧指标不完整；请重新运行指标阶段')
     for rows in frames:
         rows.sort(key=lambda r: r['worm_id'])
-    from quality_audit import audit
-    return dict(fps=fps, frame_count=count, worm_ids=sorted(ids), frames=frames,quality_audit=audit(raw_rows))
+    result = dict(fps=fps, frame_count=count, worm_ids=sorted(ids), frames=frames)
+    if not trend_only:
+        from quality_audit import audit
+        result['quality_audit'] = audit(raw_rows)
+    return result

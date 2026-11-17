@@ -22,9 +22,9 @@ def main():
         print('Device:',device_label(selected_device()))
     except ImportError:pass
     except RuntimeError as exc:missing.append('device');print(str(exc))
-    from tapnext_support import availability
-    status=availability();print('TAPNext++:',status['detail'])
-    if not status['available']:missing.append('TAPNext++')
+    from body_sequence_solver import availability
+    status=availability();print('SAM2 + 多帧身体连续跟踪:',status['detail'])
+    if not status['available']:missing.append('当前单虫分析组件')
     return int(bool(missing))
 
 

@@ -11,6 +11,8 @@
       .replace(/twardis|taper_seed/gi,'头尾识别');
   }
   function stage(row) {
+    if(row?.name?.startsWith('body_sequence-worm-'))return '多帧身体中线与头尾跟踪 · 线虫 '+row.name.split('-').pop();
+    if (row?.name === 'crop-recovery') return '触边扩框与重跟踪';
     const phases={tracking:'虫体识别与跟踪',cleanup:'轮廓检查与清理',quality:'身份与接触检查',fit:'姿态分析',repair:'姿态检查与修正',temporal:'连续性检查',metrics:'表型指标计算',export:'视频导出与校验'};
     const worm=/-worm-(\d+)$/.exec(row?.name||'');
     return phases[row?.phase] ? phases[row.phase]+(worm?' · 线虫 '+worm[1]:'') : text(row?.label||'正在分析');
@@ -20,7 +22,11 @@
     return /Traceback|CalledProcessError|Command\s*\[|File ".+", line/.test(message)
       ? '处理未完成，请检查视频文件、可用内存和结果目录权限。详细记录已保存在本次任务目录。' : message;
   }
-  const presentation={text,stage,error};
+  function totalsReady(data) {
+    return data?.status==='complete' && !!data.sample && !!data.phenotypes?.worms?.length
+      && !data.history_reopened && !data.batch?.running;
+  }
+  const presentation={text,stage,error,totalsReady};
   if(typeof window!=='undefined')window.AnalysisPresentation=presentation;
   if(typeof module!=='undefined'&&module.exports)module.exports=presentation;
 })();

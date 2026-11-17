@@ -14,7 +14,7 @@ def load_guards(data, ids, frames, required=False):
         if required: raise ValueError('缺少统一质量检查，请先运行 quality 阶段')
         return None
     report = json.loads(path.read_text(encoding='utf-8'))
-    if (report.get('quality_schema_version') != VERSION or report.get('guard_version') != GUARD_VERSION
+    if (report.get('quality_schema_version') != VERSION or report.get('guard_version') not in (GUARD_VERSION,'quality-guards-v6-single-body')
             or report.get('frames') != frames or sorted(report.get('worm_ids', [])) != sorted(ids)):
         raise ValueError('质量检查版本或输入帧数不匹配，请重新运行 quality 阶段')
     result = {w: report['worms'][str(w)] for w in ids}
@@ -39,8 +39,8 @@ def run(sample, mask_source=None, boundary_frames=None):
             return get_mask(self.worm, frame)
     guards = sequence_guards({w: Masks(w) for w in ids}, bad,
         source_invalid=config.get('source_invalid_frames', []), fps=source['fps'],
-        identity_confirmations=config.get('identity_confirmations', []), boundary_frames=boundary_frames)
-    report = dict(quality_schema_version=VERSION, guard_version=GUARD_VERSION,
+        identity_confirmations=config.get('identity_confirmations', []), boundary_frames=boundary_frames,check_centroid_jump=config.get('centerline_method')!='body_sequence')
+    report = dict(quality_schema_version=VERSION, guard_version='quality-guards-v6-single-body' if config.get('centerline_method')=='body_sequence' else GUARD_VERSION,
         frames=source['frames'], fps=source['fps'], worm_ids=ids, worms=guards,
         source_invalid_frames=config.get('source_invalid_frames', []),
         identity_confirmations=config.get('identity_confirmations', []),

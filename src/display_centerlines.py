@@ -145,7 +145,7 @@ def fill_display_gaps(rows, output, get_mask):
                        display_reason='current_mask_and_bracketing_poses',display_version=VERSION)
 
 
-def build_display(rows, formal_lines, candidates, get_mask, fallback):
+def build_display(rows, formal_lines, candidates, get_mask, fallback, allow_fallback=True):
     """Return display vertices and add provenance only; never change metric gates."""
     output={};references={}
     for row in rows:
@@ -175,10 +175,11 @@ def build_display(rows, formal_lines, candidates, get_mask, fallback):
             if q is not None:break
         else:
             source='mask_refit';q=None
-            try:
-                proposal,_,_=fallback(mask)
-                q=supported_curve(proposal,mask,references.get(worm))
-            except (ValueError,IndexError):pass
+            if allow_fallback:
+                try:
+                    proposal,_,_=fallback(mask)
+                    q=supported_curve(proposal,mask,references.get(worm))
+                except (ValueError,IndexError):pass
         if q is None:continue
         output[key]=q
         row.update(display_valid=True,display_source=source,display_inside_fraction=inside_fraction(q,mask),
