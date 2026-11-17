@@ -114,6 +114,7 @@ async function closeWindow() {
 }
 
 function launch() {
+  if (process.platform === 'darwin') app.dock.setIcon(path.join(workspace, 'web/wormstudio-icon-macos.png'));
   mkdirSync(path.dirname(logPath), {recursive: true});
   mkdirSync(path.join(workspace, 'outputs'), {recursive: true});
   const log = createWriteStream(logPath, {flags: 'a'});
