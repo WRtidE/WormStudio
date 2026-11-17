@@ -57,7 +57,7 @@ node --test tests/*.js tests/*.cjs
 
 正式版本号取自 `tools/electron/package.json` 的 `version`。构建时先改成新的三段版本号，例如 `1.1.0`。默认源为 WRtidE/WormStudio 的 GitHub Releases，私有仓库无法供普通用户检查。使用公开 Releases 时，发布同版本的稳定标签（如 `v1.1.0`），正文填写面向用户的更新说明。上传完整桌面安装包，Mac 使用 `WormStudio-Mac-arm64.zip`，Windows x64 使用 `WormStudio-Windows-x64.exe` 或同名 ZIP。源码归档不会被识别成安装包。
 
-默认读取 GitHub 发布列表第一页。GitHub Release 的单个附件须小于 2 GiB。当前含模型的 Mac 离线 ZIP 超过该上限，整包应使用独立的 HTTPS 下载地址。私有仓库或大包可以在打包前给该 package.json 添加 `updateFeed`，指向公开 HTTPS JSON 文件，安装包可放在单独的下载站。测试环境也可用 `WORM_STUDIO_UPDATE_FEED` 指定该地址。格式如下，示例大小和 URL 请替换为真实值。可在 asset 中增加 `digest`（`sha256:` 加文件哈希）以校验下载内容。
+默认读取 GitHub 发布列表第一页。GitHub Release 的单个附件须小于 2 GiB。v1.0.1 的含模型 Mac 离线 ZIP 约 1.25 GB，可直接作为 Release 附件。后续若超出该上限，整包应使用独立的 HTTPS 下载地址。私有仓库或大包可以在打包前给该 package.json 添加 `updateFeed`，指向公开 HTTPS JSON 文件，安装包可放在单独的下载站。测试环境也可用 `WORM_STUDIO_UPDATE_FEED` 指定该地址。格式如下，示例大小和 URL 请替换为真实值。可在 asset 中增加 `digest`（`sha256:` 加文件哈希）以校验下载内容。
 
 ```json
 [{
