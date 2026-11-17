@@ -1,8 +1,28 @@
-# 发布与上传GitHub
+# 源码上传与桌面发布
 
 源码仓库为 [WRtidE/WormStudio](https://github.com/WRtidE/WormStudio)。开发工作区可同时存放自己的视频、模型和输出，上传源码时使用已复核的 Git 提交。需要通过 GitHub Release 分发源码快照时，可附上导出器生成的 ZIP。
 
-## 生成干净的源码副本
+## 更新现有 GitHub 仓库
+
+在含有 `studio.py`、`.git/` 和 `.github/` 的仓库根目录运行以下命令。先确认远程地址、工作区状态以及即将上传的提交。
+
+```sh
+git remote -v
+git status --short --branch
+git log --oneline origin/main..HEAD
+git diff --stat origin/main..HEAD
+git diff --check origin/main..HEAD
+```
+
+维护者确认后执行 `git push origin main`。推送后可在仓库的 Actions 页面查看该提交的 Windows 和 Linux 检查结果。若远端已有新提交，先用 `git fetch origin` 更新远端引用，再核对分支差异。
+
+需要与提交完全一致的源码 ZIP 时，从干净提交导出。归档包含 CI 配置、公共参数、测试和第三方许可。
+
+```sh
+git archive --format=zip --prefix=WormStudio/ --output=../WormStudio-source.zip HEAD
+```
+
+## 导出带逐文件校验清单的源码
 
 在仓库根目录执行，输出目录须为新目录：
 
@@ -21,7 +41,7 @@ python run_tests.py
 node --test tests/*.js tests/*.cjs
 ```
 
-导出器采用显式清单，拒绝覆盖既有目录和ZIP；不遍历运行输出链接。它校验文件大小、常见私人路径/凭据模式、文档本地链接，生成逐文件SHA-256清单及ZIP并校验压缩内容。这是有限模式扫描，不能代替全面的秘密审计。
+导出器在 Git 工作区中从已跟踪路径读取当前磁盘内容，适合验证尚未提交的修改。在已解压的干净源码包中，它使用内置文件和目录清单。工具检查文件大小、运行数据、本机配置、常见凭据模式和文档本地链接，生成 `SOURCE_MANIFEST.json`，再逐文件核对 ZIP 中的 SHA-256。
 
 ## 不进入仓库
 

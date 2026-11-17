@@ -248,5 +248,3 @@ def head_results(quality):
             head_display_estimated_end=0 if known and not f['head_observed'] else None,
             tail_display_estimated_end=1 if known and not f['tail_observed'] else None))
     return results
-
-

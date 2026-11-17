@@ -20,8 +20,13 @@ def check(root):
         if not p.is_file():continue
         count+=1
         if p.suffix.lower() in FORBIDDEN_SUFFIXES or any(x in FORBIDDEN_PARTS for x in rel.parts):errors.append(f'artifact: {rel}')
+        if rel.parts[0] in ('models','resources','input_videos','user-data','logs','.electron-runtime'):
+            errors.append(f'runtime data: {rel}')
         if p.stat().st_size>2_000_000:errors.append(f'oversize: {rel}')
-        if p.name in ('python_path.txt','target_videos.json','evaluation_dataset.json'):errors.append(f'private config: {rel}')
+        if (p.name in ('python_path.txt','target_videos.json','evaluation_dataset.json','.env')
+                or (p.name.startswith('.env.') and p.name != '.env.example')
+                or rel.match('config/*.local.*') or rel.as_posix() == 'tools/electron/local.json'):
+            errors.append(f'private config: {rel}')
         if rel.as_posix() == 'web/wormstudio-icon.png':
             with p.open('rb') as image:
                 if image.read(8) != b'\x89PNG\r\n\x1a\n':errors.append(f'invalid PNG: {rel}')

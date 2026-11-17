@@ -4,7 +4,8 @@
 
 ```powershell
 python run_tests.py
-node --test tests/*.js tests/*.cjs
+$tests = (Get-ChildItem tests/*.js, tests/*.cjs -File).FullName
+node --test @tests
 $env:PYTHONPATH = 'packages/single-worm-methods'
 python -m unittest discover -s packages/single-worm-methods/tests
 Remove-Item Env:PYTHONPATH
