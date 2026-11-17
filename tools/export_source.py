@@ -14,7 +14,7 @@ TOP = ('.gitignore', '.gitattributes', '.editorconfig', 'README.md', 'CHANGELOG.
        'requirements-cpu.txt', 'requirements-macos.txt', 'requirements-sam2.txt', 'studio.py', 'worm_pipeline.py',
        'evaluation.py', 'review_saved_result.py', 'run_tests.py', 'start.bat')
 DOCS = ('INSTALL.md', 'ARCHITECTURE.md', 'USER_GUIDE.md', 'MODELS.md', 'QUALITY_SCHEMA.md',
-        'DEVELOPMENT.md', 'RELEASE.md', 'VALIDATION.md', 'models.json', 'FIRST_ANALYSIS.html', 'PORTABLE_RELEASE.md', 'CPU_OPTIMIZATION.md', 'MACOS.md', 'MAC_FIRST_ANALYSIS.html')
+        'DEVELOPMENT.md', 'RELEASE.md', 'VALIDATION.md', 'models.json', 'FIRST_ANALYSIS.html', 'PORTABLE_RELEASE.md', 'CPU_OPTIMIZATION.md', 'MACOS.md', 'MAC_FIRST_ANALYSIS.html', 'releases/v1.0.1.md')
 CONFIG = ('phenotype_config.json', 'motion_constraints.json', 'README.md',
           'target_videos.example.json', 'evaluation_dataset.example.json')
 

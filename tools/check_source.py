@@ -27,7 +27,7 @@ def check(root):
                 or (p.name.startswith('.env.') and p.name != '.env.example')
                 or rel.match('config/*.local.*') or rel.as_posix() == 'tools/electron/local.json'):
             errors.append(f'private config: {rel}')
-        if rel.as_posix() == 'web/wormstudio-icon.png':
+        if rel.as_posix() in ('web/wormstudio-icon.png', 'web/wormstudio-icon-macos.png'):
             with p.open('rb') as image:
                 if image.read(8) != b'\x89PNG\r\n\x1a\n':errors.append(f'invalid PNG: {rel}')
             continue
