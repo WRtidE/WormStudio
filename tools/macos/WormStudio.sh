@@ -2,12 +2,16 @@
 set -u
 res="$(cd "$(dirname "$0")/../Resources" && pwd)" || exit 1
 notify_error() {
-  /usr/bin/osascript - "$1" <<'OSA'
+  /usr/bin/osascript - "$1" "$res/WormStudio.icns" <<'OSA'
 on run argv
- display alert "WormStudio" message (item 1 of argv) as critical
+ display dialog (item 1 of argv) with title "WormStudio" buttons {"好"} default button 1 with icon ((POSIX file (item 2 of argv)) as alias)
 end run
 OSA
 }
+# Finder can start a script-only app under Rosetta on Apple Silicon.
+if [[ "$(/usr/bin/uname -m)" == "x86_64" ]] && /usr/bin/arch -arm64 /usr/bin/true 2>/dev/null; then
+  exec /usr/bin/arch -arm64 /bin/bash "$0" "$@"
+fi
 major="$(/usr/bin/sw_vers -productVersion | /usr/bin/cut -d . -f 1)"
 if [[ "$(/usr/bin/uname -m)" != "arm64" || "$major" -lt 14 ]]; then
   notify_error "此版本需要 Apple 芯片和 macOS 14 或更新版本。"

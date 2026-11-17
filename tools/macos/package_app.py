@@ -25,7 +25,7 @@ PYTHON_HASH = '9d50cd14269d1ea8601ab279ae0175bdaad7cb151700f53f201a1ea7d0dc53b7'
 
 
 def icon():
-    with Image.open(ROOT/'web/wormstudio-icon.png') as image:
+    with Image.open(ROOT/'web/wormstudio-icon-macos.png') as image:
         out = io.BytesIO()
         image.save(out, format='ICNS')
         return out.getvalue()
@@ -63,7 +63,7 @@ def build(cache, models, sam, example, destination):
             entry.compress_type = zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED
             z.writestr(entry, data)
         put(APP+'Info.plist', plistlib.dumps(dict(CFBundleExecutable='WormStudio', CFBundleName='WormStudio',
-            CFBundleDisplayName='WormStudio', CFBundlePackageType='APPL', CFBundleVersion='1',
+            CFBundleDisplayName='WormStudio', CFBundlePackageType='APPL', CFBundleVersion=json.loads((ROOT/'tools/electron/package.json').read_text())['version'],
             CFBundleIdentifier='org.wormstudio.desktop', CFBundleShortVersionString=json.loads((ROOT/'tools/electron/package.json').read_text())['version'],
             CFBundleIconFile='WormStudio.icns', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True)))
         put(RES+'WormStudio.icns', icon())

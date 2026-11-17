@@ -1,4 +1,4 @@
-WormStudio · Mac 桌面版（Electron）
+WormStudio 1.0.1 · Mac 桌面版（Electron）
 
 适用：Apple 芯片（M 系列），macOS 14 或更新版本。默认使用可用的 Apple Metal GPU（MPS），无法使用 MPS 时自动选择 CPU。
 在 Finder 中解压 ZIP，将 WormStudio.app 拖入“应用程序”，双击打开。

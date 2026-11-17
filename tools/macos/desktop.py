@@ -13,8 +13,9 @@ def dialog(message, *, question=False):
               'display dialog (item 1 of argv) with title "WormStudio" '
               + ('buttons {"取消", "准备并打开"} default button 2 cancel button 1'
                  if question else 'buttons {"好"} default button 1')
-              + '\nend run')
-    return subprocess.run(['/usr/bin/osascript', '-e', script, message]).returncode == 0
+              + ' with icon ((POSIX file (item 2 of argv)) as alias)\nend run')
+    icon = Path(__file__).with_name('WormStudio.icns')
+    return subprocess.run(['/usr/bin/osascript', '-e', script, message, str(icon)]).returncode == 0
 
 
 def install(res, base):
