@@ -8,7 +8,59 @@
   const views = document.querySelector('.live-views');
   const screen = document.querySelector('.live-screen');
   const inspector = el('live-focus');
+  const focusScreen = el('focus-screen');
+  const mainView = previewViewport(screen, el('live-picture'));
+  const focusView = previewViewport(focusScreen, el('focus-image'));
   let detailImage = null;
+
+  function previewViewport(host, picture) {
+    // Pan offsets are fractions of the fitted picture, so new frames and resizes
+    // keep the same source coordinates even when the fitted size changes.
+    let view = {s: 1, x: 0, y: 0};
+    let drag = null;
+    function apply(next) {
+      view = ResultViewport.constrain(next, 1, 1, 1, 1);
+      picture.style.transform = `translate(${view.x * 100}%, ${view.y * 100}%) scale(${view.s})`;
+      host.classList.toggle('is-zoomed', view.s > 1);
+    }
+    function reset() {
+      if (drag && host.hasPointerCapture(drag.id)) host.releasePointerCapture(drag.id);
+      drag = null;
+      apply({s: 1, x: 0, y: 0});
+    }
+    host.addEventListener('wheel', event => {
+      const rect = picture.getBoundingClientRect();
+      if (!rect.width || !rect.height || !event.deltaY) return;
+      event.preventDefault();
+      const x = view.x + (event.clientX - rect.left) / rect.width * view.s;
+      const y = view.y + (event.clientY - rect.top) / rect.height * view.s;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? host.clientHeight : 1;
+      apply(ResultViewport.zoomAt(view, Math.exp(-event.deltaY * unit * .0015), x, y, 1, 32));
+    }, {passive: false});
+    host.addEventListener('dblclick', reset);
+    host.addEventListener('pointerdown', event => {
+      if (view.s <= 1 || event.button !== 0 || !event.isPrimary) return;
+      host.setPointerCapture(event.pointerId);
+      drag = {id: event.pointerId, x: event.clientX, y: event.clientY};
+    });
+    host.addEventListener('pointermove', event => {
+      if (drag?.id !== event.pointerId) return;
+      const rect = picture.getBoundingClientRect();
+      if (rect.width && rect.height) apply({...view,
+        x: view.x + (event.clientX - drag.x) / rect.width * view.s,
+        y: view.y + (event.clientY - drag.y) / rect.height * view.s});
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+    });
+    host.addEventListener('lostpointercapture', event => {
+      if (drag?.id === event.pointerId) drag = null;
+    });
+    return {reset, fit(ratio) {
+      const width = Math.min(host.clientWidth, host.clientHeight * ratio);
+      picture.style.width = width + 'px';
+      picture.style.height = width / ratio + 'px';
+    }};
+  }
 
   function layout() {
     const image = el('live-image');
@@ -19,15 +71,13 @@
     const cardWidth = inspector.open ? Math.min(300, Math.max(200, width * .26)) : 152;
     views.style.setProperty('--focus-width', cardWidth + 'px');
     views.classList.toggle('stacked', width < 440 || width - height * ratio < cardWidth + 12);
-    const fittedWidth = Math.min(screen.clientWidth, screen.clientHeight * ratio);
-    el('live-picture').style.width = fittedWidth + 'px';
-    el('live-picture').style.height = fittedWidth / ratio + 'px';
+    mainView.fit(ratio);
+    if (detailImage && inspector.open) focusView.fit(detailImage.naturalWidth / 2 / detailImage.naturalHeight);
     el('live-focus-box').hidden = !inspector.open || !detailImage;
   }
 
   function paintFocus() {
     const canvas = el('focus-image');
-    canvas.hidden = !detailImage;
     el('focus-empty').hidden = !!detailImage;
     el('focus-outline').disabled = !detailImage;
     if (!detailImage || !inspector.open) return;
@@ -40,6 +90,7 @@
 
   function showFocus(item, image) {
     detailImage = image;
+    focusScreen.hidden = !image;
     inspector.hidden = !item;
     document.querySelector('.live-toolbar').hidden = !item;
     el('focus-frame').textContent = item ? `源帧 ${item.frame}` : '—';
@@ -57,6 +108,7 @@
   const resize = new ResizeObserver(layout);
   resize.observe(views);
   resize.observe(screen);
+  resize.observe(focusScreen);
   inspector.addEventListener('toggle', () => { layout(); paintFocus(); });
   el('focus-outline').addEventListener('change', paintFocus);
 
@@ -89,6 +141,8 @@
   function reset(next) {
     run = next; cursor = newest = steps = 0; jump = false; generation++;
     displayed = null;
+    mainView.reset();
+    focusView.reset();
     controller?.abort();
     el('live-picture').hidden = true; el('live-image').removeAttribute('src');
     showFocus(null, null);

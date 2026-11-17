@@ -165,14 +165,14 @@ class PipelineProgress:
 
     def finish(self, base, config, stop_after):
         from centerline_methods import method_source
+        from workspace_sessions import result_video_files
         with self.lock:
             self.ended = time.time()
             self.data.update(status='complete', detail='全部处理完成' if stop_after == 'export' else f'已完成所选阶段：{PHASE_LABELS[stop_after]}', active=None)
             result = base / ('phenotypes-' + method_source(config['centerline_method']))
             # Only expose outputs whose producing stage completed in this run.
             finished = {s['phase'] for s in self.data['stages'] if s['status'] in ('complete', 'reused')}
-            outputs = [('video', '标注视频', result / f'{config["sample"]}_annotated_full-frame.mp4', 'export'),
-                       ('source-video', '原始视频（只读）', Path(config['video']), 'metrics'),
+            outputs = result_video_files(base, config) + [
                        ('metrics', '逐帧指标 CSV', result/'per_frame_metrics.csv', 'metrics'),
                        ('summary', '线虫汇总 CSV', result/'worm_summary.csv', 'metrics'),
                        ('behavior-events', '停顿与倒退事件 CSV', result/'behavior_events.csv', 'metrics'),

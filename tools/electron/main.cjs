@@ -14,6 +14,14 @@ const viewer = process.env.WORM_STUDIO_VIEW_URL;
 if (viewer && !/^http:\/\/127\.0\.0\.1:\d+\/(?:progress)?$/.test(viewer)) throw Error('无效的本地页面地址');
 
 const title = 'WormStudio · 线虫分析';
+const windowIcon = process.platform === 'win32' ? path.join(__dirname, 'WormStudio.ico') : path.join(workspace, 'web/wormstudio-icon.png');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('org.wormstudio.desktop');
+  app.on('browser-window-created', (_event, window) => {
+    window.setIcon(windowIcon);
+    window.setAppDetails({appId:'org.wormstudio.desktop', appIconPath:windowIcon, appIconIndex:0});
+  });
+}
 const logPath = path.join(workspace, 'logs', 'electron.log');
 let win, backend, origin, closing = false, closePending = false;
 
@@ -28,7 +36,7 @@ function openSettings() {
     return;
   }
   settingsWindow = new BrowserWindow({
-    title:'WormStudio 设置', width:760, height:500, minWidth:590, minHeight:360,
+    title:'WormStudio 设置', icon:windowIcon, width:760, height:500, minWidth:590, minHeight:360,
     parent:win, show:false, backgroundColor:'#ffffff', autoHideMenuBar:true,
     webPreferences:{preload:path.join(__dirname,'settings-preload.cjs'), sandbox:true, contextIsolation:true, nodeIntegration:false}
   });
@@ -111,7 +119,7 @@ function launch() {
   const log = createWriteStream(logPath, {flags: 'a'});
   log.write('\n'+new Date().toISOString()+' Electron '+process.versions.electron+'\n');
   win = new BrowserWindow({
-    title, width: 1280, height: 840, minWidth: 800, minHeight: 560, show: false,
+    title, icon:windowIcon, width: 1280, height: 840, minWidth: 800, minHeight: 560, show: false,
     backgroundColor: '#f6f8f7',
     webPreferences: {preload:path.join(__dirname,'workspace-preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false}
   });

@@ -118,7 +118,7 @@
     pane.classList.toggle('group-summary',!live);
     pane.classList.toggle('chambers-only',!report?.worms?.length);
     if(chosen)$('#current-name').textContent=chosen.name;
-    const display=live?progress:report?{status:'complete',sample:chosen.sample,phenotypes:report,video_name:chosen.video_name,summaryOnly:true,group:g,artifacts:[]}: {status:'ready'};
+    const display=live?progress:report?{status:'complete',sample:chosen.sample,phenotypes:report,video_name:chosen.video_name,summaryOnly:true,group:g,artifacts:report.videos || []}: {status:'ready'};
     window.StudioResults.update(display);
     const index=completed.indexOf(chosen);
     $('#result-switcher').hidden=completed.length<2;
@@ -160,6 +160,20 @@
           const button=document.createElement('button');button.className='small-button';button.textContent=worm?'查看指标':'重试此项';
           button.onclick=()=>{if(worm){selectResult(item.sample);renderPhenotypes.select(worm.worm_id);chamberTableKey='';renderResultNavigation();$('#result-summary-panel').scrollIntoView({block:'nearest'});}else batchAction('retry-one',item.id,g);};
           cell.append(button);
+        }
+        const videos = item.sample === progress.sample ? progress.artifacts : data?.videos;
+        if (item.status === 'complete' && videos?.some(a => a.key === 'video')) {
+          const play = document.createElement('button');
+          play.className = 'small-button';
+          play.textContent = '查看视频';
+          play.onclick = () => {
+            selectResult(item.sample);
+            if (worm) renderPhenotypes.select(worm.worm_id);
+            const panel = $('#result-video-details');
+            panel.open = true;
+            panel.scrollIntoView({block:'start'});
+          };
+          cell.append(play);
         }
       }
     }

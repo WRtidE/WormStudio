@@ -159,7 +159,13 @@ window.StudioResults = (() => {
       details.append(summary, note, evidence); el('result-dimensions').append(details);
     }
   }
-  el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source(el('result-original').checked);video.src='/artifact?key='+encodeURIComponent(artifact.key)+'&inline=1&run='+encodeURIComponent(latest.sample);video.load();draw(position,true);};
+  function artifactUrl(data, key, inline=false) {
+    const query = new URLSearchParams({key, run:data.sample});
+    if (inline) query.set('inline', '1');
+    if (data.summaryOnly) query.set('group', data.group || '');
+    return '/artifact?' + query;
+  }
+  el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source(el('result-original').checked);video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
   for(const [id,endpoint] of [['head-a',0],['head-b',1]]) el(id).onclick=async()=>{
     el('head-a').disabled=el('head-b').disabled=true;
     try{const state=await(await fetch('/api/progress')).json();const r=await fetch('/api/confirm-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,worm_id:worm,frame:position,endpoint})});const d=await r.json();if(!r.ok)throw Error(d.error);location.reload();}
@@ -268,7 +274,7 @@ window.StudioResults = (() => {
   let detailsStarted=false, fullDetails=false;
   function attachVideo(data) {
     if(el('result-video-details').open && data.artifacts?.some(item=>item.key==='video') && !video.hasAttribute('src'))
-      video.src='/artifact?key=video&inline=1&run='+encodeURIComponent(data.sample);
+      video.src=artifactUrl(data,'video',true);
   }
   async function load(data) {
     const version = ++revision; controller?.abort(); controller = new AbortController();
@@ -300,7 +306,7 @@ window.StudioResults = (() => {
     text('result-review-hint', data.can_reannotate ? '重新标注会创建新结果，保留已有记录。身份确认需要独立复核证据。' : '身份存疑时，面积仅作为匿名轮廓参考。');
     for (const artifact of data.artifacts || []) {
       const link = document.createElement('a');
-      link.href = '/artifact?key=' + encodeURIComponent(artifact.key) + '&run=' + encodeURIComponent(data.sample);
+      link.href = artifactUrl(data,artifact.key);
       link.textContent = '↓ ' + artifact.label; el(['video','metrics','summary'].includes(artifact.key)?'studio-artifacts':'studio-extra-artifacts').append(link);
     }
     el('result-video-message').hidden = true;
@@ -310,16 +316,16 @@ window.StudioResults = (() => {
       video.hidden = true; el('result-video-message').hidden = false;
       text('result-video-message', '本次未生成标注视频。已生成的逐帧指标仍可查看。');
     }
-    fullDetails=!data.summaryOnly && (el('result-analysis-details').open || el('result-video-details').open);
+    fullDetails=el('result-video-details').open || (!data.summaryOnly && el('result-analysis-details').open);
     detailsStarted=fullDetails || el('summary-trends').open;
     if(!detailsStarted){el('results-load-state').hidden=true;return;}
-    if (fullDetails && !data.artifacts?.some(item => item.key === 'metrics')) {
+    if (fullDetails && !data.summaryOnly && !data.artifacts?.some(item => item.key === 'metrics')) {
       text('results-load-message', '本次任务尚未生成逐帧指标。请在“处理进度”查看已完成的阶段。');
       text('result-identity-title', '尚无逐帧质量记录'); return;
     }
     const timeout = setTimeout(() => activeController.abort(), 15000);
     try {
-      const endpoint=!fullDetails?'/api/saved-timeline?group='+encodeURIComponent(data.group||'')+'&run=':'/api/frame-metrics?run=';
+      const endpoint=data.summaryOnly || !fullDetails?'/api/saved-timeline?group='+encodeURIComponent(data.group||'')+(fullDetails?'&detail=1':'')+'&run=':'/api/frame-metrics?run=';
       const response = await fetch(endpoint + encodeURIComponent(data.sample), {cache:'no-store', signal:activeController.signal});
       const result = await response.json();
       if (!response.ok) throw Error(result.error || '逐帧指标不可用');
@@ -329,13 +335,15 @@ window.StudioResults = (() => {
       renderPhenotypes.setTimeline(result);
       if(!fullDetails){el("results-load-state").hidden=true;timeline=null;return;}
       el('head-auto').hidden=result.head_detection_mode==='taper_seed';el('head-auto').disabled=false;text('head-auto-message','');
-      window.ResultPlayer.configure(result,frame=>sync(frame/timeline.fps));
-      const anchorsResponse=await fetch('/api/head-anchors?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
-      const anchorsResult=await anchorsResponse.json();if(!anchorsResponse.ok)throw Error(anchorsResult.error||'锚点读取失败');
-      if(version!==revision)return;headAnchors=anchorsResult.anchors||{};
-      const identityResponse=await fetch('/api/identity-links?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
-      const identityResult=await identityResponse.json();if(!identityResponse.ok)throw Error(identityResult.error||'身份关联读取失败');
-      if(version!==revision)return;identityReport=identityResult;
+      window.ResultPlayer.configure(result,frame=>sync(frame/result.fps));
+      if (!data.summaryOnly) {
+        const anchorsResponse=await fetch('/api/head-anchors?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
+        const anchorsResult=await anchorsResponse.json();if(!anchorsResponse.ok)throw Error(anchorsResult.error||'锚点读取失败');
+        if(version!==revision)return;headAnchors=anchorsResult.anchors||{};
+        const identityResponse=await fetch('/api/identity-links?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
+        const identityResult=await identityResponse.json();if(!identityResponse.ok)throw Error(identityResult.error||'身份关联读取失败');
+        if(version!==revision)return;identityReport=identityResult;
+      }
       for (const id of result.worm_ids) {
         const option = document.createElement('option'); option.value = id; option.textContent = '线虫 ' + String(id).padStart(2, '0');
         el('result-worm').append(option);
@@ -370,7 +378,7 @@ window.StudioResults = (() => {
         if(!el(id).open)video.pause();
       }
       if(!visible || latest?.status!=='complete' || !el(id).open)return;
-      if(!detailsStarted || (!latest.summaryOnly && id!=='summary-trends' && !fullDetails))load(latest);
+      if(!detailsStarted || (id!=='summary-trends' && !fullDetails))load(latest);
       else if(id==='result-video-details')attachVideo(latest);
     });
   }

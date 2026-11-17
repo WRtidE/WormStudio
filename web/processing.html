@@ -23,14 +23,14 @@
 <section class="live-preview" aria-label="实时处理画面">
   <div class="live-toolbar" hidden data-resizable="处理帧信息" data-resize-axis="x"><strong id="live-stage">处理预览</strong><span id="live-frame"></span></div>
   <div class="live-views">
-    <div class="live-screen">
+    <div class="live-screen" title="滚轮缩放 · 拖动平移 · 双击复位">
       <div id="live-picture" hidden><img id="live-image" alt="当前处理帧"><span id="live-focus-box" hidden></span></div>
       <p id="live-empty">等待首帧</p>
     </div>
     <details id="live-focus" open hidden>
       <summary>虫体局部放大<span class="focus-action"></span></summary>
       <div class="focus-body">
-        <canvas id="focus-image" aria-label="当前源帧的虫体局部" hidden></canvas>
+        <div id="focus-screen" title="滚轮缩放 · 拖动平移 · 双击复位" hidden><canvas id="focus-image" aria-label="当前源帧的虫体局部"></canvas></div>
         <p id="focus-empty">此帧无可用的虫体局部</p>
         <div class="focus-footer"><span id="focus-frame">—</span><label><input type="checkbox" id="focus-outline" checked disabled>显示轮廓</label></div>
       </div>
@@ -46,4 +46,5 @@
 
 <section id="error-card" class="progress-card error-card" hidden><h2>需要检查</h2><pre id="error-text"></pre><p class="help">已完成的结果会保留。你可以选择新视频继续处理；重新标注或修改参数后，程序会自动另存一份结果。</p></section>
 <details class="processing-details"><summary>处理步骤与任务信息</summary><div class="processing-detail-content"><p id="current-detail" class="help"></p><ol id="stage-list" class="stage-list"></ol><dl class="processing-facts"><div><dt>视频帧数</dt><dd id="total-frames">—</dd></div><div><dt>线虫数量</dt><dd id="total-worms">—</dd></div><div><dt>计算设备</dt><dd id="device">—</dd></div><div><dt>样本名称</dt><dd id="sample">—</dd></div><div><dt>保存位置</dt><dd id="output-path">—</dd></div></dl></div></details>
-</main><footer class="processing-footer"><span id="last-update" role="status"></span><details class="processing-actions" hidden><summary>更多操作</summary><div class="footer-actions"><button id="finish-session" class="secondary" hidden>完成并退出 <span>→</span></button><button id="review-video" class="secondary" hidden>重新标注本视频</button><button id="new-video" class="primary" hidden>选择新视频 <span>→</span></button></div></details></footer><script src="/workspace-links.js"></script><script src="/analysis-presentation.js"></script><script src="/live-preview.js"></script><script src="/processing.js"></script></body></html>
+</main><footer class="processing-footer"><span id="last-update" role="status"></span><details class="processing-actions" hidden><summary>更多操作</summary><div class="footer-actions"><button id="finish-session" class="secondary" hidden>完成并退出 <span>→</span></button><button id="review-video" class="secondary" hidden>重新标注本视频</button><button id="new-video" class="primary" hidden>选择新视频 <span>→</span></button></div></details></footer>
+<script src="/workspace-links.js"></script><script src="/analysis-presentation.js"></script><script src="/result-viewport.js"></script><script src="/live-preview.js"></script><script src="/processing.js"></script></body></html>

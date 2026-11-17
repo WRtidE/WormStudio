@@ -26,6 +26,10 @@ def check(root):
             with p.open('rb') as image:
                 if image.read(8) != b'\x89PNG\r\n\x1a\n':errors.append(f'invalid PNG: {rel}')
             continue
+        if rel.as_posix() == 'tools/electron/WormStudio.ico':
+            with p.open('rb') as image:
+                if image.read(4) != b'\x00\x00\x01\x00':errors.append(f'invalid ICO: {rel}')
+            continue
         try:text=p.read_text(encoding='utf-8-sig')
         except UnicodeError:errors.append(f'non-text file: {rel}');continue
         if PRIVATE_PATH.search(text) or SECRET.search(text):errors.append(f'private path or credential pattern: {rel}')

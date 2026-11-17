@@ -55,6 +55,33 @@ class ResultSessionTests(unittest.TestCase):
                 urllib.request.urlopen(urllib.request.Request(self.url+route,headers=headers))
             self.assertEqual(error.exception.code, status)
 
+    def test_completed_chamber_streams_its_own_video_while_another_run_is_active(self):
+        from batch_queue import BatchQueue
+        from workspace_sessions import result_video_files
+        sample = 'first-chamber'
+        config = dict(sample=sample, video=str(self.video), centerline_method='body_sequence')
+        base = self.root/'outputs'/sample
+        annotated = result_video_files(base, config)[0][2]
+        annotated.parent.mkdir(parents=True)
+        annotated.write_bytes(b'chamber-one')
+        (base/'pipeline-config.json').write_text(json.dumps(config))
+        (base/'pipeline-state.json').write_text(json.dumps({'stages': {'export': {'status': 'complete'}}}))
+        batch = BatchQueue(self.root/'config/batch.json')
+        batch.groups = [dict(id='saved', samples=[sample])]
+        batch.archived[sample] = dict(sample=sample, status='complete')
+        self.progress.batch = batch
+        self.progress.data.update(sample='next', status='running')
+        self.progress.artifacts['video'] = self.video
+        url = self.url+'/artifact?key=video&inline=1&run=first-chamber'
+        request = urllib.request.Request(url+'&group=saved', headers={'Range':'bytes=0-6'})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual((response.status, response.read()), (206, b'chamber'))
+        for suffix, status in [('', 409), ('&group=unknown', 404)]:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(url+suffix)
+            self.assertEqual(error.exception.code, status)
+        self.assertEqual(self.progress.data['sample'], 'next')
+
     def test_next_video_validates_before_reset_and_refresh_keeps_annotation(self):
         self.progress.fail('example failure')
         with self.assertRaises(urllib.error.HTTPError): self.post('/api/new-video',{'video_path':str(self.video)},False)

@@ -584,11 +584,28 @@ def create_server(annotation=None, progress=None):
 
         def send_artifact(self, library=False):
             from urllib.parse import parse_qs, urlsplit, quote
-            query = parse_qs(urlsplit(self.path).query)
+            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
             if library:
                 from workspace_library import media
                 path = media(ROOT, query.get('id', [''])[0])
-            else: path = progress.artifacts.get(query.get('key', [''])[0])
+            else:
+                key = query.get('key', [''])[0]
+                sample = query.get('run', [None])[0]
+                if 'group' in query:
+                    from workspace_sessions import load_config, saved_videos
+                    try:
+                        with progress.lock:
+                            items = progress.batch.group_items(query['group'][0] or None) if progress.batch else []
+                        if not any(i['sample'] == sample and i['status'] == 'complete' for i in items):
+                            self.respond(404, {}); return
+                        path = saved_videos(*load_config(ROOT, sample))[key][1]
+                    except (KeyError, OSError, TypeError, ValueError):
+                        self.respond(404, {}); return
+                else:
+                    with progress.lock:
+                        if sample is not None and sample != progress.data['sample']:
+                            self.respond(409, dict(error='结果会话已改变')); return
+                        path = progress.artifacts.get(key)
             if path is None or not path.is_file(): self.respond(404, {}); return
             total = path.stat().st_size
             start, end, code = 0, total-1, 200
@@ -721,7 +738,7 @@ def create_server(annotation=None, progress=None):
                             active = progress.data['status'] == 'complete' and progress.data['sample'] == sample
                         if not active and not any(i['sample'] == sample and i['status'] == 'complete' for i in items):
                             raise ValueError('所选任务没有已完成的结果')
-                        self.respond(200, saved_timeline(ROOT, sample))
+                        self.respond(200, saved_timeline(ROOT, sample, trend_only=query.get('detail') != ['1']))
                     elif route.path == '/api/batch-results':
                         self.respond(200, dict(items=items, reports=chamber_summaries(ROOT, items)))
                     else:

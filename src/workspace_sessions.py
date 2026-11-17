@@ -236,6 +236,19 @@ def restore_saved_timing(progress,base,sample):
                          saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
 
 
+def result_video_files(base, config):
+    from centerline_methods import method_source
+    folder = base / ('phenotypes-' + method_source(config['centerline_method']))
+    return [('video', '标注视频', folder / f'{config["sample"]}_annotated_full-frame.mp4', 'export'),
+            ('source-video', '原始视频（只读）', Path(config['video']), 'metrics')]
+
+
+def saved_videos(base, config):
+    stages = json.loads((base / 'pipeline-state.json').read_text(encoding='utf-8')).get('stages', {})
+    return {key: (label, path) for key, label, path, stage in result_video_files(base, config)
+            if stages.get(stage, {}).get('status') in ('complete', 'reused') and path.is_file()}
+
+
 def chamber_summaries(root, items):
     from centerline_methods import method_source
     from result_metrics import phenotype_results
@@ -252,19 +265,24 @@ def chamber_summaries(root, items):
                 raise ValueError('缺少线虫指标')
             data.update(chamber_id=item.get('chamber_id'), video_name=item['video_name'])
             reports[sample] = data
+            try:
+                data['videos'] = [dict(key=key, label=label) for key, (label, _) in saved_videos(base, config).items()]
+            except (OSError, ValueError):
+                data['videos'] = []
         except (OSError, ValueError, KeyError, TypeError, IndexError):
             reports[sample] = {'error': '指标文件缺失或无法读取'}
     return reports
 
 
-def saved_timeline(root, sample):
+def saved_timeline(root, sample, *, trend_only=True):
     from centerline_methods import method_source
     from frame_metrics import load_frame_metrics
     base, config = load_config(root, sample)
     folder = base / ('phenotypes-' + method_source(config['centerline_method']))
     summary = json.loads((folder/'summary.json').read_text(encoding='utf-8'))
     return dict(load_frame_metrics(folder/'per_frame_metrics.csv', summary['fps'],
-                                   summary['worms'][0]['frames'], trend_only=True), sample=sample)
+                                   summary['worms'][0]['frames'], trend_only=trend_only), sample=sample,
+                crop_xyxy=summary.get('crop_xyxy') or config.get('crop_xyxy'))
 
 
 def reopen(progress,root,sample):

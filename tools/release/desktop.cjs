@@ -107,6 +107,7 @@ async function launch() {
   delete process.env.PYTHONHOME;
   if (!viewer) {
     splash = new BrowserWindow({title:'WormStudio', width:540,height:210,autoHideMenuBar:true,
+      icon:path.join(payload,'code',windows?'tools/electron/WormStudio.ico':'web/wormstudio-icon.png'),
       webPreferences:{sandbox:true, contextIsolation:true, nodeIntegration:false}});
     await splash.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<meta charset="utf-8"><style>body{font:16px system-ui;padding:18px;color:#183a32}h2{margin:0 0 14px}</style><h2>WormStudio</h2><p>正在准备线虫分析工作台…</p>'));
     splash.on('closed', () => { if (splash) app.quit(); });
