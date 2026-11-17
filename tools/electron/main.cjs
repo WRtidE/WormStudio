@@ -124,6 +124,12 @@ function launch() {
     webPreferences: {preload:path.join(__dirname,'workspace-preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false}
   });
   win.on('page-title-updated', event => event.preventDefault());
+  if (process.platform === 'win32') {
+    win.once('show', () => {
+      const handle = win.getNativeWindowHandle().toString('hex');
+      log.write(`WormStudio window shown: pid=${process.pid} hwnd_le=${handle}\n`);
+    });
+  }
   win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
   win.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) event.preventDefault();
@@ -171,6 +177,7 @@ function launch() {
   function fail(error) {
     if (closing) return;
     closing = true;
+    log.write('Desktop startup or backend error: '+error.message+'\n');
     dialog.showErrorBox('工作台未能继续运行', error.message+'\n日志：'+logPath);
     app.quit();
   }

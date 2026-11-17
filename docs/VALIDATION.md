@@ -14,6 +14,8 @@
 
 Windows 拒绝了本次测试进程到 `127.0.0.1` 的连接（`WinError 10013`）。上述 30 项产生 31 条错误记录，其中一项有两个失败的子用例。推送后可在 [GitHub Actions 工作流](../.github/workflows/tests.yml) 查看独立运行环境下的完整回归和 Windows 桌面启动结果。
 
+提交 `721f344` 的 [Source checks #5](https://github.com/WRtidE/WormStudio/actions/runs/44057630605) 已完成。Ubuntu 全部通过。Windows 已通过依赖安装、源码检查和桌面的 HTTP 就绪检查，随后窗口检测超时，清理时资源文件仍被占用。该次 Windows 作业跳过了后续回归。窗口检测现通过 Electron 报告的原生句柄向 Windows 核对可见性、进程和标题，测试退出时会等待资源释放。本地已验证 Win32 可见窗口检测和锁定文件清理；完整 Windows 桌面流程须以修正后提交的 Actions 结果为准。
+
 ## 2026-11-15 · 桌面 1.0.0 / self-contact-101-v3
 
 在 Apple 芯片 Mac 上，从本机开发目录导出干净源码副本，使用 Python 3.11.15 和 Node.js 24.21.0 执行以下检查。
