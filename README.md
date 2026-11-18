@@ -1,86 +1,85 @@
-# Worm Studio
+<p align="center">
+  <img src="web/wormstudio-icon.png" width="240" height="240" alt="WormStudio 项目图标">
+</p>
 
-本地运行的线虫视频分析工作台：人工点选虫体，自动识别与跟踪、分析姿态、计算表型指标，并逐帧复核身份和头尾。
+<h1 align="center">WormStudio</h1>
 
-**Windows x64：** 在仓库根目录用 Python 3.11 建立环境并安装 CPU 或 CUDA 依赖，随后双击 `start.bat`。项目内的 `.venv` 可直接启动。详见[Windows 安装与启动](docs/INSTALL.md)。
+<p align="center"><em>🔬 在本机跟踪线虫，逐帧测量体态与运动</em></p>
 
-**在 Mac 上继续开发：** 按 [Mac 开发与打包指南](docs/MACOS.md) 安装环境。在仓库根目录运行 `python tools/macos/run_dev.py` 即可从当前源码打开 Electron 桌面窗口。修改界面或算法后重启即可，不需要每次重新制作应用包。目标为 Apple 芯片、macOS 14+、Python 3.11。
+<p align="center">
+  <a href="#下载与启动"><img src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS-475569?style=flat-square" alt="桌面平台：Windows 和 macOS"></a>
+  <a href="docs/QUALITY_SCHEMA.md"><img src="https://img.shields.io/badge/SAM2-Large-007F73?style=flat-square" alt="跟踪模型：SAM2 Large"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases/latest"><img src="https://img.shields.io/github/v/release/WRtidE/WormStudio?style=flat-square&amp;color=2864A0" alt="GitHub 最新发布版本"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases"><img src="https://img.shields.io/github/downloads/WRtidE/WormStudio/total?style=flat-square&amp;color=784BA0" alt="GitHub 发布附件累计下载量"></a>
+</p>
 
-## 当前源码版本
+<p align="center">
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip">下载 Windows 版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
+  <a href="#用练习视频完成第一次分析">第一次分析</a> ·
+  <a href="#windows-可选-gpu-加速">GPU 加速</a>
+</p>
 
-桌面应用版本为 **1.0.1**。本次更新修复 Mac 启动架构判断、应用图标尺寸和通道计数标签显示，算法保持不变。实测范围与限制见 [v1.0.1 发布说明](docs/releases/v1.0.1.md)。
+在视频的一帧里点选虫体，WormStudio 会跟踪它在整段视频中的位置与姿态。你可以回看叠加了轮廓和中线的标注视频，也可以导出逐帧数据，在 Excel 中比较体长、体宽和运动速度。
 
-新建单虫分析默认使用 **SAM2 Large + 多帧身体连续跟踪**（`body_sequence`）。程序提取 101 点中线，利用 13 个身体点的跨帧运动和绕柱方向选择连续路径。人工头点和自动推断分别记录。详见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
+## 下载与启动
 
-工作台支持多培养槽标注、标注帧测量和通道计数。结果页按视频和培养槽汇总形态与运动指标，支持全屏播放、逐帧定位、复核关键节点和导出 CSV。近期改动见[更新记录](CHANGELOG.md)。
+桌面包已经包含运行环境、识别模型和练习视频。第一次使用，下载与你的电脑对应的**桌面包**即可。
 
-运行环境采用 Python 3.11。程序自动选择可用的 NVIDIA CUDA、Apple Metal（MPS）或 CPU。通道计数是独立入口，支持逐帧复核越线记录并导出 Excel，操作见[使用指南](docs/USER_GUIDE.md)。
+| 电脑 | 下载 | 如何启动 |
+| --- | --- | --- |
+| Windows 64 位（x64） | [Windows v1.0.2 基础包，约 1.40 GiB](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”。打开解压后的 `WormStudio` 文件夹，双击 `WormStudio.exe`。基础包可直接用 CPU 分析。 |
+| Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.1 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
-工作台采用清爽的白色界面：首页聚焦文件导入，选中素材后显示画面与处理面板。左侧以文件树管理素材，支持文件夹层级、拖动排序、重命名与移除，重启后恢复；移除保留原文件和分析记录。文件信息、历史分析和流程说明按需展开，文件夹导入与新建位于文件栏顶部，路径导入、布局重置、评测和帮助收在顶部菜单。支持自动标注草稿，以及按视频查看历史结果。
+## 用练习视频完成第一次分析
 
-## 桌面版下载
+下面以 Windows v1.0.2 为例。随包的 `practice.avi` 只有 5 帧，适合第一次熟悉标注和导出。
 
-- **Mac v1.0.1**：[下载离线 ZIP](https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip)，适用于 Apple 芯片、macOS 14+。解压后将应用拖入“应用程序”。首次运行按包内“先读我”完成准备。
-- **Windows x64 v1.0.2**：解压基础包，打开 `WormStudio.exe` 即可分析。在“设置 → 通用 → 检测 GPU”查看本机能否加速。[下载基础包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip) · [可选 GPU 分包与说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.0.2)
-- [发布页、校验文件与历史版本](https://github.com/WRtidE/WormStudio/releases)。离线安装包包含运行环境和模型；源码归档用于开发。
+1. **选择视频。** 在左侧文件列表中选择 `practice.avi`，点击 **开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
+2. **选择区域和单位。** 练习视频选择 **完整画面** 和 **像素单位**，点击 **下一步：点选线虫**。分析实验视频时，如果需要以微米报告体长，选择 **标尺标定**，填入画面中标尺的实际长度（μm），再用 **手动选两端** 点出标尺的两个端点。
+3. **点选并确认虫体。** 在深色虫体内部点一下，等待轮廓出现。如果漏掉一段，在那一段内部补点。如果圈入了背景，选 **排除提示** 并点击误选的位置。轮廓贴合后，点击底部 **确认虫体**。练习视频可以跳过头端标记。
+4. **开始分析。** 点击 **下一步：确认并开始**，核对后点 **保存并开始处理**。在 **进度** 页查看跟踪、姿态分析和导出的进展。
+5. **回看结果。** 处理完成后打开 **结果 → 查看分析视频**，点击播放或逐帧查看。核对虫体轮廓和中线后，可在同一页导出需要的文件。
 
-## 开始使用
+## 导出数据、找回历史结果
 
-先按 [安装说明](docs/INSTALL.md) 配置环境、安装依赖并下载权重，然后在仓库根目录运行：
+在 **结果 → 其他文件** 中选择要保存的内容。
 
-```powershell
-python tools/check_environment.py
-python studio.py
-```
+| 想做什么 | 选择哪一项 |
+| --- | --- |
+| 分享或复核识别过程 | **标注视频**，导出带轮廓和中线的 MP4 |
+| 在 Excel 中比较每一帧的测量值 | **逐帧指标 CSV** |
+| 查看每条虫的汇总指标 | **线虫汇总 CSV** |
+| 保存统计图 | 展开 **更多数据与质量记录 → 指标与质心轨迹 PNG**。Windows v1.0.2 可直接显示中文样本名。 |
 
-该命令在 Electron 中打开工作台。Windows 激活环境后也可双击 `start.bat`。导入自己的视频，选择“像素单位”或“标尺标定”，点选虫体并在底部逐条确认掩膜，再开始分析。详见 [使用指南](docs/USER_GUIDE.md)。
+指标显示 **“—”** 时，点击指标名称可查看原因和有效数据范围。选择像素单位的任务用 px 表示长度。遇到虫体交叉、遮挡或头尾难以分辨的片段，可逐帧复核。如需测量头部角度，请在清晰帧人工确认头端。
 
-源码包**不包含模型权重、实验视频、分析结果或真实人工标注**。缺少模型时仍能启动工作台，但相关推理功能不可用。
+关闭软件后，下次启动可在左侧 **历史任务** 中打开之前的结果。Windows 桌面版可通过 **设置 → 通用 → 工作目录 → 在文件夹中打开** 找到本机文件。分析结果在 `outputs` 中。备份时请保留整个工作目录。如果曾使用 **通过视频路径打开**，还需保留对应的原视频。
 
-## 功能与边界
+## Windows 可选 GPU 加速
 
-- 原始视频、掩膜、中线与逐帧指标联动查看；支持虫体聚焦和缩放。
-- 个体身份自动重新关联，歧义片段保留人工复核入口。
-- 首个清晰帧人工确定头端优先；可按端部渐细程度初始化候选，沿可靠骨架保持方向。
-- 当前姿态结果用 H/T 标记有方向的端点，A/B 标记方向待定；侧栏与逐帧记录区分人工确认和自动候选。
-- 正式测量骨架与待复核显示骨架分开；头尾未确认不阻止显示虫体。
-- 无物理标定时只输出像素结果；自接触、长遮挡后的身份和头尾仍可能不确定。
+打开 **设置 → 通用 → 检测 GPU**。先看检测结果，再决定是否下载组件。
 
-当前算法属于研究软件，四段开发视频的连续显示结果不等于独立准确率验证。复核候选和自动端点方向应结合逐帧质量记录解读。规则见 [质量与测量](docs/QUALITY_SCHEMA.md)。
+| 检测结果 | 接下来怎么做 |
+| --- | --- |
+| 显示显卡型号，并提示工作台已能使用它计算 | 直接开始分析，现有环境已经可以加速。 |
+| 检测到 NVIDIA 显卡，提示工作台当前使用 CPU | 可以继续用 CPU。需要加速时，按下方步骤启用。 |
+| 没有可用的 NVIDIA 显卡或驱动 | 使用基础包进行 CPU 分析即可。 |
 
-## 目录
+1. 将 [GPU 分包 1](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-GPU-cu128-part1.zip) 和 [GPU 分包 2](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-GPU-cu128-part2.zip) 下载到**同一个文件夹**，保留原文件名和 ZIP 格式。两份共约 3.12 GiB，软件所在磁盘另预留 10 GiB。
+2. 等当前分析完成，点击设置里的 **启用离线加速包**。加速窗口打开后，**退出工作台，保留加速窗口**。
+3. 在加速窗口点击 **选择已有离线包…**，选择存放两个 ZIP 的文件夹。看到“GPU 加速已启用”后，重新打开工作台，点击 **检测 GPU** 核对显卡型号。
 
-```text
-WormStudio/
-├── studio.py                 # 工作台启动入口
-├── worm_pipeline.py          # 流程与命令行入口
-├── evaluation.py             # 评测任务工具
-├── review_saved_result.py    # 已有结果只读查看
-├── src/                      # 分割适配、姿态、身份、头尾、测量、HTTP服务
-├── web/                      # 无前端构建依赖的HTML/CSS/JavaScript
-├── config/                   # 公共参数与本机配置示例
-├── tests/                    # 合成数据与接口回归
-├── tools/                    # 环境检查、模型下载、源码导出检查
-├── docs/                     # 安装、用法、架构、质量、开发、发布
-└── .github/workflows/        # Linux、Windows 和 macOS 检查配置
-```
+## 分析更多视频
 
-运行时产生的 `models/`、`resources/`、`input_videos/`、`outputs/` 和 `evaluation_data/` 都在 Git 忽略规则内。
+- 要**依次分析多个视频**，一次导入多个文件，按顺序为每个视频确认区域、单位和虫体，最后点击 **确认虫体并开始顺序处理**。
+- 同一画面包含多个培养槽时，先勾选 **按培养槽标注** 再开始标注。分别框选各槽并确认虫体，完成后可按槽查看结果。
+- 要**统计线虫通过通道的次数**，在左侧切换至 **通道计数**，设置通道数、检测线和两侧边界后点击 **开始计数**。结果支持逐帧回看和导出 Excel。
 
-## 开发与发布
+更详细的标注、批处理和复核操作见[完整使用指南](docs/USER_GUIDE.md)。指标的计算条件见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
 
-界面在 `web/`，识别、测量和后端在 `src/`，Electron 窗口在 `tools/electron/`。在已安装依赖的 PowerShell 中运行回归测试。
+## 版本与开发资料
 
-```powershell
-python run_tests.py
-$tests = (Get-ChildItem tests/*.js, tests/*.cjs -File).FullName
-node --test @tests
-```
+[桌面版发布页与校验清单](https://github.com/WRtidE/WormStudio/releases) · [更新记录](CHANGELOG.md) · [验证记录](docs/VALIDATION.md)
 
-上传前检查待推送的提交。生成与提交一致的 ZIP、验证源码清单和推送到现有仓库的步骤见[发布指南](docs/RELEASE.md)。
-
-[本轮验证](docs/VALIDATION.md) · [代码架构](docs/ARCHITECTURE.md) · [开发与验证](docs/DEVELOPMENT.md) · [发布方法](docs/RELEASE.md) · [贡献说明](CONTRIBUTING.md)
-
-## 第三方与许可
-
-第三方来源及固定提交见 [THIRD_PARTY.md](THIRD_PARTY.md)。项目自有代码尚未指定统一开源许可证；公开上传不等于已授予开源再分发许可。模型和上游源码遵循各自条款。
+需要从源码运行或参与开发，可参阅 [Windows 安装与启动](docs/INSTALL.md)、[Mac 开发指南](docs/MACOS.md)、[代码架构](docs/ARCHITECTURE.md)、[开发与测试](docs/DEVELOPMENT.md)和[发布指南](docs/RELEASE.md)。项目自有代码尚未指定统一开源许可证。第三方依赖及模型的来源和许可见[第三方说明](THIRD_PARTY.md)。
