@@ -43,7 +43,7 @@ Remove-Item Env:SAM2_BUILD_CUDA
 python tools/download_models.py --model all --output models
 ```
 
-下载器从记录的官方地址下载 SAM2 Large，并核对 SHA-256。已有文件哈希不符时拒绝覆盖。无需安装另一个单虫算法仓库，源码已放在 `packages/single-worm-methods`。
+下载器从记录的官方地址下载 SAM2 Large，并核对 SHA-256。已有文件哈希不符时拒绝覆盖。当前方法只需要 SAM2 Large 与仓库内源码。
 
 模型来源和可选 Tiny / WormTracer 配置见 [模型说明](MODELS.md)。
 

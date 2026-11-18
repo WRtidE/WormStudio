@@ -28,8 +28,9 @@ def validate_reviews(config,ids,count):
         ref_lo,ref_hi=item.get('reference_start_frame'),item.get('reference_end_frame')
         if type(ref_lo) is not int or type(ref_hi) is not int or not 0<=ref_lo<=ref_hi<lo:
             raise ValueError('片段复核必须记录实际比较的前序片段范围')
-        for key in ('id','reviewer','evidence','confirmed_at'):
+        for key in ('id','reviewer','confirmed_at'):
             if not isinstance(item.get(key),str) or not item[key].strip():raise ValueError(f'片段复核缺少 {key}')
+        if not isinstance(item.get('evidence',''),str):raise ValueError('片段复核缺少 evidence')
         if item['id'] in seen or (w,lo,hi) in bounds:raise ValueError('片段复核重复')
         try:
             if datetime.fromisoformat(item['confirmed_at']).utcoffset() is None:raise ValueError()

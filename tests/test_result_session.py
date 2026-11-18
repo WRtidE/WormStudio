@@ -142,9 +142,9 @@ class ResultSessionTests(unittest.TestCase):
         self.assertEqual(imported.read_bytes(),self.video.read_bytes())
 
     def test_completed_summary_nulls_are_not_reported_as_zero(self):
-        config=dict(sample='done',video=str(self.video),centerline_method='niu')
+        config=dict(sample='done',video=str(self.video),centerline_method='body_sequence')
         self.progress.configure(config,dict(frames=6,ids=[1]),[dict(name='metrics',phase='metrics')],self.root)
-        folder=self.root/'phenotypes-centerlines-niu';folder.mkdir()
+        folder=self.root/'phenotypes-centerlines-body-sequence';folder.mkdir()
         (folder/'worm_summary.csv').write_text('worm_id,frames,valid_frames,median_length_um,mean_speed_um_s\n1,6,0,,nan\n',encoding='utf-8')
         self.progress.done(0);self.progress.finish(self.root,config,'metrics')
         row=self.progress.snapshot()['results'][0]
@@ -154,11 +154,11 @@ class ResultSessionTests(unittest.TestCase):
 
     def test_reopened_result_uses_saved_duration_without_changing_history(self):
         from workspace_sessions import reopen
-        base=self.root/'outputs'/'saved';folder=base/'phenotypes-centerlines-niu'
+        base=self.root/'outputs'/'saved';folder=base/'phenotypes-centerlines-body-sequence'
         folder.mkdir(parents=True)
         (folder/'summary.json').write_text(json.dumps({'worms':[{'frames':6}], 'fps':12}),encoding='utf-8')
         (base/'pipeline-state.json').write_text(json.dumps({'stages':{'metrics':{'status':'complete'}}}),encoding='utf-8')
-        config=dict(sample='saved',video=str(self.video),centerline_method='niu')
+        config=dict(sample='saved',video=str(self.video),centerline_method='body_sequence')
         record=base/'pipeline-progress.json'
         cases=[({'sample':'saved','status':'complete','elapsed_seconds':125.5,'finished_at':123456,'device':'saved GPU'},125.5),
                ({'sample':'other','status':'complete','elapsed_seconds':900},None),
@@ -237,7 +237,7 @@ class ResultSessionTests(unittest.TestCase):
     def test_reannotation_previews_and_uses_selected_frame_in_fresh_run(self):
         base=self.root/'outputs'/'old';base.mkdir(parents=True)
         saved=base/'original.txt';saved.write_text('preserve old annotation and results')
-        config=dict(sample='old',video=str(self.video),centerline_method='niu',scale_um_per_px=2.5,
+        config=dict(sample='old',video=str(self.video),centerline_method='body_sequence',scale_um_per_px=2.5,
                     crop_xyxy=[10,10,100,70],groups=[dict(anchor_frame=0,worms=[])])
         self.progress.configure(config,dict(frames=6,ids=[1]),[],base)
         with self.assertRaises(urllib.error.HTTPError) as error:
@@ -257,7 +257,7 @@ class ResultSessionTests(unittest.TestCase):
         self.assertEqual(annotation.frame,3)
         self.assertEqual(annotation.crop,[0,0,128,80])
         self.assertEqual(annotation.settings['scale_um_per_px'],2.5)
-        self.assertEqual(annotation.settings['centerline_method'],'niu')
+        self.assertEqual(annotation.settings['centerline_method'],'body_sequence')
         self.assertNotEqual(annotation.settings['sample'],'old')
         self.assertEqual(annotation.settings['previous_sample'],'old')
         self.assertEqual(annotation.settings['groups'],[])

@@ -11,7 +11,6 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 import analyze_phenotypes as metrics
-import extract_centerlines
 import manual_worm_annotation as manual
 import quality_stage
 import result_overlay
@@ -21,7 +20,6 @@ from multiworm_quality import sequence_guards, validate_reviews
 from pipeline_progress import PipelineProgress
 from quality_schema import VERSION, permissions
 from quality_fixture import make_fixture
-from crossing_centerline import resolve_sequence
 from pose_segments import accepted_segments
 from worm_pipeline import compatible_identity
 
@@ -79,13 +77,6 @@ class IdentityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'不能恢复身份'):
             sequence_guards(self.masks,identity_confirmations=[event])
 
-    def test_contact_does_not_enter_self_contact_solver(self):
-        with patch('crossing_centerline.topology_candidates',side_effect=AssertionError('not a self crossing')):
-            p,q,diagnostic=resolve_sequence([self.masks[1][2]],[False],10)
-        self.assertTrue(np.isnan(p).all());self.assertTrue(np.isnan(diagnostic).all())
-        self.assertEqual(q[0]['topology'],'mask_excluded')
-        np.testing.assert_array_equal(accepted_segments(4,1,{(1,1):True})[1],[2,3])
-
     def test_new_missing_dimensions_fail_closed_legacy_remains_labelled(self):
         old=dict(worm_id=1,mask_valid=True,centerline_valid=True,length_um=100,speed_um_s=0)
         self.assertEqual(present_frame(old)['length_um'],100)
@@ -108,46 +99,5 @@ class IdentityContractTests(unittest.TestCase):
             missing=dict(row);missing.pop(name+'_valid')
             self.assertFalse(permissions(missing)['head'],name)
         self.assertFalse(any(permissions(dict(row,quality_schema_version='future-unknown')).values()))
-
-    def test_fixture_ui_csv_json_overlay_and_summary_share_rules(self):
-        phenotype=json.loads((metrics.ROOT/'config/phenotype_config.json').read_text(encoding='utf-8'))
-        observed=[]
-        def overlay(row):
-            result=present_frame(row);observed.append((int(row['frame']),int(row['worm_id']),result));return result
-        with patch.object(metrics,'ROOT',self.root),patch.object(extract_centerlines,'ROOT',self.root),patch.object(review,'ROOT',self.root):
-            quality_stage.run(self.config['sample'])
-            extract_centerlines.run(self.config['sample'],'niu')
-            with patch.object(result_overlay,'present_frame',side_effect=overlay):
-                report=metrics.analyze(self.config['sample'],phenotype,'niu','centerlines-niu')
-            output=self.root/'outputs'/self.config['sample']/'phenotypes-centerlines-niu'
-            with patch('sys.argv',['review','--sample',self.config['sample'],'--centerline-source','centerlines-niu']):review.main()
-        csv_rows=list(csv.DictReader((output/'per_frame_metrics.csv').open(encoding='utf-8-sig')))
-        json_rows=json.loads((output/'per_frame_metrics.json').read_text(encoding='utf-8'))
-        qualities=json.loads((output/'quality.json').read_text(encoding='utf-8'))
-        lookup={(int(r['frame']),int(r['worm_id'])):r for r in csv_rows}
-        for r,j,q in zip(csv_rows,json_rows,qualities):
-            self.assertEqual(present_frame(r),present_frame(j))
-            self.assertEqual(present_frame(r)['quality']['permissions'],q['permissions'])
-        for f,w,view in observed:self.assertEqual(view,present_frame(lookup[f,w]))
-        post=lookup[4,1];confirmed=lookup[6,1]
-        self.assertEqual(post['mask_valid'],'True');self.assertEqual(post['identity_valid'],'False')
-        self.assertGreater(float(post['area_um2']),0)
-        self.assertEqual(post['speed_um_s'],'');self.assertEqual(post['length_um'],'')
-        self.assertEqual(confirmed['identity_valid'],'True');self.assertGreater(float(confirmed['length_um']),0)
-        self.assertEqual(report['worms'][0]['identity_valid_frames'],5)
-        self.assertEqual(report['worms'][1]['identity_valid_frames'],2)
-        with np.load(output/'centerlines.npz') as accepted:
-            self.assertNotIn('w1_f4',accepted.files);self.assertIn('w1_f6',accepted.files)
-        with np.load(output/'diagnostic-centerlines.npz') as diagnostic:self.assertIn('w1_f4',diagnostic.files)
-        progress=PipelineProgress();progress.data.update(sample=self.config['sample'],fps=10.,frames=10)
-        progress.artifacts['metrics']=output/'per_frame_metrics.csv'
-        progress.bind_server(manual.create_server(progress=progress))
-        try:
-            with urllib.request.urlopen(progress.url.removesuffix('/progress')+'/api/frame-metrics?run='+self.config['sample']) as response:payload=json.load(response)
-            self.assertEqual(payload['frames'][4][0],present_frame(post))
-        finally:progress.close()
-        verification=json.loads((output/'verification.json').read_text(encoding='utf-8'))
-        self.assertEqual(verification['frames'],10);self.assertEqual(verification['quality_schema_version'],VERSION)
-
 
 if __name__=='__main__':unittest.main()

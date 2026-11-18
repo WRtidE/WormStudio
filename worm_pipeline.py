@@ -3,8 +3,8 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, SELF_CONTACT_VERSION, analysis_method, method_source
-from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
+from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
+from resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
     ensure_runtime()
@@ -33,13 +33,9 @@ SCALE_SOURCE = "User-supplied calibration"
 GROUPS = []
 REVIEW_INTERVALS = []           # 人工复核后，明确需要排除出指标汇总的帧区间
 
-# 初始拟合缩放比例与损失权重；0.2 比 0.3 节省显存。
-WORMTRACER = {'rescale': 0.3, 'rescale_by_worm': {},
-              'continuity_weight': 100, 'smoothness_weight': 5000, 'length_weight': 5}
-
 RESUME = True                   # True 复用人工标注和已完成结果；False 重新标注并全算
 CHECK_ONLY = False              # True 只检查设置，不打开标注或运行计算
-STOP_AFTER = 'export'           # tracking / cleanup / quality / fit / repair / temporal / metrics / export
+STOP_AFTER = 'export'           # tracking / cleanup / quality / fit / metrics / export
 PHENOTYPE_CONFIG = ROOT / 'config' / 'phenotype_config.json'
 # ==================== 以下为处理流程，一般无需修改 ====================
 
@@ -53,16 +49,15 @@ import subprocess
 import sys
 import time
 from sam2_models import model_spec, tracking_model_matches
+from platforms.system import check_memory_pressure, stage_wait_slice, terminate_children
 
-PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'repair', 'temporal', 'metrics', 'export')
-FIT_DEFAULTS = dict(rescale=.3, continuity_weight=100, smoothness_weight=5000, length_weight=5,
-                    rescale_by_worm={})
+PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'metrics', 'export')
 
 
 def video_config():
     return dict(sample=SAMPLE_NAME, video=VIDEO_PATH, crop_xyxy=CROP_XYXY,
                 scale_um_per_px=UM_PER_PIXEL, scale_source=SCALE_SOURCE,
-                groups=GROUPS, review_intervals=REVIEW_INTERVALS, wormtracer=WORMTRACER,
+                groups=GROUPS, review_intervals=REVIEW_INTERVALS,
                 centerline_method=CENTERLINE_METHOD, sam2_model=SAM2_MODEL,
                 head_detection=HEAD_DETECTION)
 
@@ -175,31 +170,20 @@ def validate_config(config, relative_to=ROOT):
         frame(lo, '复核开始帧'); frame(hi, '复核结束帧')
         if lo > hi:
             raise ValueError('复核开始帧不能大于结束帧')
-    fit = dict(FIT_DEFAULTS, **c.get('wormtracer', {}))
-    if not isinstance(fit['rescale_by_worm'], dict) or not set(fit['rescale_by_worm']) <= set(map(str, ids)):
-        raise ValueError('rescale_by_worm 的键必须是配置中的虫编号字符串')
-    for key in ('rescale', 'continuity_weight', 'smoothness_weight', 'length_weight'):
-        if not isinstance(fit[key], (int, float)) or not math.isfinite(fit[key]) or fit[key] <= 0:
-            raise ValueError(f'WormTracer 参数 {key} 必须为正数')
-    if fit['rescale'] > 1 or any(not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 < v <= 1 for v in fit['rescale_by_worm'].values()):
-        raise ValueError('缩放比例必须大于 0 且不大于 1')
-    c['centerline_method'] = analysis_method(c.get('centerline_method','wormtracer'))
-    if c['centerline_method'] in ('self_contact','body_sequence'):
-        c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
-    if c['centerline_method']=='body_sequence':
-        if len(ids)!=1:raise ValueError('当前方法每次分析一条线虫')
-        if c.get('sam2_model','large')!='large':raise ValueError('当前方法使用SAM2 Large')
-        if c.get('tracking_point_count',13)!=13:raise ValueError('当前方法使用13个身体跟踪点')
-    c['sam2_model']=model_spec(c.get('sam2_model','large'))['size']
-    c['wormtracer'] = fit
+    c['centerline_method'] = analysis_method(c.get('centerline_method'))
+    c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
+    if len(ids) != 1: raise ValueError('当前方法每次分析一条线虫，多虫请按培养槽分组')
+    if c.get('sam2_model', 'large') != 'large': raise ValueError('当前方法使用 SAM2 Large')
+    if c.get('tracking_point_count', 13) != 13: raise ValueError('当前方法使用 13 个身体跟踪点')
+    c['sam2_model'] = model_spec(c.get('sam2_model', 'large'))['size']
     from quality_schema import VERSION as QUALITY_VERSION
     from tracking_quality import MAX_AREA_JUMP_FRACTION
-    from multiworm_quality import validate_reviews, VERSION as GUARD_VERSION
+    from multiworm_quality import validate_reviews
     validate_reviews(c, ids, n)
     from identity_reassociation import validate_reviews as validate_fragment_reviews
-    validate_fragment_reviews(c,ids,n)
+    validate_fragment_reviews(c, ids, n)
     c['quality_schema_version'] = QUALITY_VERSION
-    c['quality_rules_version'] = 'quality-guards-v6-single-body' if c['centerline_method']=='body_sequence' else GUARD_VERSION
+    c['quality_rules_version'] = 'quality-guards-v6-single-body'
     c['max_area_jump_fraction'] = MAX_AREA_JUMP_FRACTION
     return c, dict(frames=n, fps=fps, width=width, height=height, ids=ids)
 
@@ -217,42 +201,13 @@ def build_stages(config, info, snapshot, phenotype_path):
         [tracking / 'summary.json', tracking / 'tracking-quality.csv', *masks])
     add('cleanup', 'cleanup', 'clean_tracking_components.py', ['--sample', sample], [tracking / 'component-cleanup.json'])
     add('quality', 'quality', 'quality_stage.py', ['--sample', sample], [tracking / 'quality-guards.json'])
-    method = analysis_method(config.get('centerline_method','wormtracer'))
+    method = analysis_method(config.get('centerline_method'))
     source = method_source(method)
-    if method == 'self_contact':
-        from crop_recovery import FOLDER
-        recovered = tracking / FOLDER
-        add('crop-recovery', 'quality', 'crop_recovery.py', ['--sample', sample],
-            [recovered / name for name in ('summary.json', 'quality-guards.json', 'tracking-quality.csv')]
-            + [recovered/'masks'/f'worm-{w}'/f'{f:06}.png' for w in info['ids'] for f in range(info['frames'])])
-    if method in ('wormtracer','hybrid'):
-        for phase, folder, script in [('fit', 'wormtracer-tuned', 'run_wormtracer.py'),
-                                       ('repair', 'wormtracer-corrected', 'repair_wormtracer.py'),
-                                       ('temporal', 'wormtracer-temporal', 'temporal_wormtracer.py')]:
-            for worm in info['ids']:
-                args = ['--sample', sample, '--worm', worm]
-                if phase == 'fit':
-                    fit = config['wormtracer']
-                    args += ['--output-name', folder, '--crop-to-track', '--overwrite', '--rescale', fit['rescale_by_worm'].get(str(worm), fit['rescale'])]
-                    for key in ('continuity_weight', 'smoothness_weight', 'length_weight'):
-                        args += ['--' + key.replace('_', '-'), fit[key]]
-                out = base / folder / f'worm-{worm}'
-                outputs = [out / 'centerlines.npy', out / 'run.json']
-                outputs.append(out / 'quality.json')
-                add(f'{phase}-worm-{worm}', phase, script, args, outputs)
-    if method in ('topology', 'self_contact','body_sequence'):
-        for worm in info['ids']:
-            out=base/source/f'worm-{worm}'
-            outputs = [out/'centerlines.npy', out/'run.json', out/'quality.json']
-            if method == 'self_contact':
-                outputs.extend(out/name for name in ('diagnostic-candidates.npy','identity-guards.json','events.json'))
-            add(f'{method}-worm-{worm}','fit',f'extract_{method}.py',['--sample',sample,'--worm',worm],outputs)
-    if method in ('niu','hybrid'):
-        for worm in info['ids']:
-            out=base/source/f'worm-{worm}'
-            add(f'{method}-worm-{worm}', 'fit' if method=='niu' else 'temporal',
-                'extract_centerlines.py', ['--sample',sample,'--method',method,'--worm',worm],
-                [out/'centerlines.npy',out/'run.json',out/'quality.json'])
+    for worm in info['ids']:
+        out = base / source / f'worm-{worm}'
+        add(f'{method}-worm-{worm}', 'fit', f'extract_{method}.py',
+            ['--sample', sample, '--worm', worm],
+            [out/'centerlines.npy', out/'run.json', out/'quality.json'])
     results = base / ('phenotypes-'+source)
     add('metrics', 'metrics', 'analyze_phenotypes.py', ['--sample', sample, '--config', phenotype_path,
         '--centerline-method',method,'--wormtracer-source',source],
@@ -290,12 +245,6 @@ def complete(stage, config, info):
             summary=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
             if not tracking_model_matches(summary,config.get('sam2_model','large')):return False
         except (OSError,ValueError):return False
-    if stage.get('name') == 'crop-recovery':
-        from crop_recovery import VERSION as REPLAY_VERSION
-        try:
-            summary=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
-            if summary.get('crop_recovery',{}).get('version') != REPLAY_VERSION: return False
-        except (OSError,ValueError): return False
     if stage['phase']=='quality':
         from quality_stage import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
@@ -319,37 +268,21 @@ def complete(stage, config, info):
             from identity_reassociation import VERSION as ASSOCIATION_VERSION
             if report.get('identity_reassociation_version')!=ASSOCIATION_VERSION:return False
         except (OSError,ValueError): return False
-    if stage['phase'] in ('fit', 'repair', 'temporal'):
+    if stage['phase'] == 'fit':
         import numpy as np
         try:
-            try:p = np.load(stage['outputs'][0], allow_pickle=False)
-            except (ValueError,EOFError):return False
+            try: p = np.load(stage['outputs'][0], allow_pickle=False)
+            except (ValueError, EOFError): return False
             if p.shape != (info['frames'], 101, 2): return False
-            adapter = stage['name'].startswith(('niu-worm-', 'hybrid-worm-', 'topology-worm-', 'self_contact-worm-','body_sequence-worm-'))
-            if adapter or len(stage['outputs']) > 2:
-                quality=json.loads(Path(stage['outputs'][2]).read_text(encoding='utf-8'))
-                if len(quality)!=len(p): return False
-                for f,line in enumerate(p):
+            if len(stage['outputs']) > 2 and Path(stage['outputs'][2]).is_file():
+                quality = json.loads(Path(stage['outputs'][2]).read_text(encoding='utf-8'))
+                if len(quality) != len(p): return False
+                for f, line in enumerate(p):
                     if not np.isfinite(line).all() and not (np.isnan(line).all() and not quality[f]['centerline_valid']): return False
-            elif not np.isfinite(p).all(): return False
             meta = json.loads(Path(stage['outputs'][1]).read_text(encoding='utf-8'))
-            if stage['name'].startswith('body_sequence-worm-'):
-                from body_sequence_solver import signature
-                if meta.get('algorithm_signature')!=signature():return False
-                if meta.get('head_annotations')!=config.get('head_annotations',{}):return False
-            if stage['name'].startswith('self_contact-worm-') and meta.get('version') != SELF_CONTACT_VERSION:
-                return False
-            if stage['name'].startswith('topology-worm-'):
-                from crossing_centerline import VERSION
-                if meta.get('version')!=VERSION:return False
-            if stage['phase'] == 'fit' and not adapter:
-                worm = int(stage['name'].rsplit('-', 1)[1])
-                fit = config['wormtracer']
-                wanted = dict(rescale=fit['rescale_by_worm'].get(str(worm), fit['rescale']),
-                              continuity_loss_weight=fit['continuity_weight'], smoothness_loss_weight=fit['smoothness_weight'],
-                              length_loss_weight=fit['length_weight'])
-                if any(meta['params'].get(k) != v for k, v in wanted.items()):
-                    raise ValueError(f'虫 {worm} 已有拟合参数不同，请换 SAMPLE_NAME 或设置 RESUME=False')
+            from body_sequence_solver import signature
+            if meta.get('algorithm_signature') != signature(): return False
+            if meta.get('head_annotations') != config.get('head_annotations', {}): return False
         except (OSError, KeyError): return False
     return True
 
@@ -380,22 +313,6 @@ def compatible_identity(previous, current):
     return inputs(previous) == inputs(current)
 
 
-def check_memory_pressure():
-    """Return True at warning level; stop the stage at critical pressure."""
-    if sys.platform != 'darwin':
-        return False
-    import ctypes
-    level = ctypes.c_int()
-    size = ctypes.c_size_t(ctypes.sizeof(level))
-    status = ctypes.CDLL(None).sysctlbyname(b'kern.memorystatus_vm_pressure_level',
-        ctypes.byref(level), ctypes.byref(size), None, 0)
-    # Darwin reports dispatch memory pressure as normal (1), warning (2), or critical (4).
-    if status == 0 and level.value == 4:
-        raise RuntimeError('Mac 系统内存压力已达到严重级别，已停止分析。请保存并关闭占用内存的应用，'
-                           '检查启动磁盘可用空间，然后在工作台选择“继续此任务”。')
-    return status == 0 and level.value == 2
-
-
 def run_stage(stage, log, progress=None):
     env = dict(os.environ, PYTHONUTF8='1', PYTHONIOENCODING='utf-8', PYTHONUNBUFFERED='1')
     env['PYTHONPATH'] = str(ROOT / 'src') + os.pathsep + env.get('PYTHONPATH', '')
@@ -416,7 +333,7 @@ def run_stage(stage, log, progress=None):
                 if progress and progress.cancel_requested.is_set():
                     raise RuntimeError('用户取消了当前处理；已完成阶段保留，可继续任务')
                 try:
-                    code = process.wait(timeout=.6 if progress or sys.platform == 'darwin' else 30)
+                    code = process.wait(timeout=stage_wait_slice(bool(progress)))
                     if progress: progress.poll()
                     break
                 except subprocess.TimeoutExpired:
@@ -429,9 +346,7 @@ def run_stage(stage, log, progress=None):
                         last_report = time.monotonic()
                         print(f'  {stage["name"]} 运行中，{last_report - started:.0f} 秒；日志：{log.name}', flush=True)
         except BaseException:
-            if os.name == 'nt' and process.poll() is None:
-                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            terminate_children(process)
             if process.poll() is None:
                 process.terminate()
             try: process.wait(timeout=2)
@@ -480,11 +395,6 @@ def _main(progress, raw_override=None):
                                progress=None if args.no_progress_ui else progress)
         if raw is None:return
     config, info = validate_config(raw, args.config.resolve().parent if args.config else ROOT)
-    if not args.dry_run and config['centerline_method'] in ('wormtracer','hybrid'):
-        for relative in ('WormTracer/WormTracer19_5/WormTracer/wt.py','WormTracer/WormTracer19_1/WormTracer/config.yaml'):
-            try:
-                with (RESOURCE_ROOT/relative).open('rb') as handle:handle.read(1)
-            except OSError as exc:raise ValueError(f'所选 WormTracer 方法的资源不可读取：{relative}；{exc}') from exc
     phenotype = Path(PHENOTYPE_CONFIG).resolve()
     if not phenotype.is_file(): raise ValueError(f'指标配置不存在：{phenotype}')
     base = ROOT / 'outputs' / config['sample']

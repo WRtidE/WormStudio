@@ -1,6 +1,6 @@
 """Track configured objects from separated anchor frames, on CUDA in both directions."""
 import argparse
-from compute_device import selected_device, inference_context, device_label
+from compute_device import selected_device, inference_context, device_label, release_device_cache
 from resource_paths import RESOURCE_ROOT, sam2_checkpoint
 from pipeline_progress import report_progress
 from live_preview import PreviewCrop, report_tracking
@@ -126,7 +126,7 @@ def main():
                     preview=im.copy();preview[mask]=(.6*preview[mask]+.4*np.array(colors[w])).astype(np.uint8)
                     write_png(out/f'extra-seed-w{w}-f{extra["frame"]}.png',preview)
                     print('extra seed',w,extra['frame'],'chosen',k,'area',int(mask.sum()),flush=True)
-        del image_predictor;torch.cuda.empty_cache()
+        del image_predictor;release_device_cache(device)
         if args.seeds_only:continue
         frames=out/f'frames-{group["name"]}-{n}';frames.mkdir(exist_ok=True)
         capture.set(cv2.CAP_PROP_POS_FRAMES,0)
@@ -167,7 +167,7 @@ def main():
                     report_progress(len(predictions),n,detail,fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
             del state
         for f in sorted(predictions):rows.extend(predictions[f].values())
-        gc.collect();torch.cuda.empty_cache()
+        gc.collect();release_device_cache(device)
         print('completed group',group['name'],flush=True)
     capture.release()
     if args.seeds_only:return

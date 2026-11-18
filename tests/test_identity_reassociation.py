@@ -71,11 +71,18 @@ class AssociationTests(unittest.TestCase):
         for row in g[2]:row['worm_id']=2
         q,r=reassociate(g,s,None,evidence_provider=Evidence());self.assertFalse(q[1][6]['identity_valid'])
 
-    def test_review_requires_evidence_unique_bounds_and_timestamp(self):
-        for change in ({'evidence':''},{'confirmed_at':'2026-10-21'},{'end_frame':100},{'decision':'yes'}):
+    def test_review_requires_reviewer_unique_bounds_and_timestamp(self):
+        for change in ({'reviewer':''},{'confirmed_at':'2026-10-21'},{'end_frame':100},{'decision':'yes'}):
             item=review();item.update(change)
             with self.assertRaises(ValueError):validate_reviews(dict(identity_reviews=[item]),[1],15)
         with self.assertRaises(ValueError):validate_reviews(dict(identity_reviews=[review(),review()]),[1],15)
+        # The form no longer asks for evidence; an empty note stays valid.
+        noted=review();noted['evidence']=''
+        validate_reviews(dict(identity_reviews=[noted]),[1],15)
+
+    def test_local_reviewer_is_recorded_when_the_form_omits_it(self):
+        from workspace_sessions import local_reviewer
+        self.assertTrue(local_reviewer().strip())
 
     def test_rejected_parent_does_not_imply_accepted_child(self):
         g,s=inputs();g[1][10]['mask_valid']=False

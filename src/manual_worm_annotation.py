@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
-from centerline_methods import METHODS, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
+from centerline_methods import display_method, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
 from sam2_models import model_spec
 from pathlib import Path
 
@@ -20,7 +20,9 @@ import cv2
 import numpy as np
 
 from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, sam2_checkpoint
+from compute_device import release_device_cache
 
+from platforms.system import is_darwin
 
 def png(image):
     ok, data = cv2.imencode('.png', image)
@@ -188,7 +190,7 @@ class Annotation:
         with self.predict_lock:
             if self.done.is_set():
                 raise ValueError('本次标注已保存')
-            if sys.platform != 'darwin':
+            if not is_darwin():
                 if self.local_predictor is None:
                     self.local_predictor = MaskPredictor(self.image, self.model_size)
                 return self.local_predictor.predict(body)
@@ -237,9 +239,7 @@ class Annotation:
                 del model
                 self.local_predictor = None
                 gc.collect()
-                if device == 'cuda':
-                    import torch
-                    torch.cuda.empty_cache()
+                release_device_cache(device)
 
     def previous(self):
         if not self.path.exists(): return None
@@ -254,8 +254,6 @@ class Annotation:
             config['centerline_method'] = analysis_method(json.loads(selection.read_text(encoding='utf-8'))['centerline_method'])
         if 'centerline_method' in config:
             config['centerline_method'] = analysis_method(config['centerline_method'])
-        # Apply current fit settings; the pipeline will validate cached results.
-        config['wormtracer'] = self.settings.get('wormtracer', {})
         config['head_detection'] = self.settings.get('head_detection',config.get('head_detection','twardis'))
         config['review_intervals'] = self.settings.get('review_intervals', [])
         if 'chamber_id' in self.settings:
@@ -274,7 +272,7 @@ class Annotation:
             measurement_mode=self.settings.get('measurement_mode','physical'),scale_um_per_px=self.settings.get('scale_um_per_px'),video_name=Path(self.video).name,
             frame_count=self.n,sam2_model=self.model_size,
             head_detection=self.settings.get('head_detection','twardis'),
-            centerline_method=self.settings.get('centerline_method','wormtracer'),previous=None)
+            centerline_method=self.settings.get('centerline_method',CURRENT_METHOD),previous=None)
         if hasattr(self, 'correction_previous'):
             # Editing a historical run must keep its geometry pipeline compatible.
             result['analysis_method']=self.settings['centerline_method']
@@ -306,16 +304,18 @@ class Annotation:
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
         result['previous']=dict(measurement_mode=config.get('measurement_mode','physical'),worms=worms,roi=[x,y,x1,y1],scale_um_per_px=config['scale_um_per_px'],
             calibration=record.get('calibration'),head_detection=config.get('head_detection','twardis'),
-            centerline_method=analysis_method(config.get('centerline_method','wormtracer')))
+            centerline_method=config.get('centerline_method', CURRENT_METHOD))
         return result
 
     def save(self, body):
         if self.done.is_set(): raise ValueError('本次标注已保存')
-        method=analysis_method(body.get('centerline_method',self.settings.get('centerline_method','wormtracer')))
-        head_mode=body.get('head_detection',self.settings.get('head_detection','twardis'))
-        if body.get('analysis_profile')=='current' or self.settings.get('analysis_profile')=='current':
+        current_profile = body.get('analysis_profile')=='current' or self.settings.get('analysis_profile')=='current'
+        if current_profile:
             method=self.settings['centerline_method'] if hasattr(self,'correction_source') else CURRENT_METHOD
             head_mode=CURRENT_HEAD_DETECTION
+        else:
+            method=analysis_method(body.get('centerline_method',self.settings.get('centerline_method',CURRENT_METHOD)))
+            head_mode=body.get('head_detection',self.settings.get('head_detection','twardis'))
         if head_mode not in ('twardis','manual_only','taper_seed','manual_seed'):raise ValueError('头尾检测选项无效')
         h, w = self.image.shape[:2]
         roi = body.get('roi') or [0, 0, w, h]
@@ -340,9 +340,6 @@ class Annotation:
             scale = length / distance
         entries = body.get('worms', [])
         if not entries: raise ValueError('请至少标注一条虫')
-        if method == 'self_contact' and len(entries) != 1 and (
-                body.get('analysis_profile') == 'current' or self.settings.get('analysis_profile') == 'current'):
-            raise ValueError('当前工作台仅支持单虫标注，请保留本次分析的线虫')
         if method=='body_sequence':
             if len(entries)!=1:raise ValueError('当前方法每次分析一条线虫')
             if self.model_size!='large':raise ValueError('当前方法使用SAM2 Large')
@@ -412,7 +409,7 @@ class Annotation:
                       scale_um_per_px=scale, scale_source='User-entered scale' if not calibration else (
                           'Click-detected scale bar' if calibration.get('method') == 'auto' else 'User-selected two-point scale bar'),
                       groups=[dict(name='manual', crop_xyxy=absolute, anchor_frame=self.frame, worms=worms)],
-                      review_intervals=self.settings.get('review_intervals', []), wormtracer=self.settings.get('wormtracer', {}),
+                      review_intervals=self.settings.get('review_intervals', []),
                       centerline_method=method,sam2_model=self.model_size,
                       head_annotations=heads,head_detection=head_mode)
         if "chamber_id" in self.settings:
@@ -441,14 +438,14 @@ class Annotation:
         self.result = config
         self.done.set()
         return dict(saved=True, path=str(self.path), worm_count=len(worms), overlap_px=record['overlap_px'],
-                    centerline_method=method,method_label=METHODS[method]['label'],frame_metrics_path=str(metrics_path))
+                    centerline_method=method,method_label=display_method(method)['label'],frame_metrics_path=str(metrics_path))
 
 
 def new_video_annotation(video, defaults):
     from run_storage import fresh_sample
     settings = dict(sample=fresh_sample(video.stem, ROOT/'outputs'), video=str(video.resolve()),
                     crop_xyxy=None, scale_um_per_px=None, measurement_mode='pixels', groups=[], review_intervals=[],
-                    wormtracer=defaults.get('wormtracer', {}), centerline_method=CURRENT_METHOD,
+                    centerline_method=CURRENT_METHOD,
                     sam2_model='large', analysis_profile='current', head_detection=CURRENT_HEAD_DETECTION)
     return Annotation(settings)
 

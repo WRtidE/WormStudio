@@ -32,7 +32,3 @@ jobs:
       - run: python run_tests.py
       - run: node --test tests/*.js tests/*.cjs
         shell: bash
-      - name: Single-worm synthetic tests
-        run: python -m unittest discover -s packages/single-worm-methods/tests
-        env:
-          PYTHONPATH: packages/single-worm-methods

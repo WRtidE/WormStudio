@@ -10,6 +10,8 @@ import hashlib
 import json
 import math
 import os
+
+from platforms.system import publish_new_file
 from pathlib import Path
 import random
 import re
@@ -60,8 +62,7 @@ def write_new(path, value):
     try:
         with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,suffix='.tmp',delete=False) as handle:
             temporary=Path(handle.name);handle.write(content);handle.flush();os.fsync(handle.fileno())
-        if os.name == 'nt': os.rename(temporary,path)  # Windows rename refuses an existing destination.
-        else: os.link(temporary,path)  # Atomic exclusive publication on POSIX.
+        publish_new_file(temporary, path)
     finally:
         if temporary is not None: temporary.unlink(missing_ok=True)
 

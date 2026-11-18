@@ -111,12 +111,24 @@ def identity_links(root,sample):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def review_identity(root,sample,link_id,decision,reviewer,evidence):
+def local_reviewer():
+    """Reviewer recorded automatically when the form no longer asks for a name."""
+    try:
+        import getpass
+        return getpass.getuser().strip() or '本机用户'
+    except (ImportError, OSError, KeyError):
+        return '本机用户'
+
+
+def review_identity(root,sample,link_id,decision,reviewer=None,evidence=None):
     _,config=load_config(root,sample)
     edge=next((e for e in identity_links(root,sample)['edges'] if e['id']==link_id),None)
     if not edge or edge['reference_end_frame'] is None:raise ValueError('该片段没有可复核的前序关联')
-    if decision not in ('same','different','unknown') or not isinstance(reviewer,str) or not reviewer.strip() or not isinstance(evidence,str) or not evidence.strip():
-        raise ValueError('请选择关联意见，并填写复核人和判断依据')
+    if decision not in ('same','different','unknown'):raise ValueError('请选择关联意见')
+    if reviewer is not None and not isinstance(reviewer,str):raise ValueError('复核人格式无效')
+    if evidence is not None and not isinstance(evidence,str):raise ValueError('判断依据格式无效')
+    reviewer=(reviewer or '').strip() or local_reviewer()
+    evidence=(evidence or '').strip()
     items=config.setdefault('identity_reviews',[])
     items[:]=[r for r in items if (r['worm_id'],r['start_frame'],r['end_frame'])!=(edge['worm_id'],edge['start_frame'],edge['end_frame'])]
     items.append(dict(id=secrets.token_hex(8),worm_id=edge['worm_id'],start_frame=edge['start_frame'],end_frame=edge['end_frame'],
@@ -178,16 +190,6 @@ def derive_geometry_run(root,sample,config=None):
     if checked['centerline_method']=='body_sequence' and any(
             original.get(key)!=config.get(key) for key in ('head_annotations','head_detection')):
         reusable=[s for s in reusable if s['phase']!='fit']
-    if checked['centerline_method'] == 'self_contact' and any(
-            original.get(key) != config.get(key) for key in ('head_annotations','identity_reviews')):
-        # A head anchor protects its frame during self-contact fitting. Identity reviews
-        # change the segment boundaries that constrain which poses may be joined.
-        reusable = [s for s in reusable if s['phase'] != 'fit']
-    replay = next((s for s in reusable if s['name']=='crop-recovery'),None)
-    repeat_replay = replay is not None and (
-        not Path(replay['outputs'][0]).is_file() or original.get('identity_reviews') != config.get('identity_reviews'))
-    if repeat_replay:
-        reusable = [s for s in reusable if s['name']!='crop-recovery' and s['phase']!='fit']
     if not all(complete(s,checked,info) for s in reusable):
         raise ValueError('原运行的算法版本或产物不再匹配，请先继续原任务完成重算')
     from cache_integrity import matches,snapshot
@@ -199,9 +201,9 @@ def derive_geometry_run(root,sample,config=None):
     config=copy.deepcopy(checked);config['sample']=fresh_sample(sample,root/'outputs')
     config['previous_sample']=sample
     base=root/'outputs'/config['sample'];base.mkdir(parents=True)
-    shutil.copytree(old/'sam2-tracking',base/'sam2-tracking',ignore=shutil.ignore_patterns('frames-*','.crop-replay-*',*(['crop-recovery'] if repeat_replay else [])))
+    shutil.copytree(old/'sam2-tracking',base/'sam2-tracking',ignore=shutil.ignore_patterns('frames-*','.crop-replay-*'))
     # Retain every available pose/evidence folder used by this method.
-    folders={Path(s['outputs'][0]).resolve().relative_to(old).parts[0] for s in reusable if s['phase'] in ('fit','repair','temporal')}
+    folders={Path(s['outputs'][0]).resolve().relative_to(old).parts[0] for s in reusable if s['phase']=='fit'}
     for folder in folders:
         shutil.copytree(old/folder,base/folder)
         mask_source=base/folder/'mask-source.json'
@@ -289,7 +291,7 @@ def saved_timeline(root, sample, *, trend_only=True):
 
 def reopen(progress,root,sample):
     base,config=load_config(root,sample)
-    from centerline_methods import method_source, METHODS
+    from centerline_methods import display_method, method_source
     report=base/('phenotypes-'+method_source(config['centerline_method']))/'summary.json'
     if not report.is_file(): raise ValueError('尚无完整指标，请选择继续任务')
     summary=json.loads(report.read_text(encoding='utf-8'))
@@ -302,7 +304,7 @@ def reopen(progress,root,sample):
     progress.artifacts={};progress.frame_metrics=None;progress.config=config
     progress.data.update(sample=sample,video_name=Path(config['video']).name,
         frames=summary['worms'][0]['frames'],fps=summary['fps'],worm_count=len(summary['worms']),
-        method=METHODS[config['centerline_method']]['label'],output_dir=str(base),read_only=False,
+        method=display_method(config['centerline_method'])['label'],output_dir=str(base),read_only=False,
         error=None,notice='已重新打开保存结果，未重新计算或改写历史文件。',artifacts=[])
     progress.data['stages']=[dict(name=k,phase=k,label=k,status='complete',fraction=1,seconds=v.get('seconds',0))
         for k,v in completed if k in ('metrics','export')]

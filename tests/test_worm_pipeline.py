@@ -93,33 +93,34 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(complete(stage,c,info))
         compatible_tracking(c,info,base)
 
-    def test_changed_fit_parameters_are_not_silently_reused(self):
+    def test_stale_algorithm_signature_is_not_reused(self):
         c, info = validate_config(self.config)
-        path = self.root / 'changed-centerlines.npy'; np.save(path, np.zeros((12, 101, 2)))
+        path = self.root / 'changed-centerlines.npy'; np.save(path, np.zeros((12, 101, 2), np.float32))
+        quality = self.root / 'changed-quality.json'
+        quality.write_text(json.dumps([dict(centerline_valid=False)] * 12))
         meta = self.root / 'changed-run.json'
-        meta.write_text(json.dumps(dict(params=dict(rescale=.1, continuity_loss_weight=100,
-                                                   smoothness_loss_weight=5000, length_loss_weight=5))))
-        stage = dict(name='fit-worm-7', phase='fit', outputs=[str(path), str(meta)])
-        with self.assertRaises(ValueError): complete(stage, c, info)
+        meta.write_text(json.dumps(dict(algorithm_signature='stale')))
+        stage = dict(name='body_sequence-worm-7', phase='fit',
+                     outputs=[str(path), str(meta), str(quality)])
+        self.assertFalse(complete(stage, c, info))
 
     def test_method_and_calibration_description_change_can_resume(self):
         c, _ = validate_config(self.config)
         old = dict(config=c, manual_masks={'worm.png':'original-sha'},video_mtime_ns=10)
         new = copy.deepcopy(old)
-        new['config'].update(centerline_method='niu',scale_source='User-entered scale')
+        new['config'].update(centerline_method='body_sequence',scale_source='User-entered scale')
         self.assertTrue(compatible_identity(old, new))
-        self.assertEqual(old['config']['centerline_method'], 'wormtracer')
+        self.assertEqual(old['config']['centerline_method'], 'body_sequence')
 
     def test_actual_inputs_still_cannot_reuse_mismatched_results(self):
         c, _ = validate_config(self.config)
         old = dict(config=c, manual_masks={'worm.png':'original-sha'},video_mtime_ns=10)
-        for field in ('mask','scale','video','crop','fit'):
+        for field in ('mask','scale','video','crop'):
             new = copy.deepcopy(old)
             if field=='mask': new['manual_masks']['worm.png']='changed-sha'
             elif field=='scale': new['config']['scale_um_per_px']*=1.01
             elif field=='video': new['video_mtime_ns']=11
-            elif field=='crop': new['config']['crop_xyxy'][0]+=1
-            else: new['config']['wormtracer']['rescale']=.1
+            else: new['config']['crop_xyxy'][0]+=1
             self.assertFalse(compatible_identity(old,new),field)
         self.assertFalse(compatible_identity({}, old))
 

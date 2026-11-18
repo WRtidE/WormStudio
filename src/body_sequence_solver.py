@@ -10,7 +10,7 @@ from scipy.ndimage import distance_transform_edt, map_coordinates
 from body_sequence import select_body_sequence, BodySequenceBreak, persistent_loop_centers
 from framewise_pose import observed_pose
 from centerline_topology import topology_candidates, hidden_tip_candidates
-from repair_wormtracer import local_field, candidate_score
+from body_geometry import local_field, candidate_score
 from head_recovery import end_contrast, appearance_vote, pose_parity
 from head_appearance import sample_profile
 from head_tail import normalize_anchors
@@ -23,7 +23,7 @@ def signature():
     from pathlib import Path
     digest=hashlib.sha256()
     for name in ('body_sequence_solver.py','body_sequence.py','extract_body_sequence.py','centerline_topology.py',
-                 'framewise_pose.py','repair_wormtracer.py','head_recovery.py'):
+                 'framewise_pose.py','body_geometry.py','motion.py','head_recovery.py'):
         digest.update(Path(__file__).with_name(name).read_bytes())
     return digest.hexdigest()
 

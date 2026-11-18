@@ -4,7 +4,7 @@ from scipy.ndimage import map_coordinates
 from scipy.ndimage import binary_fill_holes,label
 
 from head_recovery import tracking_indices
-from temporal_wormtracer import lk_step
+from motion import lk_step
 
 
 def huber_squared(distance):

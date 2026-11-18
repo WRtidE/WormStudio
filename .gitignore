@@ -71,3 +71,4 @@ docs/*
 !docs/CPU_OPTIMIZATION.md
 
 .electron-runtime/
+.app-data/

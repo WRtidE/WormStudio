@@ -175,17 +175,15 @@ class ManualAnnotationTests(unittest.TestCase):
         self.assertNotEqual(new_seed.read_bytes(),old_seed)
         self.assertEqual(next_annotation.result['previous_sample'],self.settings['sample'])
 
-    def test_identical_resave_keeps_original_bytes_and_can_switch_method(self):
+    def test_identical_resave_keeps_original_bytes_and_rejects_archived_method(self):
         annotation=manual.Annotation(self.settings);annotation.save(self.body)
         old_record=annotation.path.read_bytes()
         (annotation.output.parent/'pipeline-state.json').write_text('{}')
-        body=dict(self.body,centerline_method='niu')
-        next_annotation=manual.Annotation(self.settings);next_annotation.save(body)
-        self.assertEqual(next_annotation.result['sample'],self.settings['sample'])
-        self.assertEqual(next_annotation.result['centerline_method'],'niu')
+        with self.assertRaisesRegex(ValueError,'已归档'):
+            manual.Annotation(self.settings).save(dict(self.body,centerline_method='niu'))
         self.assertEqual(annotation.path.read_bytes(),old_record)
-        self.assertEqual(manual.Annotation(self.settings).previous()['centerline_method'],'niu')
-        self.assertEqual(manual.Annotation(self.settings).initial_state()['previous']['centerline_method'],'niu')
+        self.assertEqual(manual.Annotation(self.settings).previous()['centerline_method'],'body_sequence')
+        self.assertEqual(manual.Annotation(self.settings).initial_state()['previous']['centerline_method'],'body_sequence')
 
     def test_save_api_requires_session_and_returns_readable_configuration(self):
         annotation = manual.Annotation(self.settings)
@@ -284,18 +282,17 @@ class ManualAnnotationTests(unittest.TestCase):
         annotation.predict(dict(worm_id=9,points=p1,prediction_token=first['prediction_token']))
         self.assertIsNone(predictor.predict.call_args.kwargs['mask_input'])
 
-    def test_all_methods_save_and_restore_with_full_mask_geometry(self):
-        for method in ('wormtracer','niu','hybrid'):
-            annotation=manual.Annotation(self.settings)
-            annotation.save(dict(self.body,centerline_method=method))
-            fresh=manual.Annotation(self.settings)
-            self.assertEqual(fresh.previous()['centerline_method'],method)
-            state=fresh.initial_state()['previous']
-            self.assertEqual(state['centerline_method'],method)
-            self.assertEqual(state['roi'],[5,5,95,55])
-            self.assertEqual(state['calibration'],self.body['calibration'])
-            rgba=cv2.imdecode(np.frombuffer(base64.b64decode(state['worms'][0]['mask'].split(',')[1]),np.uint8),-1)
-            np.testing.assert_array_equal(rgba[:,:,3]>0,self.mask>0)
+    def test_current_method_saves_and_restores_full_mask_geometry(self):
+        annotation=manual.Annotation(self.settings)
+        annotation.save(self.body)
+        fresh=manual.Annotation(self.settings)
+        self.assertEqual(fresh.previous()['centerline_method'],'body_sequence')
+        state=fresh.initial_state()['previous']
+        self.assertEqual(state['centerline_method'],'body_sequence')
+        self.assertEqual(state['roi'],[5,5,95,55])
+        self.assertEqual(state['calibration'],self.body['calibration'])
+        rgba=cv2.imdecode(np.frombuffer(base64.b64decode(state['worms'][0]['mask'].split(',')[1]),np.uint8),-1)
+        np.testing.assert_array_equal(rgba[:,:,3]>0,self.mask>0)
         annotation=manual.Annotation(self.settings)
         with self.assertRaises(ValueError):annotation.save(dict(self.body,centerline_method='fake'))
 

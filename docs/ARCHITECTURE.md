@@ -7,19 +7,19 @@
 |Electron 窗口与运行时|`tools/electron/main.cjs`、`src/electron_desktop.py`|
 |应用与批处理入口|`studio.py`、`worm_pipeline.py`|
 |本地HTTP、交互标注、任务调度|`src/manual_worm_annotation.py`、`pipeline_progress.py`、`workspace_sessions.py`|
-|分割与方法适配|`track_configured_video.py`、`extract_body_sequence.py`、`extract_centerlines.py`、`extract_topology.py`|
-|中线几何与时序|`centerline_topology.py`、`crossing_centerline.py`、`temporal_wormtracer.py`|
+|分割与方法适配|`track_configured_video.py`、`extract_body_sequence.py`|
+|中线几何与时序|`centerline_topology.py`、`body_geometry.py`、`motion.py`、`body_sequence.py`|
 |头尾初始化和关联|`head_initialization.py`、`head_tail.py`、`head_appearance.py`、`head_temporal.py`|
 |身份与质量|`identity_reassociation.py`、`multiworm_quality.py`、`quality_schema.py`、`quality_audit.py`|
 |测量与显示|`analyze_phenotypes.py`、`frame_metrics.py`、`display_centerlines.py`、`result_overlay.py`|
 |资源、缓存与输出|`resource_paths.py`、`run_storage.py`、`cache_integrity.py`|
-|独立算法包|`packages/single-worm-methods/wormstudio_single/`|
 |网页|`web/studio*.js`、`result-player.js`、HTML/CSS与标注脚本|
+|平台边界|`platforms/`（设备选择、桌面外壳、内存压力与文件发布）；其它模块不得判断宿主系统|
 |合成验证|`tests/`、算法包`tests/`|
 
 数据流：视频与人工输入 → SAM2跟踪 → 几何/时序姿态 → 个体身份与头尾 → 按质量条件生成指标 → 显示骨架与视频。正式测量与仅显示恢复保持分离。
 
-`head_point_tracks.py`和算法包中的反馈模块属于实验实现，保留源码与合成测试，不意味着默认启用或已证明优于现行方法。发布不包含历史模型缓存、示例研究视频或开发报告。
+历史中线方法的实现已移除，旧结果只能以只读方式查看；`centerline_methods.py` 保留其名称映射用来定位历史结果目录。发布不包含历史模型缓存、示例研究视频或开发报告。
 
 Electron 主进程启动本地 Python 服务，并在 Chromium 窗口中载入工作台。页面使用原生 JavaScript 和 Canvas，渲染进程启用沙箱并关闭 Node 集成。Node 运行时随 Electron 一起分发。GPU 模型按任务加载。
 

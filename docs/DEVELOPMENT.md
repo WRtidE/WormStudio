@@ -6,12 +6,9 @@
 python run_tests.py
 $tests = (Get-ChildItem tests/*.js, tests/*.cjs -File).FullName
 node --test @tests
-$env:PYTHONPATH = 'packages/single-worm-methods'
-python -m unittest discover -s packages/single-worm-methods/tests
-Remove-Item Env:PYTHONPATH
 ```
 
-应用测试使用合成视频、临时目录和受控的模型替身，测试质量边界、标注接口和指标一致性；不需要原工作区视频或权重。算法包只分发不依赖研究样例数据的合成测试，原样例回放测试保留在开发归档，不伪装为已在无数据发行包运行。
+应用测试使用合成视频、临时目录和受控的模型替身，测试质量边界、标注接口和指标一致性；不需要原工作区视频或权重。
 
 `.github/workflows/tests.yml`在 Linux 和 Windows x64 上运行 CPU 与 JavaScript 回归。Windows 任务还从中文路径启动桌面版并检查工作台窗口、后端与退出。其配置已随源码提供；上传前不声称远程CI已通过。各次本地验证的平台、测试范围和结果见[验证记录](VALIDATION.md)。
 

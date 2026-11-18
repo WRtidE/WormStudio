@@ -23,7 +23,7 @@ def source_files():
     files = [ROOT/n for n in TOP]
     files += [ROOT/'docs'/n for n in DOCS]
     files += [ROOT/'config'/n for n in CONFIG]
-    folders = ('src', 'web', 'tests', 'tools', 'packages', '.github')
+    folders = ('src', 'web', 'tests', 'tools', '.github')
     checkout = (ROOT / '.git').exists()
     if checkout:
         tracked = subprocess.check_output(['git', 'ls-files', '--cached', '-z'], cwd=ROOT)

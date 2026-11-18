@@ -58,7 +58,6 @@ WormStudio/
 ├── review_saved_result.py    # 已有结果只读查看
 ├── src/                      # 分割适配、姿态、身份、头尾、测量、HTTP服务
 ├── web/                      # 无前端构建依赖的HTML/CSS/JavaScript
-├── packages/single-worm-methods/ # 单虫掩膜几何与自交姿态工具
 ├── config/                   # 公共参数与本机配置示例
 ├── tests/                    # 合成数据与接口回归
 ├── tools/                    # 环境检查、模型下载、源码导出检查

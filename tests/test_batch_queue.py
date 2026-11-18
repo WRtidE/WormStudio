@@ -327,3 +327,24 @@ class BatchTests(unittest.TestCase):
                 if automatic: self.assertEqual(self.queue.items[0]['status'], 'pending')
             finally:
                 progress.close()
+
+    def test_resumed_run_updates_its_original_queue_record(self):
+        self.add('a')
+        self.queue.start()
+        self.queue.take()
+        self.queue.finish('failed', 'Mac 内存压力')
+        self.assertEqual(self.queue.snapshot()['items'][0]['status'], 'failed')
+        # "继续此任务" finishes outside the queue: there is no active item.
+        self.queue.finish('complete', result_sample='a')
+        item = self.queue.snapshot()['items'][0]
+        self.assertEqual(item['status'], 'complete')
+        self.assertEqual(item['sample'], 'a')
+        self.assertEqual(item['error'], '')
+
+    def test_finish_does_not_reopen_a_completed_record(self):
+        self.add('a')
+        self.queue.start()
+        self.queue.take()
+        self.queue.finish('complete', result_sample='a')
+        self.queue.finish('failed', result_sample='a')
+        self.assertEqual(self.queue.snapshot()['items'][0]['status'], 'complete')

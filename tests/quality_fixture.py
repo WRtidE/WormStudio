@@ -29,7 +29,7 @@ def make_fixture(root):
     confirmation=dict(worm_id=1,frame=6,reviewer='synthetic-fixture-reviewer',
         confirmed_at='2026-10-19T12:00:00+08:00',evidence='Synthetic construction: horizontal object 1; not a real annotation')
     config=dict(sample=sample,video=str(video),crop_xyxy=[0,0,640,360],scale_um_per_px=1.25,
-        scale_source='synthetic fixture scale',quality_schema_version=VERSION,centerline_method='niu',
+        scale_source='synthetic fixture scale',quality_schema_version=VERSION,centerline_method='body_sequence',
         sam2_model='large',head_detection='manual_only',source_invalid_frames=[8],identity_confirmations=[confirmation],
         groups=[dict(name='synthetic',anchor_frame=0,crop_xyxy=[0,0,640,360],
             worms=[dict(id=w,mask_path=str(tracking/'masks'/f'worm-{w}'/'000000.png')) for w in (1,2)])])

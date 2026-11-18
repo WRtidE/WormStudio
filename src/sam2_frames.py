@@ -1,6 +1,8 @@
 """Keep the Mac tracker's normalized JPEG inputs on demand."""
 from pathlib import Path
 import sys
+
+from platforms.system import is_darwin
 from tempfile import TemporaryDirectory
 
 
@@ -27,7 +29,7 @@ class TrackingFrames:
 
 def init_tracking_state(model, directory, count):
     options = dict(offload_video_to_cpu=True, offload_state_to_cpu=True)
-    if sys.platform != 'darwin':
+    if not is_darwin():
         return model.init_state(str(directory), **options)
     # Upstream warms its backbone on frame zero during init_state. Give it only
     # that frame, then supply random access for prompts and both directions.
@@ -46,7 +48,7 @@ def init_tracking_state(model, directory, count):
 def propagate_frames(model, state, start_frame_idx, reverse=False):
     """Release obsolete non-prompt tensors during a sequential Mac tracking pass."""
     stream = model.propagate_in_video(state, start_frame_idx=start_frame_idx, reverse=reverse)
-    if sys.platform != 'darwin':
+    if not is_darwin():
         yield from stream
         return
     # A strided lookup can reach one extra stride beyond its aligned frame.

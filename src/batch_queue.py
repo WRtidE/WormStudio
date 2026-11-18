@@ -145,10 +145,19 @@ class BatchQueue:
         return dict(copy.deepcopy(item['config']), _resume_saved=True)
 
     def finish(self, status, error='', cancelled=False, result_sample=None):
-        if self.active:
-            self.active.update(status=status if status in ('complete', 'failed', 'cancelled') else 'failed', error=error or '')
-            if result_sample and status == 'complete': self.active['result_sample'] = result_sample
-            self.active = None
+        item = self.active
+        if item is None and result_sample:
+            # A run resumed outside the queue (open/continue from history) keeps
+            # its original record; adopt it so the finished status is not lost.
+            item = next((i for i in self.items
+                         if i.get('result_sample') == result_sample
+                         or i['config'].get('sample') == result_sample), None)
+            if item is not None and item['status'] not in ('failed', 'cancelled', 'pending'):
+                item = None
+        if item is not None:
+            item.update(status=status if status in ('complete', 'failed', 'cancelled') else 'failed', error=error or '')
+            if result_sample and status == 'complete': item['result_sample'] = result_sample
+            if item is self.active: self.active = None
             self.persist()
         if cancelled or self.next_pending() is None:
             self.running = False

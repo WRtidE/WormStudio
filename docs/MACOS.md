@@ -38,9 +38,8 @@ python tools/macos/run_dev.py
 | 窗口、菜单与启动 | [Electron 主进程](../tools/electron/main.cjs)、[开发入口](../tools/macos/run_dev.py) |
 | 工作台页面和交互 | [web 目录](../web) |
 | 分析流程与子进程 | [worm_pipeline.py](../worm_pipeline.py)、[src 目录](../src) |
-| 单虫跟踪和指标 | [single-worm-methods](../packages/single-worm-methods) |
 
-运行 `python run_tests.py`。单虫子包测试另用 `PYTHONPATH=packages/single-worm-methods python -m unittest discover -s packages/single-worm-methods/tests`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务只检查依赖、原生模块和平台路由，不下载模型权重，不能代替实际视频验收。
+运行 `python run_tests.py`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务只检查依赖、原生模块和平台路由，不下载模型权重，不能代替实际视频验收。
 
 ## 为当前项目安装 Finder 启动器
 

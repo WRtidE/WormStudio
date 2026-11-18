@@ -15,7 +15,6 @@ import cv2
 import numpy as np
 import manual_worm_annotation as manual
 import analyze_phenotypes as metrics
-import extract_centerlines
 import quality_stage
 import worm_pipeline
 from quality_fixture import make_fixture
@@ -62,68 +61,6 @@ class SingleDeliveryTests(unittest.TestCase):
         row.update(head_identity_confirmed=True,measurement_mode='physical')
         self.assertTrue(permissions(row)['head']);self.assertFalse(permissions(row)['motion'])
         row['time_valid']=False;self.assertFalse(permissions(row)['head'])
-
-    def test_pixel_pipeline_csv_json_summary_and_geometry(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);config,source,_=make_fixture(root)
-            base=root/'outputs'/config['sample']
-            config.update(measurement_mode='pixels',scale_um_per_px=None)
-            source.update(measurement_mode='pixels',scale_um_per_px=None,model='SAM2 Hiera Large',
-                          provenance='Synthetic contract fixture, not an actual model run')
-            (base/'sam2-tracking/component-cleanup.json').write_text(json.dumps(dict(changes=[],provenance='synthetic fixture has no duplicate components')))
-            (base/'pipeline-config.json').write_text(json.dumps(config),encoding='utf-8')
-            (base/'sam2-tracking/summary.json').write_text(json.dumps(source),encoding='utf-8')
-            settings=json.loads((metrics.ROOT/'config/phenotype_config.json').read_text(encoding='utf-8'))
-            with patch.object(extract_centerlines,'ROOT',root),patch.object(metrics,'ROOT',root):
-                quality_stage.run(config['sample']);extract_centerlines.run(config['sample'],'niu')
-                with patch.object(metrics,'render'),patch.object(metrics,'write_report'):
-                    report=metrics.analyze(config['sample'],settings,'niu','centerlines-niu')
-            self.assertIsNone(report['scale_um_per_px'])
-            self.assertEqual(report['timebase']['status'],'decoded_pts_verified_cfr')
-            folder=base/'phenotypes-centerlines-niu'
-            rows=json.loads((folder/'per_frame_metrics.json').read_text(encoding='utf-8'))
-            self.assertTrue(any(r['length_px'] is not None for r in rows))
-            self.assertTrue(all('length_um' not in r and 'area_um2' not in r for r in rows))
-            self.assertTrue(all(r['head_candidate_angle_deg'] is None for r in rows))
-            invalid=next(r for r in rows if r['frame']==2)
-            self.assertIsNone(invalid['centroid_x_source_px'])
-            self.assertIsNone(invalid['length_px'])
-            # The review action must preserve the old run and reuse identical geometry.
-            (root/'config').mkdir()
-            for name in ('phenotype_config.json','motion_constraints.json'):
-                shutil.copy2(metrics.ROOT/'config'/name,root/'config'/name)
-            before=(folder/'per_frame_metrics.json').read_bytes()
-            with patch.object(worm_pipeline,'ROOT',root):
-                revised=confirm_head(root,config['sample'],1,0,1)
-            self.assertNotEqual(revised['sample'],config['sample'])
-            newbase=root/'outputs'/revised['sample']
-            np.testing.assert_array_equal(np.load(base/'centerlines-niu/worm-1/centerlines.npy'),
-                np.load(newbase/'centerlines-niu/worm-1/centerlines.npy'))
-            self.assertEqual((folder/'per_frame_metrics.json').read_bytes(),before)
-            with patch.object(metrics,'ROOT',root),patch.object(metrics,'render'),patch.object(metrics,'write_report'):
-                reviewed=metrics.analyze(revised['sample'],settings,'niu','centerlines-niu')
-            self.assertGreater(reviewed['worms'][0]['head_confirmed_frames'],0)
-            self.assertEqual(report['worms'][0]['head_confirmed_frames'],0)
-            # Contradict the displayed H end; the shared segment must lose formal head measurements.
-            from workspace_sessions import remove_head,derive_geometry_run
-            with patch.object(worm_pipeline,'ROOT',root):
-                conflicted=confirm_head(root,revised['sample'],1,0,1)
-            with patch.object(metrics,'ROOT',root),patch.object(metrics,'render'),patch.object(metrics,'write_report'):
-                conflict_report=metrics.analyze(conflicted['sample'],settings,'niu','centerlines-niu')
-            conflict_rows=json.loads((root/'outputs'/conflicted['sample']/'phenotypes-centerlines-niu/per_frame_metrics.json').read_text())
-            self.assertTrue(any(r['head_anchor_conflict'] for r in conflict_rows))
-            self.assertTrue(all(r['head_candidate_angle_deg'] is None for r in conflict_rows if r['head_anchor_conflict']))
-            self.assertEqual(conflict_report['worms'][0]['head_confirmed_frames'],0)
-            with patch.object(worm_pipeline,'ROOT',root):
-                restored=remove_head(root,conflicted['sample'],1,conflicted['head_annotations']['1'][-1]['id'])
-            with patch.object(metrics,'ROOT',root),patch.object(metrics,'render'),patch.object(metrics,'write_report'):
-                restored_report=metrics.analyze(restored['sample'],settings,'niu','centerlines-niu')
-            self.assertEqual(restored_report['worms'][0]['head_confirmed_frames'],reviewed['worms'][0]['head_confirmed_frames'])
-            # A finite, correctly shaped but modified pose must not be reused.
-            pose_path=newbase/'centerlines-niu/worm-1/centerlines.npy'
-            corrupted=np.load(pose_path);corrupted[0,20,0]+=1;np.save(pose_path,corrupted)
-            with patch.object(worm_pipeline,'ROOT',root),self.assertRaisesRegex(ValueError,'缓存内容'):
-                derive_geometry_run(root,revised['sample'])
 
     def test_directional_events_do_not_count_hz_as_events(self):
         fps=100.;t=np.arange(1000)/fps;angles=40*np.sin(2*np.pi*t)

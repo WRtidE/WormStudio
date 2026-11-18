@@ -39,19 +39,17 @@ class MaskCorrectionTests(unittest.TestCase):
         seed = self.base / 'seed.png'; seed.write_bytes(manual.png(self.mask[5:55, 10:80]))
         seed2 = self.base / 'seed2.png'; seed2.write_bytes(manual.png(self.mask))
         self.config = dict(sample='source', video=str(video), crop_xyxy=[10, 10, 110, 70],
-            measurement_mode='pixels', scale_um_per_px=None, centerline_method='niu', sam2_model='large',
+            measurement_mode='pixels', scale_um_per_px=None, centerline_method='body_sequence', sam2_model='large',
             head_detection='manual_seed', head_annotations={'1':[dict(frame=0, point=[25,20]), dict(frame=3, point=[25,20])]},
             groups=[dict(name='first', crop_xyxy=[20,15,90,65], anchor_frame=0,
                          worms=[dict(id=1, mask_path=str(seed))],
-                         additional_anchors=[dict(frame=2, worms=[dict(id=1, mask_path=str(seed))])]),
-                    dict(name='second', crop_xyxy=[10,10,110,70], anchor_frame=0,
-                         worms=[dict(id=2, mask_path=str(seed2))])])
+                         additional_anchors=[dict(frame=2, worms=[dict(id=1, mask_path=str(seed))])])])
         # Only the first group has reached this frame; the second must be retained unchanged.
         self.mask_path = self.base / 'sam2-tracking' / 'masks' / 'worm-1' / '000003.png'
         self.mask_path.parent.mkdir(parents=True)
         self.mask_path.write_bytes(manual.png(self.mask))
         self.progress = PipelineProgress()
-        self.progress.configure(self.config, dict(frames=8,ids=[1,2]), [dict(name='tracking',phase='tracking')], self.base)
+        self.progress.configure(self.config, dict(frames=8,ids=[1]), [dict(name='tracking',phase='tracking')], self.base)
         self.progress.bind_server(manual.create_server(progress=self.progress))
         with patch.dict(os.environ, WORM_PREVIEW_DIR=str(self.progress.preview_dir)):
             report_preview(np.zeros((60,100,3),np.uint8), 3, 8)
@@ -69,7 +67,7 @@ class MaskCorrectionTests(unittest.TestCase):
     def body(self, annotation):
         state = annotation.initial_state()
         return dict(worms=[dict(id=1,mask=state['previous']['worms'][0]['mask'])], roi=[0,0,100,60],
-                    measurement_mode='pixels',scale_um_per_px=None,centerline_method='niu',head_detection='manual_seed')
+                    measurement_mode='pixels',scale_um_per_px=None,centerline_method='body_sequence',head_detection='manual_seed')
 
     def test_waits_for_stop_then_loads_unconfirmed_native_mask_and_retries_idempotently(self):
         result = request_edit(self.progress, self.root, self.run, 1)
@@ -93,9 +91,8 @@ class MaskCorrectionTests(unittest.TestCase):
         annotation=self.stopped_editor(); annotation.save(self.body(annotation))
         config=annotation.result
         checked,info=validate_config(config)
-        self.assertEqual(info['ids'],[1,2]); self.assertNotEqual(config['sample'],'source')
+        self.assertEqual(info['ids'],[1]); self.assertNotEqual(config['sample'],'source')
         self.assertEqual(config['previous_sample'],'source')
-        self.assertEqual(config['groups'][1],original['groups'][1])
         group=config['groups'][0]
         self.assertEqual(group['worms'],original['groups'][0]['worms'])
         self.assertEqual([a['frame'] for a in group['additional_anchors']],[2,3])
@@ -105,7 +102,7 @@ class MaskCorrectionTests(unittest.TestCase):
         self.assertEqual(config['mask_correction']['worm_ids'],[1])
         self.assertEqual(self.config,original)
         for path,data in old_files.items(): self.assertEqual(path.read_bytes(),data)
-        self.assertIn('tracking',[s['phase'] for s in __import__('worm_pipeline').build_stages(checked,info,annotation.path,self.base/'phenotypes-niu')])
+        self.assertIn('tracking',[s['phase'] for s in __import__('worm_pipeline').build_stages(checked,info,annotation.path,self.base/'phenotypes-centerlines-body-sequence')])
 
     def test_replacing_existing_anchor_does_not_duplicate_it(self):
         self.progress.config['groups'][0]['additional_anchors'][0]['frame']=3

@@ -213,7 +213,6 @@ window.StudioResults = (() => {
     text('identity-edge-state',`${labels[e.decision]||e.decision} · 第 ${e.start_frame}–${e.end_frame} 帧 · ${e.reason}`);
     text('identity-evidence',JSON.stringify({reference:[e.reference_start_frame,e.reference_end_frame],decision:e.decision,reason:e.reason,checks:e.evidence?.checks,image_evidence:e.evidence,review:e.review,rules:identityReport.rules},null,2));
     el('identity-undo').disabled=!e.review;el('identity-offset').value=0;
-    el('identity-reviewer').value=e.review?.reviewer||'';el('identity-review-evidence').value=e.review?.evidence||'';
     text('identity-message','');identityPair();
   }
   el('identity-open').onclick=()=>{
@@ -230,12 +229,10 @@ window.StudioResults = (() => {
   el('identity-play').onclick=()=>{if(identityTimer){stopIdentity();return;}text('identity-play','暂停');identityTimer=setInterval(()=>{el('identity-offset').value=(Number(el('identity-offset').value)+1)%4;identityPair();},450);};
   async function identitySubmit(decision){
     if(!identityEdge)return;
-    const reviewer=el('identity-reviewer').value.trim(),evidence=el('identity-review-evidence').value.trim();
-    if(decision!=='undo'&&(!reviewer||!evidence)){text('identity-message','请填写复核人和判断依据。');return;}
     stopIdentity();
     try {
       const state=await(await fetch('/api/progress')).json();
-      const body=decision==='undo'?{sample:latest.sample,review_id:identityEdge.review.id}:{sample:latest.sample,link_id:identityEdge.id,decision,reviewer,evidence};
+      const body=decision==='undo'?{sample:latest.sample,review_id:identityEdge.review.id}:{sample:latest.sample,link_id:identityEdge.id,decision};
       const response=await fetch(decision==='undo'?'/api/remove-identity-review':'/api/review-identity',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify(body)});
       const result=await response.json();if(!response.ok)throw Error(result.error);location.reload();
     }catch(error){text('identity-message',error.message);}

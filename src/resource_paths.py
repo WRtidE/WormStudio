@@ -5,6 +5,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
 def resource_root(project=PROJECT_ROOT):
     """Prefer an explicit/local resource directory; retain legacy workspace support."""
     configured = os.environ.get('WORM_STUDIO_RESOURCES')
@@ -17,6 +18,7 @@ def resource_root(project=PROJECT_ROOT):
 
 
 RESOURCE_ROOT = resource_root()
+
 
 def runtime_python(project=PROJECT_ROOT):
     """A checkout runs in the active environment unless locally overridden."""
