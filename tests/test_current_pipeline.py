@@ -49,7 +49,8 @@ class CurrentPipelineTests(unittest.TestCase):
         self.temp.cleanup()
 
     def analyze(self, sample):
-        with patch.object(metrics, 'render'), patch.object(metrics, 'write_report'):
+        with patch.object(metrics, 'render'), patch.object(metrics, 'write_report'), \
+                patch('head_appearance.extract_profiles', side_effect=AssertionError('Unexpected legacy video pass')):
             return metrics.analyze(sample, self.settings, 'body_sequence', SOURCE)
 
     def run_pipeline(self, sample):

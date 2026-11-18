@@ -10,7 +10,7 @@ let calibrationPending=false,repairReturnStep=null,draftSaver=null,allowLeave=fa
 function readiness(){
  const algorithmIssue=analysisMethod()!=='body_sequence'?'':!state.chamber_mode&&objects.size!==1?'当前每次分析一条线虫，请保留需要分析的一条。':state.sam2_model!=='large'?'此任务的分析配置需要更新，请从文件列表重新开始标注。':state.algorithm?.checking?'正在检查分析组件，请稍候。':state.algorithm?.available!==true?'分析组件暂不可用，请检查本地安装后重新检查。':'';
  const check=annotationReadiness({scale:$('#scale').value,pixelMode:$('#pixel-mode').checked,calibrationPending,worms:[...objects.values()],method:analysisMethod(),chamberMode:state.chamber_mode,algorithmIssue});
- if(!state.chamber_mode&&['self_contact','body_sequence'].includes(analysisMethod())&&objects.size>1){const blocker=check.blockers.find(b=>b.key==='method');blocker.step=2;blocker.action='返回选择线虫';}
+ if(!state.chamber_mode&&analysisMethod()==='body_sequence'&&objects.size>1){const blocker=check.blockers.find(b=>b.key==='method');blocker.step=2;blocker.action='返回选择线虫';}
  return {...check,algorithmIssue:check.blockers.find(b=>b.key==='method')?.detail || algorithmIssue};
 }
 function resolveBlocker(blocker){

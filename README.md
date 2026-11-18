@@ -21,7 +21,7 @@
 ## 桌面版下载
 
 - **Mac v1.0.1**：[下载离线 ZIP](https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip)，适用于 Apple 芯片、macOS 14+。解压后将应用拖入“应用程序”。首次运行按包内“先读我”完成准备。
-- **Windows x64 v1.0.0**：[下载已发布安装包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.0/WormStudio-Windows-x64.exe)。本次未重新构建 Windows 安装包。
+- **Windows x64 v1.0.2**：解压基础包，打开 `WormStudio.exe` 即可分析。在“设置 → 通用 → 检测 GPU”查看本机能否加速。[下载基础包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip) · [可选 GPU 分包与说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.0.2)
 - [发布页、校验文件与历史版本](https://github.com/WRtidE/WormStudio/releases)。离线安装包包含运行环境和模型；源码归档用于开发。
 
 ## 开始使用

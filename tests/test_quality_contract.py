@@ -20,7 +20,6 @@ from multiworm_quality import sequence_guards, validate_reviews
 from pipeline_progress import PipelineProgress
 from quality_schema import VERSION, permissions
 from quality_fixture import make_fixture
-from pose_segments import accepted_segments
 from worm_pipeline import compatible_identity
 
 

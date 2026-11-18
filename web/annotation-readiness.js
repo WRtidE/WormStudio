@@ -5,8 +5,7 @@ function annotationReadiness({scale, pixelMode = false, calibrationPending = fal
     const scaleReady = pixelMode || (Number.isFinite(Number(scale)) && Number(scale) > 0 && !calibrationPending);
     const confirmed = worms.filter(w => w.area >= 20 && w.confirmed && (!chamberMode || w.roi)).length;
     const masksReady = worms.length > 0 && confirmed === worms.length;
-    const methodReady = ['body_sequence', 'self_contact', 'topology', 'wormtracer', 'niu', 'hybrid'].includes(method)
-        && (method!=='body_sequence' || !algorithmIssue) && (method!=='body_sequence' || chamberMode || worms.length===1) && (method !== 'self_contact' || worms.length <= 1);
+    const methodReady = method === 'body_sequence' && !algorithmIssue && (chamberMode || worms.length === 1);
     const blockers = [];
     if (!scaleReady) blockers.push({
         key: 'scale', step: 1, title: calibrationPending ? '标尺测量尚未完成' : '尺寸标定未完成',
@@ -18,7 +17,7 @@ function annotationReadiness({scale, pixelMode = false, calibrationPending = fal
     });
     if (!methodReady) blockers.push({
         key: 'method', step: 3, title: '分析准备尚未完成',
-        detail: method === 'self_contact' && worms.length > 1 ? '每次分析一条线虫，请保留需要分析的一条。' : algorithmIssue || '分析组件暂不可用，请检查本地安装后重试。', action: '查看分析准备'
+        detail: method === 'body_sequence' && !chamberMode && worms.length > 1 ? '每次分析一条线虫，请保留需要分析的一条。' : algorithmIssue || '分析组件暂不可用，请检查本地安装后重试。', action: '查看分析准备'
     });
     return {scaleReady, masksReady, methodReady, confirmed, blockers, ready: blockers.length === 0};
 }

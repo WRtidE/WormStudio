@@ -17,14 +17,23 @@ from head_tail import normalize_anchors
 
 VERSION = 'sam2-body-sequence-v1'
 
+# Include the measurement geometry called by observed_pose, anchor normalization,
+# and image appearance, even though those dependencies are imported indirectly.
+SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_sequence.py',
+                   'centerline_topology.py', 'framewise_pose.py', 'body_geometry.py',
+                   'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
+                   'analyze_phenotypes.py', 'body_frame_cache.py')
+
 
 def signature():
     import hashlib
     from pathlib import Path
     digest=hashlib.sha256()
-    for name in ('body_sequence_solver.py','body_sequence.py','extract_body_sequence.py','centerline_topology.py',
-                 'framewise_pose.py','body_geometry.py','motion.py','head_recovery.py'):
-        digest.update(Path(__file__).with_name(name).read_bytes())
+    for name in SIGNATURE_FILES:
+        content = Path(__file__).with_name(name).read_bytes()
+        digest.update(name.encode('utf-8') + b'\0')
+        digest.update(len(content).to_bytes(8, 'big'))
+        digest.update(content)
     return digest.hexdigest()
 
 

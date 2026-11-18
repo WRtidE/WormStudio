@@ -55,6 +55,33 @@ node --test tests/*.js tests/*.cjs
 
 ## 桌面软件更新
 
+### Windows 基础安装与可选 NVIDIA 加速
+
+v1.0.2 的 Windows x64 基础包为 `WormStudio-Windows-x64.zip`。维护者用下列命令生成两个 GPU 发布附件，连同基础包和 SHA256SUMS.txt 一起上传。两份 GPU 附件各小于 2 GiB。使用者将它们放在同一文件夹，在工作台设置中选择“启用离线加速包”，退出工作台后在加速窗口选择该文件夹。软件会读取两个 ZIP、校验原始组件并运行显卡验证。软件所在磁盘另预留 10 GiB 供临时读取和安装。
+
+```powershell
+python tools/release/package_windows_kits.py --wheels wheels --split-gpu --output delivery
+```
+
+下列步骤用于历史 v1.0.0 安装程序和单个离线 ZIP。
+
+v1.0.0 可以分别交付基础包和离线加速包。基础包内的“安装 WormStudio.cmd”启动已发布的 x64 安装程序，保留安装进度窗口并跳过 CUDA 下载。CPU 用户安装完即可分析。已有 v1.0.0 的用户可以直接领取加速包。
+
+制作交付包时，从仓库的 [v1.0.0 发布页](https://github.com/WRtidE/WormStudio/releases/tag/v1.0.0) 获取 EXE。用下面的命令下载一次官方 Windows 加速组件，并在新的输出目录生成两份 ZIP。打包工具对安装程序和两个 wheel 分别校验 SHA-256。也可以只给 `--base` 或 `--wheels` 生成其中一个包。
+
+```powershell
+python -m pip download --only-binary=:all: --no-deps --platform win_amd64 --python-version 3.11 --implementation cp --abi cp311 -r requirements-cuda.txt -d wheels
+python tools/release/package_windows_kits.py --base WormStudio-Windows-x64.exe --wheels wheels --output delivery
+```
+
+GPU 包约 3.12 GiB，适合使用共享盘、U 盘或独立下载地址分发，超过 GitHub Release 单附件上限。使用者完整解压，结束任务并退出工作台，双击“启用 NVIDIA 加速.cmd”。安装过程校验官方文件，解压到独立目录并执行显卡运算，通过后才启用。软件安装盘应预留 6 GiB 空间，下载与解压分发 ZIP 另计。重复启用会先检查已有加速。当前组件适配 Windows x64、Python 3.11、PyTorch 2.7.0 和 torchvision 0.22.0。
+
+从当前源码构建 Windows 桌面版时，`tools/release/build_desktop.py` 会把检测代码装入应用。分发完整的 WormStudio 目录，用户解压并打开 WormStudio.exe，即可在“设置 → 通用 → 检测 GPU”查看结果。检测在工作台的运行环境中执行 GPU 运算。仅在当前基础版适用时显示可选的离线加速入口。
+
+前述 `package_windows_kits.py --base` 封装的是历史 v1.0.0 安装程序。对于尚未升级的 v1.0.0 用户，`--detector` 仍可生成兼容该版本的外部检测工具。
+
+### 发布版本与更新检查
+
 正式版本号取自 `tools/electron/package.json` 的 `version`。构建时先改成新的三段版本号，例如 `1.1.0`。默认源为 WRtidE/WormStudio 的 GitHub Releases，私有仓库无法供普通用户检查。使用公开 Releases 时，发布同版本的稳定标签（如 `v1.1.0`），正文填写面向用户的更新说明。上传完整桌面安装包，Mac 使用 `WormStudio-Mac-arm64.zip`，Windows x64 使用 `WormStudio-Windows-x64.exe` 或同名 ZIP。源码归档不会被识别成安装包。
 
 默认读取 GitHub 发布列表第一页。GitHub Release 的单个附件须小于 2 GiB。v1.0.1 的含模型 Mac 离线 ZIP 约 1.25 GB，可直接作为 Release 附件。后续若超出该上限，整包应使用独立的 HTTPS 下载地址。私有仓库或大包可以在打包前给该 package.json 添加 `updateFeed`，指向公开 HTTPS JSON 文件，安装包可放在单独的下载站。测试环境也可用 `WORM_STUDIO_UPDATE_FEED` 指定该地址。格式如下，示例大小和 URL 请替换为真实值。可在 asset 中增加 `digest`（`sha256:` 加文件哈希）以校验下载内容。

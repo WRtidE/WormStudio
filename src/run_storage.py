@@ -7,6 +7,55 @@ import re
 import shutil
 from datetime import datetime
 import secrets
+import os
+from tempfile import NamedTemporaryFile
+
+
+def replace_bytes(path, content):
+    """Replace existing files without changing any linked historical snapshot."""
+    path = Path(path)
+    # New tracking frames cannot be shared yet. Keep their original single-write
+    # path; replacement is needed only when an existing file could be linked.
+    try:
+        with path.open('xb') as handle:
+            handle.write(content)
+        return
+    except FileExistsError:
+        pass
+    temporary = None
+    try:
+        with NamedTemporaryFile(dir=path.parent, prefix='.'+path.name+'.', suffix='.tmp', delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def copy_tracking_snapshot(source, destination):
+    """Share mask bytes; keep metadata and independently rewritten files separate.
+
+    Tracking/cleanup replace PNG files atomically via write_png, so edits in
+    either run detach that file without changing any other snapshot. Deleting
+    the original run also leaves the derived run intact. Volumes without hard
+    links fall back to ordinary copies.
+    """
+    source = Path(source)
+
+    def copy_file(original, target):
+        original = Path(original)
+        relative = original.relative_to(source)
+        if relative.parts[0] == 'masks' and original.suffix.lower() == '.png' and not original.is_symlink():
+            try:
+                os.link(original, target)
+                return str(target)
+            except OSError:
+                pass
+        return shutil.copy2(original, target)
+
+    return shutil.copytree(source, destination, copy_function=copy_file,
+                           ignore=shutil.ignore_patterns('frames-*', '.crop-replay-*'))
 
 
 def fresh_sample(name, outputs):

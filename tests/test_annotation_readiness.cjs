@@ -2,7 +2,7 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {annotationReadiness, measureCalibration, detectScaleBar} = require('../web/annotation-readiness.js');
-const fixture = {scale: '', worms: [{area: 300, confirmed: true, headPoint: [10, 20]}], method: 'topology'};
+const fixture = {scale: '', worms: [{area: 300, confirmed: true, headPoint: [10, 20]}], method: 'body_sequence'};
 
 test('confirmed mask and head cannot replace missing scale; identifies the repair step', () => {
   const check = annotationReadiness(fixture);
@@ -24,12 +24,13 @@ test('explicit pixel mode needs no fabricated physical scale', () => {
   assert.equal(annotationReadiness({...fixture,pixelMode:true,scale:'',calibrationPending:true}).ready,true);
   assert.equal(annotationReadiness({...fixture,pixelMode:false,scale:''}).ready,false);
 });
-test('optional method failure blocks only the selected optional method', () => {
+test('current analysis needs its dependencies and archived methods cannot submit', () => {
   const input = {...fixture, scale: 1, algorithmIssue: '依赖不可用'};
-  assert.equal(annotationReadiness(input).ready, true);
-  const check = annotationReadiness({...input, method: 'body_sequence'});
+  const check = annotationReadiness(input);
   assert.deepEqual(check.blockers.map(b => b.key), ['method']);
-  assert.equal(annotationReadiness({...input, method: undefined}).methodReady, false);
+  for (const method of [undefined,'self_contact','topology','wormtracer','niu','hybrid']) {
+    assert.equal(annotationReadiness({...input, method, algorithmIssue: ''}).methodReady, false);
+  }
 });
 test('all missing requirements remain visible together', () => {
   const check = annotationReadiness({...fixture, worms: [], method: 'body_sequence', algorithmIssue: '不可用'});

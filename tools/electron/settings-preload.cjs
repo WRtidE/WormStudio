@@ -8,5 +8,8 @@ contextBridge.exposeInMainWorld('settings', {
   download: () => ipcRenderer.invoke('updates:download'),
   reveal: () => ipcRenderer.invoke('updates:reveal'),
   workspace: () => ipcRenderer.invoke('updates:workspace'),
+  gpuAvailable: () => ipcRenderer.invoke('settings:gpu-available'),
+  checkGpu: () => ipcRenderer.invoke('settings:gpu-check'),
+  openGpu: () => ipcRenderer.invoke('settings:gpu-open'),
   onChange: callback => ipcRenderer.on('updates:changed', (_event, state) => callback(state))
 });

@@ -58,7 +58,11 @@ def read_image(path, gray=False):
 
 
 def write_png(path, image):
-    Path(path).write_bytes(cv2.imencode('.png', image)[1].tobytes())
+    from run_storage import replace_bytes
+    ok, encoded = cv2.imencode('.png', image)
+    if not ok:
+        raise ValueError(f'Cannot encode {path}')
+    replace_bytes(path, encoded.tobytes())
 
 
 def resample(points, count=101):
@@ -309,7 +313,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         if fit_quality is not None and (len(fit_quality)!=n or any(q['frame']!=i for i,q in enumerate(fit_quality))):
             raise ValueError('Centerline quality frame mismatch')
         rows=[];previous=None;previous_center=None
-        radius_profiles=np.full((n,101),np.nan)
+        radius_profiles=None if method=='body_sequence' else np.full((n,101),np.nan)
         head_point=config.get('head_points_crop_xy',{}).get(f'{sample}:{worm}')
         manual=video_config.get('head_annotations',{}).get(str(worm))
         if manual is None and head_point is not None: manual=dict(frame=0,point=head_point)
@@ -389,7 +393,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                     b=np.mean(np.linalg.norm((p[::-1]-center)-(previous-previous_center),axis=1))
                     reverse=b<a
                 if reverse:p,r=p[::-1].copy(),r[::-1].copy()
-                radius_profiles[frame]=r
+                if radius_profiles is not None:radius_profiles[frame]=r
                 if qa.get('skeleton_path_fraction',1)<.7:reasons.append('branched_or_contact_skeleton')
                 if method != 'self_contact' and qa['centerline_inside_fraction']<.97:reasons.append('centerline_outside_mask')
                 if method=='body_sequence':
@@ -434,24 +438,26 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         valid &= np.array([r['identity_valid'] and r['source_valid'] and (r['scale_valid'] or r.get('measurement_mode')=='pixels') for r in rows])
         for i,row in enumerate(rows):row['valid_for_summary']=bool(valid[i])
         median_length=finite_stat(lengths[valid])
-        # Use only reliable simple postures to establish endpoint identity.
-        poses=np.stack([lines.get((worm,i),np.full((101,2),np.nan)) for i in range(n)])
-        head_valid=valid & np.array([r.get('centerline_topology','simple')=='simple'
-            and not r.get('endpoint_a_inferred',False) and not r.get('endpoint_b_inferred',False) for r in rows])
-        from head_appearance import extract_profiles
-        endpoint_visible = None
-        if method == 'self_contact':
-            head_valid = valid
-            if fit_quality is not None:
-                endpoint_visible = [[r.get('endpoint_a_inferred') is False,
-                                     r.get('endpoint_b_inferred') is False] for r in fit_quality]
         seed_mode = video_config.get('head_detection','twardis') in ('taper_seed','manual_seed')
-        intensity_profiles = (None if method == 'self_contact' and seed_mode else
-                              extract_profiles(source,poses,radius_profiles,head_valid))
         if method=='body_sequence':
             from body_sequence_solver import head_results
             heads=head_results(fit_quality)
         else:
+            # Archived/baseline callers still compute their own endpoint order.
+            # The current solver already saved that evidence; do not decode the
+            # video a second time for appearance profiles it will never consume.
+            poses=np.stack([lines.get((worm,i),np.full((101,2),np.nan)) for i in range(n)])
+            head_valid=valid & np.array([r.get('centerline_topology','simple')=='simple'
+                and not r.get('endpoint_a_inferred',False) and not r.get('endpoint_b_inferred',False) for r in rows])
+            endpoint_visible = None
+            if method == 'self_contact':
+                head_valid = valid
+                if fit_quality is not None:
+                    endpoint_visible = [[r.get('endpoint_a_inferred') is False,
+                                         r.get('endpoint_b_inferred') is False] for r in fit_quality]
+            from head_appearance import extract_profiles
+            intensity_profiles = (None if method == 'self_contact' and seed_mode else
+                                  extract_profiles(source,poses,radius_profiles,head_valid))
             heads=detect_head_tail(poses,head_valid,manual=manual,
                 mode=video_config.get('head_detection','twardis'),parameters=config.get('head_detection_parameters'),
                 segment_ids=[r['identity_segment'] for r in rows],radius_profiles=radius_profiles,intensity_profiles=intensity_profiles,
@@ -707,7 +713,19 @@ def write_report(output,report,rows):
     axes[1,1].invert_yaxis(); axes[1,1].set(xlabel=f'Crop x ({unit})',ylabel=f'Crop y ({unit})',title='Centroid trajectories')
     axes[1,1].set_aspect('equal',adjustable='datalim')
     for ax in axes.ravel(): ax.grid(alpha=.2)
-    fig.suptitle(report['sample']+' | gaps = excluded; head metrics require manual confirmation')
+    title = report['sample'] + ' | gaps = excluded; head metrics require manual confirmation'
+    title_style = {}
+    if not title.isascii():
+        from matplotlib import font_manager
+        from resource_paths import RESOURCE_ROOT
+        font = RESOURCE_ROOT / 'fonts/NotoSansCJKsc-Regular.otf'
+        if font.is_file():
+            title_style['fontproperties'] = font_manager.FontProperties(fname=font, size=matplotlib.rcParams['figure.titlesize'])
+        else:
+            installed = {entry.name for entry in font_manager.fontManager.ttflist}
+            families = ('Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', 'SimHei', 'WenQuanYi Zen Hei')
+            title_style['fontfamily'] = ['DejaVu Sans', *(name for name in families if name in installed)]
+    fig.suptitle(title, **title_style)
     fig.savefig(output/'phenotype-plots.png',dpi=160); plt.close(fig)
     simple=[{k:v for k,v in w.items() if not isinstance(v,(list,dict))} for w in report['worms']]
     with (output/'worm_summary.csv').open('w',newline='',encoding='utf-8-sig') as f:

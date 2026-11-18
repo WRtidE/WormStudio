@@ -2,7 +2,8 @@
 const {app, BrowserWindow, Menu, dialog, shell, ipcMain, net} = require('electron');
 const {pathToFileURL} = require('node:url');
 const {Updates} = require('./updates.cjs');
-const {spawn} = require('node:child_process');
+const {execFile, spawn} = require('node:child_process');
+const execFileAsync = require('node:util').promisify(execFile);
 const {createWriteStream, mkdirSync} = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
@@ -10,6 +11,7 @@ const {existsSync, readFileSync} = require('node:fs');
 const localPath = path.join(__dirname, 'local.json');
 const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, 'utf8')) : {};
 const workspace = process.env.WORM_STUDIO_WORKSPACE || local.workspace || path.resolve(__dirname, '../..');
+const python = process.env.WORM_STUDIO_PYTHON || local.python;
 const viewer = process.env.WORM_STUDIO_VIEW_URL;
 if (viewer && !/^http:\/\/127\.0\.0\.1:\d+\/(?:progress)?$/.test(viewer)) throw Error('无效的本地页面地址');
 
@@ -71,6 +73,38 @@ function initUpdates() {
   handle('updates:download', fromSettings, () => updates.download());
   handle('updates:reveal', fromSettings, () => { if (updates.downloaded) shell.showItemInFolder(updates.downloaded); });
   handle('updates:workspace', fromSettings, () => shell.openPath(workspace));
+  const gpuHelper = path.join(workspace, 'tools', 'release', 'windows_gpu.py');
+  const gpuSupported = () => process.platform === 'win32' && Boolean(python);
+  const bundledPython = path.join(process.resourcesPath, 'analysis', 'python', 'python.exe');
+  const canInstallGpu = () => gpuSupported() && path.resolve(python).toLowerCase() === bundledPython.toLowerCase();
+  const gpuAbort = new AbortController();
+  let gpuCheck;
+  app.once('will-quit', () => gpuAbort.abort());
+  handle('settings:gpu-available', fromSettings, gpuSupported);
+  handle('settings:gpu-check', fromSettings, () => {
+    if (!gpuSupported()) throw Error('当前平台无法执行 NVIDIA 检测');
+    if (!gpuCheck) {
+      gpuCheck = execFileAsync(python, ['-B', '-X', 'utf8', gpuHelper, '--status-json'], {
+        cwd:workspace, windowsHide:true, timeout:90000, signal:gpuAbort.signal,
+      }).then(({stdout}) => {
+        const [state, message] = JSON.parse(stdout.trim());
+        if (typeof message !== 'string') throw Error('无法读取 GPU 检测结果');
+        if (!canInstallGpu() && ['available', 'prepared'].includes(state)) {
+          return {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
+        }
+        return {state, message};
+      }).finally(() => { gpuCheck = null; });
+    }
+    return gpuCheck;
+  });
+  handle('settings:gpu-open', fromSettings, () => {
+    if (!canInstallGpu()) throw Error('离线加速包需要 Windows 桌面版');
+    return new Promise((resolve, reject) => {
+      const child = spawn(python, ['-I', '-B', gpuHelper], {cwd:workspace, detached:true, windowsHide:true, stdio:'ignore'});
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
+  });
   if (!viewer) void updates.startup();
 }
 
@@ -165,7 +199,6 @@ function launch() {
     win.loadURL(viewer).then(() => win?.show(), fail);
     return;
   }
-  const python = process.env.WORM_STUDIO_PYTHON || local.python;
   backend = spawn(python, ['-u', '-c', 'import studio; studio.main(open_browser=False)'], {
     cwd: workspace, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: {...process.env, WORM_STUDIO_PYTHON: python, PYTHONUTF8: '1', MPLBACKEND: 'Agg',

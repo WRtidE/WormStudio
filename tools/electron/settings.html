@@ -25,5 +25,11 @@
       <div class="download-row"><span id="transfer" role="status"></span><button id="download" class="primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg><span>下载新版</span></button></div>
     </section>
   </section>
-  <section id="general" hidden><h2>通用</h2><div class="group"><div class="row"><span>工作目录</span><button id="workspace">在文件夹中打开</button></div></div></section>
+  <section id="general" hidden><h2>通用</h2><div class="group"><div class="row"><span>工作目录</span><button id="workspace">在文件夹中打开</button></div>
+    <div id="gpu-row" hidden>
+      <div class="row"><span>NVIDIA 显卡加速</span><button id="gpu" aria-describedby="gpu-status">检测 GPU</button></div>
+      <p id="gpu-status" role="status" hidden></p>
+      <button id="gpu-install" hidden>启用离线加速包…</button>
+    </div>
+  </div></section>
 </main></body></html>

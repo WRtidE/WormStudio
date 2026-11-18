@@ -3,13 +3,13 @@ import argparse
 import json
 import time
 
-import cv2
 import numpy as np
 
 from analyze_phenotypes import ROOT, load_sample, json_safe
 from body_sequence_solver import solve, VERSION, signature
 from live_preview import report_geometry
 from pipeline_progress import report_progress
+from body_frame_cache import cached_frames
 
 
 def run(sample,worm):
@@ -17,16 +17,14 @@ def run(sample,worm):
     config=json.loads((base/'pipeline-config.json').read_text(encoding='utf8'))
     data,source,ids,get_mask,_=load_sample(sample,apply_guards=False)
     if ids!=[worm]:raise ValueError('当前方法每次处理一个腔室的一条线虫')
-    started=time.monotonic();gray=[];masks=[]
-    cap=cv2.VideoCapture(source['video']);x,y,r,b=source['crop_xyxy']
-    try:
-        for i in range(source['frames']):
-            ok,image=cap.read()
-            if not ok:raise ValueError(f'源视频在 F{i} 读取失败')
-            gray.append(cv2.cvtColor(image[y:b,x:r],cv2.COLOR_BGR2GRAY))
-            masks.append(get_mask(worm,i))
-            report_progress(i+1,source['frames'],'读取虫体与原始画面',fraction=.1*(i+1)/source['frames'])
-    finally:cap.release()
+    started=time.monotonic()
+    with cached_frames(source,get_mask,worm,progress=lambda current,total:
+            report_progress(current,total,'读取虫体与原始画面',fraction=.1*current/total)) as (gray,masks):
+        save_sequence(base,config,data,source,worm,gray,masks,started)
+
+
+def save_sequence(base,config,data,source,worm,gray,masks,started):
+    """Keep mappings alive through geometry previews and quality serialization."""
     def progress(current,total,detail,fraction):
         report_progress(current,total,detail,fraction=.1+.85*fraction)
     from head_tail import anchors_in_crop

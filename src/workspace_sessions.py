@@ -174,7 +174,7 @@ def identity_frame(root,sample,worm,frame):
 
 def derive_geometry_run(root,sample,config=None):
     """Recompute metrics in a new run, provided all geometric inputs are identical."""
-    from run_storage import fresh_sample,input_identity
+    from run_storage import fresh_sample,input_identity,copy_tracking_snapshot
     from worm_pipeline import complete,build_stages,validate_config
     old,original=load_config(root,sample)
     config=copy.deepcopy(config if config is not None else original)
@@ -201,7 +201,7 @@ def derive_geometry_run(root,sample,config=None):
     config=copy.deepcopy(checked);config['sample']=fresh_sample(sample,root/'outputs')
     config['previous_sample']=sample
     base=root/'outputs'/config['sample'];base.mkdir(parents=True)
-    shutil.copytree(old/'sam2-tracking',base/'sam2-tracking',ignore=shutil.ignore_patterns('frames-*','.crop-replay-*'))
+    copy_tracking_snapshot(old/'sam2-tracking',base/'sam2-tracking')
     # Retain every available pose/evidence folder used by this method.
     folders={Path(s['outputs'][0]).resolve().relative_to(old).parts[0] for s in reusable if s['phase']=='fit'}
     for folder in folders:

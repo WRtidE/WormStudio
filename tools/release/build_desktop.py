@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import urllib.request
 import zipfile
 from PIL import Image
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -23,6 +25,27 @@ RUNTIME_HASH = {
     'mac': '9d50cd14269d1ea8601ab279ae0175bdaad7cb151700f53f201a1ea7d0dc53b7',
     'win': 'ec6d6439f700863e2ea740c4e7b80d70cbc3a605a8d3d8b9b817626317ef2621',
 }
+
+def install_plot_font(cache, payload):
+    base = 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/'
+    files = {
+        'OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf': '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b',
+        'LICENSE': '6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2',
+    }
+    fonts = cache / 'font'
+    fonts.mkdir(exist_ok=True)
+    dest = payload / 'fonts'
+    dest.mkdir()
+    for remote, digest in files.items():
+        cached = fonts / Path(remote).name
+        if not cached.is_file():
+            with tempfile.TemporaryDirectory(dir=fonts) as temp:
+                download = Path(temp) / cached.name
+                urllib.request.urlretrieve(base + remote, download)
+                verify(download, digest)
+                download.replace(cached)
+        verify(cached, digest)
+        shutil.copy2(cached, dest / cached.name)
 
 def verify(file, expected):
     with file.open('rb') as stream:
@@ -67,6 +90,7 @@ def build(system, source, cache, sam, weights, example, stage):
     shutil.copy2(HERE/'desktop.cjs', entry)
     payload = resources/'analysis'
     payload.mkdir()
+    install_plot_font(cache, payload)
     with tarfile.open(tarball) as runtime:
         runtime.extractall(payload, filter='data')
     python = payload/'python'
@@ -97,7 +121,7 @@ def build(system, source, cache, sam, weights, example, stage):
     manifest = json.loads((source/'SOURCE_MANIFEST.json').read_text())
     for name, digest in manifest['files'].items():
         rel = Path(name)
-        if rel.parts[0] in ('src','web','config','packages','docs') or name.startswith('tools/electron/') or name in (
+        if (not mac and name == 'tools/release/windows_gpu.py') or rel.parts[0] in ('src','web','config','packages','docs') or name.startswith('tools/electron/') or name in (
             'studio.py','worm_pipeline.py','evaluation.py','review_saved_result.py','THIRD_PARTY.md'):
             verify(source/rel, digest)
             (code/rel).parent.mkdir(exist_ok=True,parents=True)

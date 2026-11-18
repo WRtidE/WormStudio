@@ -40,6 +40,35 @@ bind('auto','change', () => api.auto(el('auto').checked));
 bind('check','click', () => api.check());
 bind('download','click', () => latest?.transfer?.status === 'done' ? api.reveal() : api.download());
 bind('workspace','click', () => api.workspace());
+api.gpuAvailable().then(available => { el('gpu-row').hidden = !available; });
+el('gpu').onclick = async () => {
+  const button = el('gpu');
+  if (button.disabled) return;
+  const status = el('gpu-status');
+  button.disabled = true;
+  button.textContent = '检测中…';
+  status.textContent = '正在检查显卡驱动和工作台的 GPU 运算能力…';
+  status.hidden = false;
+  el('gpu-install').hidden = true;
+  try {
+    const result = await api.checkGpu();
+    status.textContent = result.message;
+    el('gpu-install').hidden = !['available', 'prepared'].includes(result.state);
+  } catch {
+    status.textContent = '检测未完成，请稍后重新检测。';
+  } finally {
+    button.textContent = '重新检测';
+    button.disabled = false;
+  }
+};
+el('gpu-install').onclick = async () => {
+  try {
+    await api.openGpu();
+    el('gpu-status').textContent = '已打开离线加速安装窗口。完成启用后重新打开工作台即可使用。';
+  } catch {
+    el('gpu-status').textContent = '未能打开离线加速安装窗口，请重试。';
+  }
+};
 api.onOpenUpdates(() => el('updates-tab').click());
 api.onChange(render);
 api.state().then(render);
