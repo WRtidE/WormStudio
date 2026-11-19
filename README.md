@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip">下载 Windows 版</a></strong> ·
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip">下载 Windows 版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
 </p>
@@ -32,12 +32,12 @@
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.0.2 基础包，约 1.40 GiB](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”。打开解压后的 `WormStudio` 文件夹，双击 `WormStudio.exe`。基础包可直接用 CPU 分析。 |
-| Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.1 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.1/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
+| Windows 64 位（x64） | [Windows v1.0.3 基础包，约 1.40 GiB](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”。打开解压后的 `WormStudio` 文件夹，双击 `WormStudio.exe`。基础包可直接用 CPU 分析。 |
+| Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
 ## 用练习视频完成第一次分析
 
-下面以 Windows v1.0.2 为例。随包的 `practice.avi` 只有 5 帧，适合第一次熟悉标注和导出。
+下面以 Windows v1.0.3 为例。随包的 `practice.avi` 只有 5 帧，适合第一次熟悉标注和导出。
 
 1. **选择视频。** 在左侧文件列表中选择 `practice.avi`，点击 **开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
 2. **选择区域和单位。** 练习视频选择 **完整画面** 和 **像素单位**，点击 **下一步：点选线虫**。分析实验视频时，如果需要以微米报告体长，选择 **标尺标定**，填入画面中标尺的实际长度（μm），再用 **手动选两端** 点出标尺的两个端点。
@@ -68,7 +68,7 @@
 
 关闭软件后，下次启动可在左侧 **历史任务** 中打开之前的结果。Windows 桌面版可通过 **设置 → 通用 → 工作目录 → 在文件夹中打开** 找到本机文件。分析结果在 `outputs` 中。备份时请保留整个工作目录。如果曾使用 **通过视频路径打开**，还需保留对应的原视频。
 
-当前源码版导出的标注视频保留完整画面，逐帧数值显示在播放器右侧。打开带黑色指标条的旧任务，在 **查看分析视频** 中点击 **生成无黑条副本**。保留原视频和任务目录即可复用已有标注。完成后，回放和 **其他文件 → 标注视频** 都会使用新版副本。
+v1.0.3 导出的标注视频保留完整画面，逐帧数值显示在播放器右侧。打开带黑色指标条的旧任务，在 **查看分析视频** 中点击 **生成无黑条副本**。保留原视频和任务目录即可复用已有标注。完成后，回放和 **其他文件 → 标注视频** 都会使用新版副本。
 
 ## Windows 可选 GPU 加速
 
@@ -79,6 +79,8 @@
 | 显示显卡型号，并提示工作台已能使用它计算 | 直接开始分析，现有环境已经可以加速。 |
 | 检测到 NVIDIA 显卡，提示工作台当前使用 CPU | 可以继续用 CPU。需要加速时，按下方步骤启用。 |
 | 没有可用的 NVIDIA 显卡或驱动 | 使用基础包进行 CPU 分析即可。 |
+
+Windows v1.0.3 沿用 v1.0.2 的 GPU 组件。
 
 1. 将 [GPU 分包 1](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-GPU-cu128-part1.zip) 和 [GPU 分包 2](https://github.com/WRtidE/WormStudio/releases/download/v1.0.2/WormStudio-GPU-cu128-part2.zip) 下载到**同一个文件夹**，保留原文件名和 ZIP 格式。两份共约 3.12 GiB，软件所在磁盘另预留 10 GiB。
 2. 等当前分析完成，点击设置里的 **启用离线加速包**。加速窗口打开后，**退出工作台，保留加速窗口**。

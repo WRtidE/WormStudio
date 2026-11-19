@@ -1,0 +1,46 @@
+name: Verify released desktop packages
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag (vX.Y.Z)
+        required: true
+permissions:
+  contents: read
+jobs:
+  packaged-video:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            asset: WormStudio-Mac-arm64.zip
+          - os: windows-2022
+            asset: WormStudio-Windows-x64.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      ASSET: ${{ matrix.asset }}
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+      - name: Download and verify the public release
+        shell: bash
+        run: |
+          set -eu
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir package-test
+          cd package-test
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          curl -fLsS --retry 3 "$url/$ASSET" -o "$ASSET"
+          curl -fLsS --retry 3 "$url/SHA256SUMS.txt" -o sums.txt
+          python -c "import hashlib,os,pathlib; n=os.environ['ASSET']; expected=dict(l.split('  ',1)[::-1] for l in pathlib.Path('sums.txt').read_text().splitlines()); f=open(n,'rb'); h=hashlib.sha256(); [h.update(b) for b in iter(lambda:f.read(4*1024**2),b'')]; assert h.hexdigest()==expected[n]"
+          if [[ "$RUNNER_OS" == macOS ]]; then ditto -x -k "$ASSET" .; else tar -xf "$ASSET"; fi
+      - name: Run the packaged Large model and verify the exported video
+        run: python tests/released_desktop_smoke.py package-test

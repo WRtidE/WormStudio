@@ -119,4 +119,4 @@
 
 在工作台打开 **设置 → 通用 → 检测 GPU**。结果直接显示在按钮下方。检测会使用本次工作台的运行环境做一次显卡运算，期间可以继续使用软件。看到显卡名称和运算通过提示后即可直接分析。若检测到可用的 NVIDIA 驱动且当前是 CPU 基础版，可按需选择“启用离线加速包”。
 
-需要加速时，从 [v1.0.2 发布页](https://github.com/WRtidE/WormStudio/releases/tag/v1.0.2) 把 `WormStudio-GPU-cu128-part1.zip` 和 `WormStudio-GPU-cu128-part2.zip` 下载到同一文件夹，保留原文件名和 ZIP 格式。软件所在磁盘额外预留 10 GiB。点击“启用离线加速包”，结束分析并退出工作台，在仍打开的加速窗口选择该文件夹。提示启用成功后重新打开工作台。
+Windows v1.0.3 沿用原有 GPU 加速包。需要加速时，从 [v1.0.2 发布页](https://github.com/WRtidE/WormStudio/releases/tag/v1.0.2) 把 `WormStudio-GPU-cu128-part1.zip` 和 `WormStudio-GPU-cu128-part2.zip` 下载到同一文件夹，保留原文件名和 ZIP 格式。软件所在磁盘额外预留 10 GiB。点击“启用离线加速包”，结束分析并退出工作台，在仍打开的加速窗口选择该文件夹。提示启用成功后重新打开工作台。

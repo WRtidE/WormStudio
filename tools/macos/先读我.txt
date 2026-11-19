@@ -1,8 +1,8 @@
-WormStudio 1.0.1 · Mac 桌面版（Electron）
+WormStudio 1.0.3 · Mac 桌面版（Electron）
 
 适用：Apple 芯片（M 系列），macOS 14 或更新版本。默认使用可用的 Apple Metal GPU（MPS），无法使用 MPS 时自动选择 CPU。
 在 Finder 中解压 ZIP，将 WormStudio.app 拖入“应用程序”，双击打开。
-首次请点“准备并打开”。运行环境和两个模型都在包内，无需联网或安装 Python。
+首次请点“准备并打开”。运行环境和 SAM2 Large 模型都在包内，无需联网或安装 Python。
 解压和首次准备会同时保留 ZIP、应用和运行组件，建议至少预留 12 GB 空间，实验视频另计。
 此离线包未公证。如果系统阻止打开，请先核对来源；确认可信后按 macOS
 “系统设置 → 隐私与安全性”中针对本应用的提示操作。
