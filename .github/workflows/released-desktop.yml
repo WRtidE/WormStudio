@@ -41,6 +41,6 @@ jobs:
           curl -fLsS --retry 3 "$url/$ASSET" -o "$ASSET"
           curl -fLsS --retry 3 "$url/SHA256SUMS.txt" -o sums.txt
           python -c "import hashlib,os,pathlib; n=os.environ['ASSET']; expected=dict(l.split('  ',1)[::-1] for l in pathlib.Path('sums.txt').read_text().splitlines()); f=open(n,'rb'); h=hashlib.sha256(); [h.update(b) for b in iter(lambda:f.read(4*1024**2),b'')]; assert h.hexdigest()==expected[n]"
-          if [[ "$RUNNER_OS" == macOS ]]; then ditto -x -k "$ASSET" .; else tar -xf "$ASSET"; fi
+          if [[ "$RUNNER_OS" == macOS ]]; then ditto -x -k "$ASSET" .; else python -m zipfile -e "$ASSET" .; fi
       - name: Run the packaged Large model and verify the exported video
         run: python tests/released_desktop_smoke.py package-test
