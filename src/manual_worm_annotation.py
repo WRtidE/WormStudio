@@ -934,7 +934,7 @@ def create_server(annotation=None, progress=None):
                     from workspace_sessions import remove_history_entry
                     remove_history_entry(ROOT, body.get('sample'))
                     self.respond(200, dict(removed=True)); return
-                if progress and self.path in ('/api/open-run','/api/resume-run','/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review','/api/cancel'):
+                if progress and self.path in ('/api/open-run','/api/resume-run','/api/refresh-video','/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review','/api/cancel'):
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond_before_body(403,dict(error='Invalid processing session')); return
                     if self.path == '/api/cancel':
@@ -954,6 +954,16 @@ def create_server(annotation=None, progress=None):
                     body=json.loads(self.rfile.read(size))
                     from workspace_sessions import reopen,load_config
                     if self.path=='/api/open-run': reopen(progress,ROOT,body.get('sample'))
+                    elif self.path=='/api/refresh-video':
+                        sample=body.get('sample')
+                        if (sample!=progress.data.get('sample') or not progress.data.get('history_reopened')
+                                or not progress.data.get('legacy_video') or progress.data.get('read_only')):
+                            raise ValueError('请先打开需要更新视频的历史结果')
+                        if 'source-video' not in progress.artifacts or not progress.artifacts['source-video'].is_file():
+                            raise ValueError('请先将原视频放回原来的位置')
+                        progress.next_settings={'_refresh_video':sample}
+                        progress.data.update(status='preparing',detail='正在准备重新导出标注视频')
+                        progress.next_ready.set()
                     else:
                         if self.path in ('/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review'):
                             if not progress.config or body.get('sample')!=progress.config['sample']:

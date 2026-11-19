@@ -257,6 +257,8 @@ def complete(stage, config, info):
         from quality_schema import VERSION as QUALITY_VERSION
         try:
             report=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
+            from result_overlay import OVERLAY_VERSION
+            if report.get('overlay_version')!=OVERLAY_VERSION:return False
             if report.get('head_detection_version')!=VERSION: return False
             from display_centerlines import VERSION as DISPLAY_VERSION
             if report.get('display_version')!=DISPLAY_VERSION:return False
@@ -358,6 +360,9 @@ def run_stage(stage, log, progress=None):
 
 
 def _main(progress, raw_override=None):
+    if raw_override and '_refresh_video' in raw_override:
+        from workspace_sessions import refresh_saved_video
+        return refresh_saved_video(progress,ROOT,raw_override['_refresh_video'])
     if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')
     if hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)

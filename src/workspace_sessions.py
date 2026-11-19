@@ -240,10 +240,19 @@ def restore_saved_timing(progress,base,sample):
                          saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
 
 
+def clean_video_path(folder, sample):
+    return folder / f'{sample}_annotated_full-frame_clean.mp4'
+
+
 def result_video_files(base, config):
     from centerline_methods import method_source
     folder = base / ('phenotypes-' + method_source(config['centerline_method']))
-    return [('video', '标注视频', folder / f'{config["sample"]}_annotated_full-frame.mp4', 'export'),
+    original = folder / f'{config["sample"]}_annotated_full-frame.mp4'
+    clean = clean_video_path(folder, config['sample'])
+    video = original
+    if clean.is_file() and (not original.is_file() or clean.stat().st_mtime_ns >= original.stat().st_mtime_ns):
+        video = clean
+    return [('video', '标注视频', video, 'export'),
             ('source-video', '原始视频（只读）', Path(config['video']), 'metrics')]
 
 
@@ -270,7 +279,7 @@ def chamber_summaries(root, items):
             data.update(chamber_id=item.get('chamber_id'), video_name=item['video_name'])
             reports[sample] = data
             try:
-                data['videos'] = [dict(key=key, label=label) for key, (label, _) in saved_videos(base, config).items()]
+                data['videos'] = [dict(key=key, label=label, filename=path.name) for key, (label, path) in saved_videos(base, config).items()]
             except (OSError, ValueError):
                 data['videos'] = []
         except (OSError, ValueError, KeyError, TypeError, IndexError):
@@ -308,8 +317,37 @@ def reopen(progress,root,sample):
         error=None,notice='已重新打开保存结果，未重新计算或改写历史文件。',artifacts=[])
     progress.data['stages']=[dict(name=k,phase=k,label=k,status='complete',fraction=1,seconds=v.get('seconds',0))
         for k,v in completed if k in ('metrics','export')]
-    progress.finish(base,config,'export' if any(k=='export' for k,_ in completed) else 'metrics')
+    from result_overlay import OVERLAY_VERSION
+    exported = any(k=='export' for k,_ in completed)
+    video = next(path for key, _, path, _ in result_video_files(base,config) if key=='video')
+    progress.data['legacy_video'] = (exported and video.is_file() and summary.get('overlay_version') != OVERLAY_VERSION
+                                     and video != clean_video_path(report.parent,sample))
+    progress.finish(base,config,'export' if exported else 'metrics')
     progress.server.annotation=None
+
+
+def refresh_saved_video(progress, root, sample):
+    import sys
+    import tempfile
+    from centerline_methods import method_source
+    from worm_pipeline import run_stage
+    base,config=load_config(root,sample)
+    source=method_source(config['centerline_method'])
+    report=json.loads((base/('phenotypes-'+source)/'summary.json').read_text(encoding='utf-8'))
+    stage=dict(name='export',phase='export',command=[sys.executable,'-u',str(root/'src/review_configured_video.py'),
+        '--sample',sample,'--centerline-source',source,'--refresh-saved-video'])
+    info=dict(frames=report['worms'][0]['frames'],fps=report['fps'],ids=[w['worm_id'] for w in report['worms']])
+    with tempfile.TemporaryDirectory(prefix='worm-video-progress-') as temporary:
+        work=Path(temporary)
+        progress.configure(config,info,[stage],work)
+        log=work/'export.log'
+        try:
+            progress.begin(0,log)
+            run_stage(stage,log,progress)
+        finally:
+            progress.path=progress.preview_dir=progress.log_path=progress.event_path=None
+    with progress.lock:
+        reopen(progress,root,sample)
 
 
 def save_draft(annotation,body):

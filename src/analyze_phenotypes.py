@@ -13,7 +13,6 @@ from live_preview import enabled as preview_enabled, report_preview
 import csv
 import json
 import math
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -25,7 +24,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 from skimage.morphology import skeletonize
 from centerline_topology import geometry_quality
-from worm_colors import worm_color
+from result_overlay import OVERLAY_VERSION, draw_worm
 from head_tail import detect_head_tail, endpoint_labels, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
 from display_centerlines import build_display, VERSION as DISPLAY_VERSION
 from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
@@ -655,6 +654,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(all_events)
     report=dict(sample=sample,crop_xyxy=source['crop_xyxy'],mask_source=str(data),centerline_method=method,centerline_source=wormtracer_source if method!='skeleton' else 'skeleton',fps=fps,scale_um_per_px=None if source.get('measurement_mode')=='pixels' else scale,calibration=scale_info,
                 measurement_mode=source.get('measurement_mode','physical'), metric_definition_version=METRIC_VERSION,
+                overlay_version=OVERLAY_VERSION,
                 tracklet_version=TRACKLET_VERSION,tracklet_scope=tracklet_report['scope'],
                 identity_reassociation_version=ASSOCIATION_VERSION,identity_reviews=video_config.get('identity_reviews',[]),
                 timebase=timebase,
@@ -770,34 +770,50 @@ def write_report(output,report,rows):
 
 def render(sample,source,output,ids,rows,lines):
     _,_,_,get_mask,_=load_sample(sample,source.get('mask_source'))
-    cap=cv2.VideoCapture(source['video']);fps=source['fps'];x0,y0,x1,y1=source['crop_xyxy']
-    lookup={(r['worm_id'],r['frame']):r for r in rows};colors={w:worm_color(w) for w in ids}
-    from result_overlay import draw_worm, draw_hud
-    temp=Path(tempfile.gettempdir())/f'phenotypes-{sample}-{output.name}.mp4'
+    fps=source['fps'];x0,y0,x1,y1=source['crop_xyxy']
+    lookup={(r['worm_id'],r['frame']):r for r in rows}
     width,height=x1-x0,y1-y0
-    writer=cv2.VideoWriter(str(temp),cv2.VideoWriter_fourcc(*'mp4v'),fps,(width+width%2,height+height%2))
-    if not writer.isOpened():raise RuntimeError('Cannot create phenotype video')
-    for frame in range(source['frames']):
-        report_progress(frame,source['frames'],'绘制绿色轮廓、白色中线与逐帧指标',fraction=.6+.39*frame/source['frames'])
-        ok,image=cap.read()
-        if not ok:raise RuntimeError('Truncated source video')
-        raw=image[y0:y1,x0:x1]
-        image=raw.copy()
-        preview_masks = []
-        current_rows = [lookup[(worm,frame)] for worm in ids]
-        for worm, row in zip(ids,current_rows):
-            mask = get_mask(worm,frame)
-            if preview_enabled():
-                preview_masks.append((worm, mask))
-            draw_worm(image,mask,lines.get((worm,frame)),row)
-        draw_hud(image,current_rows,frame,fps)
-        report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准', raw=raw, masks=preview_masks)
-        writer.write(cv2.copyMakeBorder(image,0,height%2,0,width%2,cv2.BORDER_CONSTANT))
-        if frame in (0,source['frames']//2,source['frames']-1):write_png(output/f'preview-{frame:04d}.png',image)
-    writer.release();cap.release();shutil.copy2(temp,output/'phenotypes-overlay.mp4');temp.unlink()
-    check=cv2.VideoCapture(str(output/'phenotypes-overlay.mp4'))
-    count=int(check.get(cv2.CAP_PROP_FRAME_COUNT));check.release()
-    if count!=source['frames']:raise RuntimeError('Export video frame count mismatch')
+    with tempfile.TemporaryDirectory(dir=output) as scratch:
+        temp=Path(scratch)/'overlay.mp4'
+        cap=cv2.VideoCapture(source['video'])
+        writer=cv2.VideoWriter(str(temp),cv2.VideoWriter_fourcc(*'mp4v'),fps,(width+width%2,height+height%2))
+        try:
+            if not writer.isOpened():raise RuntimeError('Cannot create phenotype video')
+            for frame in range(source['frames']):
+                report_progress(frame,source['frames'],'绘制虫体轮廓、中线与端点',fraction=.6+.39*frame/source['frames'])
+                ok,image=cap.read()
+                if not ok:raise RuntimeError('Truncated source video')
+                raw=image[y0:y1,x0:x1]
+                image=raw.copy()
+                preview_masks = []
+                for worm in ids:
+                    mask = get_mask(worm,frame)
+                    if preview_enabled():
+                        preview_masks.append((worm, mask))
+                    draw_worm(image,mask,lines.get((worm,frame)),lookup[(worm,frame)])
+                report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准', raw=raw, masks=preview_masks)
+                writer.write(cv2.copyMakeBorder(image,0,height%2,0,width%2,cv2.BORDER_CONSTANT))
+                if frame in (0,source['frames']//2,source['frames']-1):write_png(output/f'preview-{frame:04d}.png',image)
+        finally:
+            writer.release()
+            cap.release()
+        check=cv2.VideoCapture(str(temp))
+        count=int(check.get(cv2.CAP_PROP_FRAME_COUNT));check.release()
+        if count!=source['frames']:raise RuntimeError('Export video frame count mismatch')
+        temp.replace(output/'phenotypes-overlay.mp4')
+
+
+def render_saved(sample, method, fit_source, destination):
+    _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if method!='skeleton' else None)
+    folder=ROOT/'outputs'/sample/('phenotypes-'+fit_source if method!='skeleton' else 'phenotypes')
+    with (folder/'per_frame_metrics.csv').open(encoding='utf-8-sig',newline='') as handle:
+        rows=list(csv.DictReader(handle))
+    for row in rows:
+        row['worm_id'],row['frame']=int(row['worm_id']),int(row['frame'])
+    display=folder/'display-centerlines.npz'
+    with np.load(display if display.is_file() else folder/'centerlines.npz',allow_pickle=False) as saved:
+        lines={tuple(int(v[1:]) for v in key.split('_')):saved[key] for key in saved.files}
+    render(sample,source,destination,ids,rows,lines)
 
 
 def main():
@@ -813,19 +829,9 @@ def main():
         default_source=method_source(args.centerline_method) if args.centerline_method in ('niu','hybrid','topology','self_contact','body_sequence') else None
         fit_source=args.wormtracer_source or default_source or ('wormtracer-contact-corrected' if (ROOT/'outputs'/sample/'wormtracer-contact-corrected'/'mask-source.json').exists() else 'wormtracer-temporal')
         if args.render_only:
-            _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if args.centerline_method!='skeleton' else None)
             output=ROOT/'outputs'/sample/('phenotypes-'+fit_source if args.centerline_method!='skeleton' else 'phenotypes')
-            with (output/'per_frame_metrics.csv').open(encoding='utf-8-sig') as handle:
-                rows=list(csv.DictReader(handle))
-            for row in rows:
-                for key in ('worm_id','frame'):row[key]=int(row[key])
-                for key in ('length_um','speed_um_s'):row[key]=float(row[key]) if row[key] else np.nan
-                for key in ('valid_for_summary','centerline_valid','mask_valid','head_identity_confirmed','volume_valid','endpoint_a_inferred','endpoint_b_inferred'):
-                    if key in row:row[key]=row[key].lower()=='true'
-            with np.load(output/('display-centerlines.npz' if (output/'display-centerlines.npz').exists() else 'centerlines.npz')) as saved:
-                lines={tuple(int(v[1:]) for v in key.split('_')):saved[key] for key in saved.files}
-            render(sample,source,output,ids,rows,lines)
-            print(f'{sample}: refreshed contour, centerline and per-frame measurements',flush=True)
+            render_saved(sample,args.centerline_method,fit_source,output)
+            print(f'{sample}: refreshed annotated video and previews',flush=True)
         else:analyze(sample,config,args.centerline_method,fit_source)
 
 

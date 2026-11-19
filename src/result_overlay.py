@@ -10,6 +10,7 @@ from PIL import Image,ImageDraw,ImageFont
 from framewise_pose import arc_midpoint
 
 CONTOUR = (55, 220, 55)
+OVERLAY_VERSION = 'contour-only-v1'
 CENTERLINE = (250, 250, 250)
 UNCERTAIN = (0, 180, 255)
 
@@ -103,7 +104,7 @@ def draw_pose(image, mask, points, row, view):
         draw_pose(image,mask,points,row,view)
         return
     if points is None: return
-    # Display names are fixed; confirmation is reported separately in the HUD/UI.
+    # Display names are fixed; the results panel reports confirmation separately.
     labels = view.get('overlay_endpoint_labels', ('H','T'))
     for index, label, color in [(0, labels[0], (255,200,0)), (-1, labels[1], (0,110,255))]:
         if index in estimated:continue
@@ -151,28 +152,3 @@ def draw_worm(image, mask, points, row):
         xy = tuple(points[index])
         cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
         cv2.putText(image, label, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
-
-
-def draw_hud(image, rows, frame, fps):
-    # Image remains readable even for the small cropped videos used in tests.
-    width = image.shape[1]
-    scale = min(.55, max(.28, width/1750))
-    step = max(16, int(32*scale/.55))
-    seconds = rows[0].get('time_s', frame/fps) if rows else frame/fps
-    lines = [f'Frame {frame} | {seconds:.3f}s | green: contour | white: centerline | REVIEW: check pose']
-    if rows and 'self_contact_state' in rows[0]:
-        lines[0] = f'Frame {frame} | {seconds:.3f}s | green: contour | yellow: 101 points | red H: head | blue T: tail | A/B: unidentified'
-    def fmt(value, digits=1):
-        return '--' if value is None else f'{value:.{digits}f}'
-    for row in rows:
-        m = present_frame(row)
-        pixel=m.get('measurement_mode')=='pixels'
-        unit='px' if pixel else 'um'
-        def measurement(key): return m.get(key.replace('_um','_px') if pixel else key)
-        identity='LEGACY' if m['quality']['legacy'] else 'ID CONTINUOUS' if m['identity_valid'] else 'ID REVIEW / anonymous area'
-        lines += [f'W{m["worm_id"]} {identity}  L={fmt(measurement("length_um"))} {unit}   Area={fmt(measurement("area_um2"),0)} {unit}^2   v={fmt(measurement("speed_um_s"))} {unit}/s',
-                  f'  Vol(est)={fmt(measurement("volume_um3"),0)} {unit}^3   Head angle={fmt(m["head_angle_deg"])} deg   '+('head confirmed' if m['head_confirmed'] else 'head unconfirmed')]
-    bottom = min(image.shape[0], len(lines)*step+10)
-    cv2.rectangle(image, (0,0), (width,bottom), (24,29,28), -1)
-    for j, text in enumerate(lines):
-        cv2.putText(image,text,(8,step*(j+1)),0,scale,(240,245,240),1,cv2.LINE_AA)

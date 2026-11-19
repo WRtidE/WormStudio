@@ -166,10 +166,27 @@ window.StudioResults = (() => {
   }
   function artifactUrl(data, key, inline=false) {
     const query = new URLSearchParams({key, run:data.sample});
+    const filename = key==='video' && data.artifacts?.find(item=>item.key===key)?.filename;
+    if (filename) query.set('file',filename);
     if (inline) query.set('inline', '1');
     if (data.summaryOnly) query.set('group', data.group || '');
     return '/artifact?' + query;
   }
+  el('refresh-video').onclick = async () => {
+    const button = el('refresh-video');
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/refresh-video', {method:'POST',
+        headers:{'Content-Type':'application/json','X-Annotation-Token':latest.token},
+        body:JSON.stringify({sample:latest.sample})});
+      const result = await response.json();
+      if (!response.ok) throw Error(result.error);
+      document.querySelector('[data-view="progress"]').click();
+    } catch (error) {
+      text('legacy-video-note',error.message);
+      button.disabled = false;
+    }
+  };
   el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source(el('result-original').checked);video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
   for(const [id,endpoint] of [['head-a',0],['head-b',1]]) el(id).onclick=async()=>{
     el('head-a').disabled=el('head-b').disabled=true;
@@ -311,6 +328,14 @@ window.StudioResults = (() => {
     showEvents(null);
     stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;el('identity-open').hidden=true;
     el('result-original').checked=false;
+    const legacy = data.history_reopened && data.legacy_video && !data.summaryOnly;
+    const sourceAvailable = data.artifacts?.some(item=>item.key==='source-video');
+    el('legacy-video-tools').hidden = !legacy;
+    el('refresh-video').hidden = !sourceAvailable || data.read_only;
+    el('refresh-video').disabled = false;
+    if (legacy) text('legacy-video-note', sourceAvailable
+      ? '此视频含旧版指标条。可用已保存的识别结果生成新版视频。'
+      : '此视频含旧版指标条。请将原视频放回原位置，再打开此任务生成副本。');
     window.ResultPlayer.reset();
     renderPhenotypes(data.phenotypes && {...data.phenotypes,video_name:data.video_name||data.phenotypes.video_name},data.sample);
     el('result-summary').disabled=!data.phenotypes?.worms?.length;

@@ -28,7 +28,8 @@ def preview(image, width=960):
     return cv2.resize(image, (width, height))
 
 
-def verify(folder, target, source, ids, size):
+def verify(folder, target, source, ids, size, *, records=None):
+    records = records or folder
     cap = cv2.VideoCapture(str(target))
     if not cap.isOpened():
         raise RuntimeError('Cannot open exported video')
@@ -45,17 +46,15 @@ def verify(folder, target, source, ids, size):
     if count != source['frames']:
         raise RuntimeError('Exported frame count mismatch')
     expected = {(w, f) for w in ids for f in range(count)}
-    with (folder / 'per_frame_metrics.csv').open(encoding='utf-8-sig') as handle:
+    with (records / 'per_frame_metrics.csv').open(encoding='utf-8-sig') as handle:
         rows = list(csv.DictReader(handle))
     valid_keys={(int(r['worm_id']),int(r['frame'])) for r in rows if permissions(r)['posture']}
     from measurement_units import metric_key
     available_keys={(int(r['worm_id']),int(r['frame'])) for r in rows if r.get(metric_key('length_um',r)) and np.isfinite(float(r[metric_key('length_um',r)]))}
-    with np.load(folder / 'centerlines.npz', allow_pickle=False) as points:
+    with np.load(records / 'centerlines.npz', allow_pickle=False) as points:
         keys = {tuple(int(v[1:]) for v in key.split('_')) for key in points.files}
         if not valid_keys <= keys <= expected or keys != available_keys or any(points[k].shape != (101, 2) or not np.isfinite(points[k]).all() for k in points.files):
             raise RuntimeError('Missing or invalid centerline records')
-    with (folder / 'per_frame_metrics.csv').open(encoding='utf-8-sig') as handle:
-        rows = list(csv.DictReader(handle))
     if len(rows) != len(expected) or {(int(r['worm_id']), int(r['frame'])) for r in rows} != expected:
         raise RuntimeError('Missing or duplicate metric records')
     checks = {}
@@ -83,11 +82,33 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample', required=True)
     parser.add_argument('--tracking-only', action='store_true')
+    parser.add_argument('--refresh-saved-video', action='store_true', help='Render a separate video from saved masks and measurements')
     parser.add_argument('--centerline-source',default='centerlines-body-sequence',
         choices=['wormtracer-temporal','centerlines-niu','centerlines-hybrid','centerlines-topology','centerlines-tapnext','centerlines-self-contact','centerlines-body-sequence'])
     args = parser.parse_args()
     base = ROOT / 'outputs' / args.sample
     _, source, ids, get_mask, _ = load_sample(args.sample)
+    folder = base / ('phenotypes-'+args.centerline_source)
+    filename = f'{args.sample}_annotated_full-frame.mp4'
+    if args.refresh_saved_video:
+        from analyze_phenotypes import render_saved
+        from workspace_sessions import clean_video_path
+        config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
+        identity = json.loads((base/'pipeline-state.json').read_text(encoding='utf-8')).get('identity') or {}
+        if 'video_size' in identity and Path(source['video']).stat().st_size != identity['video_size']:
+            raise ValueError('原视频大小与保存的记录不符。请恢复原视频或新建分析任务。')
+        with tempfile.TemporaryDirectory(dir=folder, prefix='video-') as scratch:
+            work = Path(scratch)
+            render_saved(args.sample,config['centerline_method'],args.centerline_source,work)
+            export_video(work, filename, source, ids, get_mask, records=folder)
+            (work/filename).replace(clean_video_path(folder, args.sample))
+        return
+    tracking_review(base, source, ids, get_mask)
+    if not args.tracking_only:
+        export_video(folder, filename, source, ids, get_mask)
+
+
+def tracking_review(base, source, ids, get_mask):
     raw = cv2.VideoCapture(source['video'])
     if not raw.isOpened():
         raise RuntimeError('Cannot open source video')
@@ -110,14 +131,19 @@ def main():
         panels.append(panel)
     write_png(base / 'tracking-review.png', np.vstack(panels))
     raw.release()
-    if args.tracking_only:
-        return
-    folder = base / ('phenotypes-'+args.centerline_source)
-    target = folder / f'{args.sample}_annotated_full-frame.mp4'
+
+
+def export_video(folder, filename, source, ids, get_mask, *, records=None):
+    target = folder / filename
+    x0, y0, x1, y1 = source['crop_xyxy']
     cropped = cv2.VideoCapture(str(folder / 'phenotypes-overlay.mp4'))
     raw = cv2.VideoCapture(source['video'])
     if not cropped.isOpened() or not raw.isOpened():
         raise RuntimeError('Source or phenotype video is missing')
+    if int(raw.get(cv2.CAP_PROP_FRAME_COUNT)) != source['frames'] or abs(raw.get(cv2.CAP_PROP_FPS)-source['fps']) > .001:
+        cropped.release()
+        raw.release()
+        raise ValueError('原视频的帧数或帧率与保存的标注不符')
     size = (int(raw.get(3)), int(raw.get(4)))
     encoded_size = tuple(value + value % 2 for value in size)
     previews = []
@@ -154,7 +180,7 @@ def main():
                         '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(encoded)], check=True)
         shutil.copy2(encoded, target)
     write_png(folder / 'full-comparison.png', np.vstack(previews))
-    print(json.dumps(verify(folder, target, source, ids, size), ensure_ascii=False, indent=2))
+    print(json.dumps(verify(folder, target, source, ids, size, records=records), ensure_ascii=False, indent=2))
 
 
 if __name__ == '__main__':

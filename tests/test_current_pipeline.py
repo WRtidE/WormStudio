@@ -8,6 +8,8 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
+import cv2
+import numpy as np
 import analyze_phenotypes as metrics
 import extract_body_sequence as body_sequence
 import manual_worm_annotation as manual
@@ -101,6 +103,33 @@ class CurrentPipelineTests(unittest.TestCase):
         self.assertNotEqual((folder / 'per_frame_metrics.json').read_bytes(),
                             (self.root / 'outputs' / revised['sample'] / f'phenotypes-{SOURCE}' /
                              'per_frame_metrics.json').read_bytes())
+
+    def test_saved_overlay_preserves_image_top_and_measurements(self):
+        sample = self.config['sample']
+        self.run_pipeline(sample)
+        folder = self.root / 'outputs' / sample / f'phenotypes-{SOURCE}'
+        before = (folder/'per_frame_metrics.csv').read_bytes()
+        work = self.root/'new-video'
+        work.mkdir()
+        with patch.object(metrics,'ROOT',self.root):
+            metrics.render_saved(sample,'body_sequence',SOURCE,work)
+        raw = cv2.VideoCapture(self.source['video'])
+        overlay = cv2.VideoCapture(str(work/'phenotypes-overlay.mp4'))
+        try:
+            for frame in range(self.source['frames']):
+                ok, original = raw.read()
+                ready, annotated = overlay.read()
+                self.assertTrue(ok and ready)
+                self.assertEqual(annotated.shape,original.shape)
+                # The previously covered region contains only source pixels in this fixture.
+                self.assertLess(np.abs(original[:60].astype(float)-annotated[:60]).mean(),8)
+                if frame == 0:
+                    green = annotated[:,:,1].astype(float) - annotated[:,:,2]
+                    self.assertGreater(np.count_nonzero(green>55),100)
+        finally:
+            raw.release()
+            overlay.release()
+        self.assertEqual((folder/'per_frame_metrics.csv').read_bytes(),before)
 
     def test_quality_schema_version_is_written_for_every_row(self):
         report = self.run_pipeline(self.config['sample'])
