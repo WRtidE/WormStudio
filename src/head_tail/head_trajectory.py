@@ -1,7 +1,7 @@
 """Offline endpoint correspondence from short tracks on either side of a posture change."""
 import numpy as np
 
-from head_temporal import MAX_INTERVAL_S
+from head_tail.head_temporal import MAX_INTERVAL_S
 
 
 def predict_order(curves, seen, history, target, fps, cfg):
@@ -200,5 +200,5 @@ def fill_from_trajectories(rows, poses, valid, visible, identities, native_flip,
                 rows[i]['head_trajectory_frames'] = sorted({k for v in votes for k in v[1]})
         else:
             assign(i, votes[0][0], votes, 'trajectory_frame_orientation')
-    from centerline_correspondence import constrain_trajectory_proposals
+    from pose.centerline_correspondence import constrain_trajectory_proposals
     constrain_trajectory_proposals(rows, links, known)

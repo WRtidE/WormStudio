@@ -1,11 +1,11 @@
 """Initialize once from user anchors or terminal taper, then preserve endpoint order."""
 import numpy as np
-from head_temporal import geometry_link, visible_tip_link, MAX_INTERVAL_S
+from head_tail.head_temporal import geometry_link, visible_tip_link, MAX_INTERVAL_S
 
 
 def initial_taper_seed(block, profiles, flipped, cfg, fps, visible):
     """Use the first supported local initialization in the common physical point order."""
-    from head_tail import taper_votes, vote_winner
+    from head_tail.head_tail import taper_votes, vote_winner
     windows = []
     for frames, parity, match in block:
         # A newly joined clip may supply a seed if the preceding clip had none.
@@ -117,7 +117,7 @@ def initialize(results,poses,segments,flipped,identities,profiles,anchors,cfg,fp
     for a in anchors:
         if a['frame'] not in usable:results[a['frame']].update(head_reason='manual_anchor_unreliable',head_anchor_count=1)
     if endpoint_visible is not None and valid is not None and len(poses):
-        from head_trajectory import fill_from_trajectories
+        from head_tail.head_trajectory import fill_from_trajectories
         fill_from_trajectories(results, poses, valid, endpoint_visible, identities, native_flip,
                                fps, cfg, {a['frame'] for a in anchors}, links or {})
     return results

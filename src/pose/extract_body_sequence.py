@@ -5,11 +5,11 @@ import time
 
 import numpy as np
 
-from analyze_phenotypes import ROOT, load_sample, json_safe
-from body_sequence_solver import solve, VERSION, signature
+from measurements.analyze_phenotypes import ROOT, load_sample, json_safe
+from pose.body_sequence_solver import solve, VERSION, signature
 from live_preview import report_geometry
 from pipeline_progress import report_progress
-from body_frame_cache import cached_frames
+from runtime.body_frame_cache import cached_frames
 
 
 def run(sample,worm):
@@ -27,7 +27,7 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
     """Keep mappings alive through geometry previews and quality serialization."""
     def progress(current,total,detail,fraction):
         report_progress(current,total,detail,fraction=.1+.85*fraction)
-    from head_tail import anchors_in_crop
+    from head_tail.head_tail import anchors_in_crop
     manual=anchors_in_crop(config.get('head_annotations',{}).get(str(worm)),config['crop_xyxy'],source['crop_xyxy'])
     lines,facts,audit=solve(masks,gray,source['fps'],manual=manual,
         point_count=config.get('tracking_point_count',13),source_invalid=config.get('source_invalid_frames',()),

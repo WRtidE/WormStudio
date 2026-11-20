@@ -196,7 +196,7 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
     usable &= separated
     links = {}
     if endpoint_visible is not None and mode in ('taper_seed','manual_seed'):
-        from centerline_correspondence import curve_links
+        from pose.centerline_correspondence import curve_links
         links = curve_links(p, usable, endpoint_visible, segment_ids, fps, pose_gap_allowed,
                             {a['frame'] for a in anchors})
     segments = []
@@ -227,7 +227,7 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
         current.append(i)
     if current: segments.append(current)
     if mode in ('taper_seed','manual_seed'):
-        from head_initialization import initialize
+        from head_tail.head_initialization import initialize
         return initialize(results,p,segments,flipped,segment_ids,profiles,anchors,cfg,fps,mode,
                           endpoint_visible,valid & finite,links,pose_gap_allowed)
     for segment_id, indexes in enumerate(segments):
@@ -286,7 +286,7 @@ def detect_head_tail(centerlines, valid, manual=None, mode='twardis', parameters
         f=anchor['frame']
         if not usable[f]:results[f].update(head_reason='manual_anchor_unreliable',head_anchor_count=1)
     appearance_fusion(results,intensity_profiles,segment_ids,mode,cfg)
-    from head_temporal import stabilize
+    from head_tail.head_temporal import stabilize
     stabilize(results,p,segment_ids,fps,mode)
     return results
 

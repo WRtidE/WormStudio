@@ -2,7 +2,7 @@
 import unittest
 from pathlib import Path
 
-from centerline_methods import (ARCHIVED, CURRENT_METHOD, analysis_method,
+from pose.centerline_methods import (ARCHIVED, CURRENT_METHOD, analysis_method,
                                 display_method, method_source)
 from worm_pipeline import build_stages
 

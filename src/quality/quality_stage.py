@@ -25,7 +25,7 @@ def load_guards(data, ids, frames, required=False):
 
 
 def run(sample, mask_source=None, boundary_frames=None):
-    from analyze_phenotypes import ROOT, load_sample, json_safe
+    from measurements.analyze_phenotypes import ROOT, load_sample, json_safe
     base = ROOT/'outputs'/sample
     config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
     data, source, ids, get_mask, bad = load_sample(sample, mask_source or base/'sam2-tracking', apply_guards=False)

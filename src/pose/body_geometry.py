@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from scipy import ndimage as ndi
 
-from centerline_topology import geometry_quality
+from pose.centerline_topology import geometry_quality
 
 
 def local_field(mask):

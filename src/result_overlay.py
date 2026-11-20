@@ -2,12 +2,12 @@
 import cv2
 import numpy as np
 
-from frame_metrics import present_frame
+from measurements.frame_metrics import present_frame
 from quality.quality_schema import flag
 from functools import lru_cache
 import json
 from PIL import Image,ImageDraw,ImageFont
-from framewise_pose import arc_midpoint
+from pose.framewise_pose import arc_midpoint
 
 CONTOUR = (55, 220, 55)
 OVERLAY_VERSION = 'contour-only-v1'
@@ -67,8 +67,8 @@ def draw_pose(image, mask, points, row, view):
                 if k % 8 < 4:
                     cv2.line(image, tuple(points[k]), tuple(points[k+1]), UNCERTAIN, 2, cv2.LINE_AA)
         if row.get('body_sequence_version'):
-            from head_recovery import tracking_indices
-            from centerline_topology import resample
+            from head_tail.head_recovery import tracking_indices
+            from pose.centerline_topology import resample
             for index,xy in zip(tracking_indices(),resample(points)[tracking_indices()]):
                 color=(255,210,85) if index<50 else (0,145,255) if index>50 else (240,240,240)
                 cv2.circle(image,tuple(np.rint(xy).astype(int)),2,color,1,cv2.LINE_AA)

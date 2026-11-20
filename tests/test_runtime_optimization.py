@@ -10,9 +10,9 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from analyze_phenotypes import json_safe, read_image, write_png
-from body_frame_cache import cached_frames
-from body_sequence_solver import signature, solve
+from measurements.analyze_phenotypes import json_safe, read_image, write_png
+from runtime.body_frame_cache import cached_frames
+from pose.body_sequence_solver import signature, solve
 from runtime.run_storage import copy_tracking_snapshot
 from test_current_pipeline import single_worm_fixture
 
@@ -68,7 +68,7 @@ class FrameCacheTests(unittest.TestCase):
     def test_cancellation_closes_mappings_and_removes_temporary_files(self):
         with tempfile.TemporaryDirectory() as parent:
             allocate = tempfile.TemporaryFile
-            with patch('body_frame_cache.TemporaryFile', side_effect=lambda **kw: allocate(dir=parent, **kw)):
+            with patch('runtime.body_frame_cache.TemporaryFile', side_effect=lambda **kw: allocate(dir=parent, **kw)):
                 def cancel(current, total):
                     if current == 2:
                         raise RuntimeError('cancelled')

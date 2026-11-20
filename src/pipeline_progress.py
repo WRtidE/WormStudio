@@ -97,7 +97,7 @@ class PipelineProgress:
         return f'http://127.0.0.1:{self.server.server_port}/progress'
 
     def configure(self, config, info, stages, base, device=''):
-        from centerline_methods import METHODS
+        from pose.centerline_methods import METHODS
         base.mkdir(parents=True, exist_ok=True)
         with self.lock:
             if not (self.batch and self.batch.active):
@@ -164,7 +164,7 @@ class PipelineProgress:
             self.persist()
 
     def finish(self, base, config, stop_after):
-        from centerline_methods import method_source
+        from pose.centerline_methods import method_source
         from workspace_sessions import result_video_files
         with self.lock:
             self.ended = time.time()
@@ -217,7 +217,7 @@ class PipelineProgress:
                     self.data['quality'] = summarize_quality(rows)
                     if self.data['quality']['needs_review']:
                         self.data['detail'] = '计算已完成，部分线虫结果需要复核。'
-                from result_metrics import phenotype_results
+                from measurements.result_metrics import phenotype_results
                 self.data['phenotypes'] = phenotype_results(result)
                 if config.get('chamber_id') is not None:
                     self.data['phenotypes'].update(chamber_id=config['chamber_id'], video_name=Path(config['video']).name)
@@ -226,7 +226,7 @@ class PipelineProgress:
             self.persist()
 
     def frame_results(self, sample):
-        from frame_metrics import load_frame_metrics
+        from measurements.frame_metrics import load_frame_metrics
         with self.lock:
             if sample != self.data['sample']:
                 raise ValueError('结果会话已改变，请刷新页面')

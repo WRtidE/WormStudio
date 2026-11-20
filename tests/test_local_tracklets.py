@@ -2,7 +2,7 @@ import copy
 import unittest
 from quality.local_tracklets import measure
 from quality.quality_schema import exclude_unusable, VERSION
-from frame_metrics import present_frame
+from measurements.frame_metrics import present_frame
 
 
 def sequence(n=12):

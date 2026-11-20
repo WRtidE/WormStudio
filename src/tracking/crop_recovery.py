@@ -107,7 +107,7 @@ def incidents(hits, records):
 
 
 def replay_incident(predictor, cap, expanded, box, original, indices, span, w, ids, get, stage):
-    from analyze_phenotypes import write_png
+    from measurements.analyze_phenotypes import write_png
     seed = place(get(w,indices[0]), original, expanded)
     _, _, width, height = cv2.boundingRect(seed.astype(np.uint8))
     ref_area = int(seed.sum())
@@ -148,7 +148,7 @@ def replay_incident(predictor, cap, expanded, box, original, indices, span, w, i
 
 
 def save_masks(dest, raw, meta, config, ids, get, patches, final_box):
-    from analyze_phenotypes import read_image, write_png
+    from measurements.analyze_phenotypes import read_image, write_png
     original, count = meta['crop_xyxy'], meta['frames']
     metrics = []
     for f in range(count):
@@ -181,7 +181,7 @@ def save_masks(dest, raw, meta, config, ids, get, patches, final_box):
 
 
 def run(sample, predictor=None):
-    from analyze_phenotypes import ROOT, load_sample
+    from measurements.analyze_phenotypes import ROOT, load_sample
     from quality.quality_stage import load_guards, run as guard_stage
     base = ROOT/'outputs'/sample
     config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8-sig'))

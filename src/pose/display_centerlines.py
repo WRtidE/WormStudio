@@ -4,9 +4,9 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 from skimage.graph import route_through_array
 from skimage.morphology import skeletonize
-from endpoint_order import sampled
+from head_tail.endpoint_order import sampled
 from quality.quality_schema import permissions, flag
-from centerline_topology import geometry_quality
+from pose.centerline_topology import geometry_quality
 
 VERSION = 'display-centerlines-v4-solid-review'
 

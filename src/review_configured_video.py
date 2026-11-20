@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 import imageio_ffmpeg
 import numpy as np
-from analyze_phenotypes import ROOT, load_sample, write_png
+from measurements.analyze_phenotypes import ROOT, load_sample, write_png
 from worm_colors import worm_color
 from quality.quality_schema import permissions, describe
 
@@ -49,7 +49,7 @@ def verify(folder, target, source, ids, size, *, records=None):
     with (records / 'per_frame_metrics.csv').open(encoding='utf-8-sig') as handle:
         rows = list(csv.DictReader(handle))
     valid_keys={(int(r['worm_id']),int(r['frame'])) for r in rows if permissions(r)['posture']}
-    from measurement_units import metric_key
+    from measurements.measurement_units import metric_key
     available_keys={(int(r['worm_id']),int(r['frame'])) for r in rows if r.get(metric_key('length_um',r)) and np.isfinite(float(r[metric_key('length_um',r)]))}
     with np.load(records / 'centerlines.npz', allow_pickle=False) as points:
         keys = {tuple(int(v[1:]) for v in key.split('_')) for key in points.files}
@@ -91,7 +91,7 @@ def main():
     folder = base / ('phenotypes-'+args.centerline_source)
     filename = f'{args.sample}_annotated_full-frame.mp4'
     if args.refresh_saved_video:
-        from analyze_phenotypes import render_saved
+        from measurements.analyze_phenotypes import render_saved
         from workspace_sessions import clean_video_path
         config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
         identity = json.loads((base/'pipeline-state.json').read_text(encoding='utf-8')).get('identity') or {}

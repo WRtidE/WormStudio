@@ -24,7 +24,7 @@ def phenotype_results(folder):
 
 
 def present_report(report, rows):
-    from measurement_units import metric_key, pixel_mode
+    from measurements.measurement_units import metric_key, pixel_mode
     if rows and 'measurement_mode' not in report and rows[0].get('measurement_mode') == 'pixels':
         report = dict(report, measurement_mode='pixels')
     fps = number(report.get('fps'))

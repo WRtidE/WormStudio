@@ -10,11 +10,11 @@ VERSION = 'annotation-frame-metrics-v1'
 
 
 def measure_mask(mask, *, frame, worm_id, measurement_mode, scale_um_per_px=None, origin=(0, 0)):
-    from measurement_units import validate_scale
-    from framewise_pose import observed_pose, arc_midpoint
-    from centerline_topology import geometry_quality
-    from analyze_phenotypes import frustum_volume
-    from phenotype_statistics import measure_posture
+    from measurements.measurement_units import validate_scale
+    from pose.framewise_pose import observed_pose, arc_midpoint
+    from pose.centerline_topology import geometry_quality
+    from measurements.analyze_phenotypes import frustum_volume
+    from measurements.phenotype_statistics import measure_posture
 
     units = dict(measurement_mode=measurement_mode, scale_um_per_px=scale_um_per_px)
     validate_scale(units)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
+from pose.centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
 from runtime.resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
@@ -95,7 +95,7 @@ def validate_config(config, relative_to=ROOT):
             raise ValueError(f'{label} 应在 0–{n - 1} 之间')
 
     rect(c.get('crop_xyxy'), [0, 0, width, height], '分析裁剪范围')
-    from measurement_units import validate_scale
+    from measurements.measurement_units import validate_scale
     validate_scale(c)
     c.setdefault('scale_source', 'User-supplied calibration')
     if not isinstance(c.get('groups'), list) or not c['groups']:
@@ -154,7 +154,7 @@ def validate_config(config, relative_to=ROOT):
     annotations=c.get('head_annotations',{})
     if not isinstance(annotations,dict) or not set(annotations)<=set(map(str,ids)):
         raise ValueError('头部标注必须使用当前线虫编号')
-    from head_tail import normalize_anchors
+    from head_tail.head_tail import normalize_anchors
     for item in [a for values in annotations.values() for a in normalize_anchors(values)]:
         frame(item.get('frame'),'头部标注帧')
         point=item.get('point')
@@ -205,11 +205,11 @@ def build_stages(config, info, snapshot, phenotype_path):
     source = method_source(method)
     for worm in info['ids']:
         out = base / source / f'worm-{worm}'
-        add(f'{method}-worm-{worm}', 'fit', f'extract_{method}',
+        add(f'{method}-worm-{worm}', 'fit', f'pose.extract_{method}',
             ['--sample', sample, '--worm', worm],
             [out/'centerlines.npy', out/'run.json', out/'quality.json'])
     results = base / ('phenotypes-'+source)
-    add('metrics', 'metrics', 'analyze_phenotypes', ['--sample', sample, '--config', phenotype_path,
+    add('metrics', 'metrics', 'measurements.analyze_phenotypes', ['--sample', sample, '--config', phenotype_path,
         '--centerline-method',method,'--wormtracer-source',source],
         [results / name for name in ('summary.json', 'per_frame_metrics.csv', 'worm_summary.csv', 'centerlines.npz',
             'phenotypes-overlay.mp4', '报告.md', 'quality.json', 'per_frame_metrics.json',
@@ -250,20 +250,20 @@ def complete(stage, config, info):
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
         except (OSError, ValueError, KeyError, TypeError): return False
     if stage['phase']=='metrics' and config.get('centerline_method')=='body_sequence':
-        from body_sequence_solver import signature
+        from pose.body_sequence_solver import signature
         if json.loads(Path(stage['outputs'][0]).read_text(encoding='utf8')).get('body_sequence_signature')!=signature():return False
     if stage['phase']=='metrics':
-        from head_tail import VERSION
+        from head_tail.head_tail import VERSION
         from quality.quality_schema import VERSION as QUALITY_VERSION
         try:
             report=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
             from result_overlay import OVERLAY_VERSION
             if report.get('overlay_version')!=OVERLAY_VERSION:return False
             if report.get('head_detection_version')!=VERSION: return False
-            from display_centerlines import VERSION as DISPLAY_VERSION
+            from pose.display_centerlines import VERSION as DISPLAY_VERSION
             if report.get('display_version')!=DISPLAY_VERSION:return False
             if report.get('quality_schema_version')!=QUALITY_VERSION: return False
-            from phenotype_statistics import VERSION as METRIC_VERSION
+            from measurements.phenotype_statistics import VERSION as METRIC_VERSION
             if report.get('metric_definition_version') != METRIC_VERSION: return False
             from quality.local_tracklets import VERSION as TRACKLET_VERSION
             if report.get('tracklet_version')!=TRACKLET_VERSION: return False
@@ -282,7 +282,7 @@ def complete(stage, config, info):
                 for f, line in enumerate(p):
                     if not np.isfinite(line).all() and not (np.isnan(line).all() and not quality[f]['centerline_valid']): return False
             meta = json.loads(Path(stage['outputs'][1]).read_text(encoding='utf-8'))
-            from body_sequence_solver import signature
+            from pose.body_sequence_solver import signature
             if meta.get('algorithm_signature') != signature(): return False
             if meta.get('head_annotations') != config.get('head_annotations', {}): return False
         except (OSError, KeyError): return False

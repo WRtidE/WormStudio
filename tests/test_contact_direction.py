@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from head_temporal import apply_contact_directions, orient_loop_reviews
+from head_tail.head_temporal import apply_contact_directions, orient_loop_reviews
 
 
 class ContactDirections(unittest.TestCase):

@@ -63,7 +63,7 @@ def load_config(root, sample):
 def confirm_head(root, sample, worm, frame, endpoint):
     """User review creates a derived run; segmentation and pose stay unchanged."""
     import numpy as np
-    from centerline_methods import method_source
+    from pose.centerline_methods import method_source
     from runtime.run_storage import fresh_sample, input_identity
     from worm_pipeline import complete, build_stages, validate_config
     old,config=load_config(root,sample)
@@ -77,7 +77,7 @@ def confirm_head(root, sample, worm, frame, endpoint):
     if row.get('centerline_topology','simple')!='simple': raise ValueError('自交帧不用于头尾确认')
     with np.load(result/'centerlines.npz',allow_pickle=False) as lines:
         point=lines[f'w{worm}_f{frame}'][0 if endpoint==0 else -1].tolist()
-    from head_tail import normalize_anchors
+    from head_tail.head_tail import normalize_anchors
     anchors=normalize_anchors(config.get('head_annotations',{}).get(str(worm)))
     space = {}
     summary_path = result/'summary.json'
@@ -93,7 +93,7 @@ def confirm_head(root, sample, worm, frame, endpoint):
 
 
 def remove_head(root,sample,worm,anchor_id):
-    from head_tail import normalize_anchors
+    from head_tail.head_tail import normalize_anchors
     _,config=load_config(root,sample)
     if type(worm) is not int or not isinstance(anchor_id,str):raise ValueError('锚点标识无效')
     anchors=normalize_anchors(config.get('head_annotations',{}).get(str(worm)))
@@ -105,7 +105,7 @@ def remove_head(root,sample,worm,anchor_id):
 
 def identity_links(root,sample):
     base,config=load_config(root,sample)
-    from centerline_methods import method_source
+    from pose.centerline_methods import method_source
     path=base/('phenotypes-'+method_source(config['centerline_method']))/'identity-links.json'
     if not path.is_file():return dict(version=None,edges=[],notice='旧结果尚未计算片段关联')
     return json.loads(path.read_text(encoding='utf-8'))
@@ -149,7 +149,7 @@ def identity_frame(root,sample,worm,frame):
     import cv2
     import numpy as np
     base,config=load_config(root,sample)
-    from analyze_phenotypes import load_sample
+    from measurements.analyze_phenotypes import load_sample
     _,source,ids,get_mask,_=load_sample(sample,apply_guards=False)
     if type(worm) is not int or worm not in ids or type(frame) is not int or not 0<=frame<source['frames']:raise ValueError('复核画面帧号或虫编号无效')
     cap=cv2.VideoCapture(source['video']);cap.set(cv2.CAP_PROP_POS_FRAMES,frame);ok,image=cap.read();cap.release()
@@ -157,7 +157,7 @@ def identity_frame(root,sample,worm,frame):
     x0,y0,x1,y1=source['crop_xyxy'];image=image[y0:y1,x0:x1].copy();mask=get_mask(worm,frame)
     contours,_=cv2.findContours(mask.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(image,contours,-1,(50,220,90),2)
-    from centerline_methods import method_source
+    from pose.centerline_methods import method_source
     path=base/('phenotypes-'+method_source(config['centerline_method']))/'diagnostic-centerlines.npz'
     if path.is_file():
         with np.load(path,allow_pickle=False) as lines:
@@ -245,7 +245,7 @@ def clean_video_path(folder, sample):
 
 
 def result_video_files(base, config):
-    from centerline_methods import method_source
+    from pose.centerline_methods import method_source
     folder = base / ('phenotypes-' + method_source(config['centerline_method']))
     original = folder / f'{config["sample"]}_annotated_full-frame.mp4'
     clean = clean_video_path(folder, config['sample'])
@@ -263,8 +263,8 @@ def saved_videos(base, config):
 
 
 def chamber_summaries(root, items):
-    from centerline_methods import method_source
-    from result_metrics import phenotype_results
+    from pose.centerline_methods import method_source
+    from measurements.result_metrics import phenotype_results
     reports = {}
     for item in items:
         if item['status'] != 'complete':
@@ -288,8 +288,8 @@ def chamber_summaries(root, items):
 
 
 def saved_timeline(root, sample, *, trend_only=True):
-    from centerline_methods import method_source
-    from frame_metrics import load_frame_metrics
+    from pose.centerline_methods import method_source
+    from measurements.frame_metrics import load_frame_metrics
     base, config = load_config(root, sample)
     folder = base / ('phenotypes-' + method_source(config['centerline_method']))
     summary = json.loads((folder/'summary.json').read_text(encoding='utf-8'))
@@ -300,7 +300,7 @@ def saved_timeline(root, sample, *, trend_only=True):
 
 def reopen(progress,root,sample):
     base,config=load_config(root,sample)
-    from centerline_methods import display_method, method_source
+    from pose.centerline_methods import display_method, method_source
     report=base/('phenotypes-'+method_source(config['centerline_method']))/'summary.json'
     if not report.is_file(): raise ValueError('尚无完整指标，请选择继续任务')
     summary=json.loads(report.read_text(encoding='utf-8'))
@@ -329,7 +329,7 @@ def reopen(progress,root,sample):
 def refresh_saved_video(progress, root, sample):
     import sys
     import tempfile
-    from centerline_methods import method_source
+    from pose.centerline_methods import method_source
     from worm_pipeline import run_stage
     base,config=load_config(root,sample)
     source=method_source(config['centerline_method'])

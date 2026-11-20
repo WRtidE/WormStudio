@@ -120,7 +120,7 @@ class ManualAnnotationTests(unittest.TestCase):
         with self.assertRaises(ValueError): annotation.save(body)
 
     def test_retired_method_runs_current_solver_and_preserves_historical_result_path(self):
-        from centerline_methods import method_source
+        from pose.centerline_methods import method_source
         from worm_pipeline import build_stages
         annotation = manual.Annotation(dict(self.settings, centerline_method='tapnext'))
         annotation.save(dict(self.body, centerline_method='tapnext'))
@@ -130,7 +130,7 @@ class ManualAnnotationTests(unittest.TestCase):
         config, info = validate_config(historical)
         stages = build_stages(config, info, self.root/'pipeline-config.json', self.root/'phenotypes.json')
         fit = next(stage for stage in stages if stage['phase'] == 'fit')
-        self.assertEqual(fit['command'][2:4], ['-m', 'extract_body_sequence'])
+        self.assertEqual(fit['command'][2:4], ['-m', 'pose.extract_body_sequence'])
         self.assertIn('centerlines-body-sequence', stages[-1]['command'])
         self.assertEqual(method_source(historical['centerline_method']), 'centerlines-tapnext')
         self.assertEqual(historical['centerline_method'], 'tapnext')

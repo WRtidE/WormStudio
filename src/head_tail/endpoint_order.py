@@ -3,7 +3,7 @@ import json
 
 import numpy as np
 
-from head_temporal import geometry_link, MAX_INTERVAL_S
+from head_tail.head_temporal import geometry_link, MAX_INTERVAL_S
 
 
 def sampled(points):
@@ -236,7 +236,7 @@ def order_endpoints(rows, heads, display, worm, fps, manual, single, profiles=No
 
 def recover_from_anchor_profiles(rows, heads, blocks, profiles, parameters):
     """Compare disconnected blocks with a frozen template from the anchored track."""
-    from head_tail import appearance_fusion, DEFAULTS
+    from head_tail.head_tail import appearance_fusion, DEFAULTS
     params = dict(DEFAULTS, **(parameters or {}))
     params['min_vote_fraction'] = max(.85, params['min_vote_fraction'])
     # Use only original-frame intensity profiles from measured poses. Review

@@ -13,7 +13,7 @@ from manual_worm_annotation import create_server
 
 
 def main():
-    from centerline_methods import METHODS
+    from pose.centerline_methods import METHODS
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',required=True)
     parser.add_argument('--method',choices=sorted(METHODS),default=None)

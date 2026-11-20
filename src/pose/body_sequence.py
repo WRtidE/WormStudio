@@ -3,8 +3,8 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.ndimage import binary_fill_holes,label
 
-from head_recovery import tracking_indices
-from motion import lk_step
+from head_tail.head_recovery import tracking_indices
+from pose.motion import lk_step
 
 
 def huber_squared(distance):

@@ -7,31 +7,43 @@ import cv2
 import numpy as np
 from scipy.ndimage import distance_transform_edt, map_coordinates
 
-from body_sequence import select_body_sequence, BodySequenceBreak, persistent_loop_centers
-from framewise_pose import observed_pose
-from centerline_topology import topology_candidates, hidden_tip_candidates
-from body_geometry import local_field, candidate_score
-from head_recovery import end_contrast, appearance_vote, pose_parity
-from head_appearance import sample_profile
-from head_tail import normalize_anchors
+from pose.body_sequence import select_body_sequence, BodySequenceBreak, persistent_loop_centers
+from pose.framewise_pose import observed_pose
+from pose.centerline_topology import topology_candidates, hidden_tip_candidates
+from pose.body_geometry import local_field, candidate_score
+from head_tail.head_recovery import end_contrast, appearance_vote, pose_parity
+from head_tail.head_appearance import sample_profile
+from head_tail.head_tail import normalize_anchors
 
 VERSION = 'sam2-body-sequence-v1'
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
 # and image appearance, even though those dependencies are imported indirectly.
-SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_sequence.py',
-                   'centerline_topology.py', 'framewise_pose.py', 'body_geometry.py',
-                   'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
-                   'analyze_phenotypes.py', 'body_frame_cache.py')
+SIGNATURE_FILES = (
+    'pose/body_sequence_solver.py',
+    'pose/body_sequence.py',
+    'pose/extract_body_sequence.py',
+    'pose/centerline_topology.py',
+    'pose/framewise_pose.py',
+    'pose/body_geometry.py',
+    'pose/motion.py',
+    'head_tail/head_recovery.py',
+    'head_tail/head_appearance.py',
+    'head_tail/head_tail.py',
+    'measurements/analyze_phenotypes.py',
+    'runtime/body_frame_cache.py',
+)
 
 
 def signature():
     import hashlib
     from pathlib import Path
+    source_root = Path(__file__).resolve().parents[1]
     digest=hashlib.sha256()
-    for name in SIGNATURE_FILES:
-        content = Path(__file__).with_name(name).read_bytes()
-        digest.update(name.encode('utf-8') + b'\0')
+    for relative_path in SIGNATURE_FILES:
+        path = source_root / relative_path
+        content = path.read_bytes()
+        digest.update(path.name.encode('utf-8') + b'\0')
         digest.update(len(content).to_bytes(8, 'big'))
         digest.update(content)
     return digest.hexdigest()
@@ -129,7 +141,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
     Manual points are crop-local. Explicitly excluded source frames break both
     motion paths and recovery evidence. A missing candidate stays missing.
     """
-    from head_recovery import tracking_indices
+    from head_tail.head_recovery import tracking_indices
     tracking_indices(point_count)
     n=len(masks)
     if n!=len(gray) or not np.isfinite(fps) or fps<=0:raise ValueError('Invalid body-sequence input')

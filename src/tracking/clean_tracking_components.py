@@ -7,7 +7,7 @@ import shutil
 import numpy as np
 from scipy import ndimage as ndi
 from quality.tracking_quality import reference_area, mark_quality
-from analyze_phenotypes import ROOT,load_sample,write_png
+from measurements.analyze_phenotypes import ROOT,load_sample,write_png
 
 
 def main():

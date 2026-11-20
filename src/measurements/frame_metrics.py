@@ -4,7 +4,7 @@ import math
 import json
 from pathlib import Path
 
-from result_metrics import number
+from measurements.result_metrics import number
 from quality.quality_schema import flag, permissions, describe
 
 
@@ -66,7 +66,7 @@ def present_frame(row):
         refs = json.loads(refs) if refs else []
     result['head_trajectory_frames'] = refs or []
     result['measurement_mode'] = row.get('measurement_mode','physical')
-    from measurement_units import metric_key
+    from measurements.measurement_units import metric_key
     curvature_key = metric_key('midbody_abs_curvature_per_um', row)
     result[curvature_key] = value(curvature_key, posture)
     if row.get('contact_bridge'):

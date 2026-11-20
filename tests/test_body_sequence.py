@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from body_sequence import select_body_sequence,loop_transition,persistent_loop_centers
+from pose.body_sequence import select_body_sequence,loop_transition,persistent_loop_centers
 
 
 class BodySequenceTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class BodySequenceTests(unittest.TestCase):
         masks=[np.ones((150,170),bool)]*3
         def missing(a,b,p):
             return p,np.zeros(len(p),bool),np.full(len(p),100.)
-        with patch('body_sequence.lk_step',side_effect=missing):
+        with patch('pose.body_sequence.lk_step',side_effect=missing):
             selected,_=select_body_sequence(frames,[np.zeros((150,170),np.uint8)]*3,masks,5,
                                             anchor=(1,base[0]))
         for state in selected:np.testing.assert_allclose(state['points'],base)
@@ -54,7 +54,7 @@ class BodySequenceTests(unittest.TestCase):
         def flow(a,b,p):
             delta=shifts[int(b[0,0])]-shifts[int(a[0,0])]
             return p+[delta,0],np.ones(len(p),bool),np.zeros(len(p))
-        with patch('body_sequence.lk_step',side_effect=flow):
+        with patch('pose.body_sequence.lk_step',side_effect=flow):
             selected,_=select_body_sequence(frames,images,masks,5)
         for i,s in enumerate(selected):
             np.testing.assert_allclose(s['points'],base+[shifts[i],0])
@@ -66,6 +66,6 @@ class BodySequenceTests(unittest.TestCase):
         masks=[np.ones((150,170),bool)]*3
         def missing(a,b,p):
             return p,np.zeros(len(p),bool),np.full(len(p),100.)
-        with patch('body_sequence.lk_step',side_effect=missing):
+        with patch('pose.body_sequence.lk_step',side_effect=missing):
             selected,_=select_body_sequence(frames,[np.zeros((150,170),np.uint8)]*3,masks,5)
         for state in selected:np.testing.assert_allclose(state['points'],base)

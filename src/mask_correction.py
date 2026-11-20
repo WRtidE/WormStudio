@@ -11,7 +11,7 @@ import numpy as np
 def prepare_recovered_edit(source, summary, seed_folder):
     """Rebase original prompts into the larger ROI so a repaired mask can be edited."""
     from tracking.crop_recovery import place
-    from head_tail import anchors_in_crop
+    from head_tail.head_tail import anchors_in_crop
     info = summary.get('crop_recovery', {})
     restored = [e for e in info.get('events', []) if e['decision']=='recovered']
     if not restored:
@@ -49,7 +49,7 @@ def request_edit(progress, root, run, sequence):
     from manual_worm_annotation import Annotation, png
     from live_preview import latest_sequence
     from runtime.run_storage import fresh_sample
-    from head_tail import anchors_in_crop
+    from head_tail.head_tail import anchors_in_crop
 
     with progress.lock:
         current = getattr(progress.server, 'annotation', None)
@@ -135,7 +135,7 @@ def validate_edit(annotation, absolute, masks):
 def merge_edit(annotation, config, masks):
     """Keep other groups and anchors; add/replace only this frame's reviewed masks."""
     from manual_worm_annotation import png
-    from head_tail import normalize_anchors
+    from head_tail.head_tail import normalize_anchors
     source = annotation.correction_source
     groups = copy.deepcopy(source['groups'])
     cx, cy, _, _ = source['crop_xyxy']

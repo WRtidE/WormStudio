@@ -1,7 +1,7 @@
 """Recover point order when a worm slides along a partly shared path in the image."""
 import numpy as np
 
-from head_temporal import MAX_INTERVAL_S
+from head_tail.head_temporal import MAX_INTERVAL_S
 
 
 def overlap_link(a, b):

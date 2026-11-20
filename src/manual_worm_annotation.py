@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
-from centerline_methods import display_method, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
+from pose.centerline_methods import display_method, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
 from tracking.sam2_models import model_spec
 from pathlib import Path
 
@@ -297,7 +297,7 @@ class Annotation:
             if mask is None or mask.shape!=(y1-y,x1-x): return result
             rgba=np.full((*self.image.shape[:2],4),255,np.uint8);rgba[:,:,3]=0
             rgba[y:y1,x:x1,3]=(mask>127).astype(np.uint8)*255
-            from head_tail import anchors_in_crop
+            from head_tail.head_tail import anchors_in_crop
             heads=[a for a in anchors_in_crop(config.get('head_annotations',{}).get(str(entry['id'])),config['crop_xyxy'],config['crop_xyxy']) if a['frame']==self.frame]
             head_point=[heads[0]['point'][0]+x,heads[0]['point'][1]+y] if len(heads)==1 else None
             worms.append(dict(id=entry['id'],area_px=int((mask>127).sum()),head_point=head_point,
@@ -323,7 +323,7 @@ class Annotation:
         x, y, x1, y1 = roi
         if not (0 <= x < x1 <= w and 0 <= y < y1 <= h): raise ValueError('分析区域超出图像')
         scale = body.get('scale_um_per_px')
-        from measurement_units import validate_scale
+        from measurements.measurement_units import validate_scale
         unit_config = dict(measurement_mode=body.get('measurement_mode','physical'),scale_um_per_px=scale)
         validate_scale(unit_config)
         scale = unit_config['scale_um_per_px']
@@ -427,7 +427,7 @@ class Annotation:
                       overlap_px=int((np.stack(list(masks.values())).sum(axis=0) > 1).sum()))
         if not keep_original: self.path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
         (self.output/'last-selection.json').write_text(json.dumps({'centerline_method':method}), encoding='utf-8')
-        from annotation_metrics import measure_mask, VERSION as ANNOTATION_METRICS_VERSION
+        from measurements.annotation_metrics import measure_mask, VERSION as ANNOTATION_METRICS_VERSION
         frame_metrics = dict(version=ANNOTATION_METRICS_VERSION, scope='annotation_frame', frame=self.frame,
                              worms=[measure_mask(mask, frame=self.frame, worm_id=worm,
                                                  measurement_mode=unit_config['measurement_mode'],
@@ -737,7 +737,7 @@ def create_server(annotation=None, progress=None):
                 except (ValueError,OSError,KeyError,TypeError) as exc:self.respond(400,dict(error=str(exc)))
             elif progress and self.path.startswith('/api/head-anchors?'):
                 from urllib.parse import parse_qs,urlsplit
-                from head_tail import normalize_anchors
+                from head_tail.head_tail import normalize_anchors
                 sample=parse_qs(urlsplit(self.path).query).get('run',[''])[0]
                 if not progress.config or progress.config['sample']!=sample:
                     self.respond(409,dict(error='结果会话已变化'));return
@@ -842,7 +842,7 @@ def create_server(annotation=None, progress=None):
                     server = self.server
                     def probe():
                         try:
-                            from body_sequence_solver import availability
+                            from pose.body_sequence_solver import availability
                             server.optional_probe = dict(availability(), checking=False)
                         except Exception as exc:
                             server.optional_probe = dict(available=False, checking=False, detail=f'分析组件检查失败：{exc}')
@@ -1120,7 +1120,7 @@ def create_server(annotation=None, progress=None):
                     result = save_chambers(progress, annotation, body)
                     self.respond(200, result)
                     return
-                from annotation_metrics import measure_annotation
+                from measurements.annotation_metrics import measure_annotation
                 action = {'/predict': annotation.predict, '/save': annotation.save,
                           '/api/annotation-metrics': lambda request: measure_annotation(annotation, request)}
                 result = action[self.path](body)

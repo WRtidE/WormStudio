@@ -15,7 +15,7 @@ from scipy import ndimage as ndi
 from scipy.interpolate import splprep,splev
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-from analyze_phenotypes import ROOT,read_image,write_png
+from measurements.analyze_phenotypes import ROOT,read_image,write_png
 from worm_colors import worm_color
 from tracking.sam2_models import model_spec, tracking_model_matches
 from tracking.sam2_frames import init_tracking_state, propagate_frames

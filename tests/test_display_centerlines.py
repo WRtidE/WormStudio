@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve
+from pose.display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve
 from quality.quality_schema import VERSION
 
 class DisplayTests(unittest.TestCase):
