@@ -14,7 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from workspace_library import VIDEO, media
+from app.workspace_library import VIDEO, media
 from wormtracker.config import WormTrackerConfig
 from wormtracker.core.grid import get_interpolated_grid
 from wormtracker.core.grid_reference import ChannelGridReference

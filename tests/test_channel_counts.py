@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 
 from tracking.channel_counts import ChannelCounts, event_images, read, save
 from wormtracker.core.counter import count_crossings
-from workspace_library import register, select, listing
+from app.workspace_library import register, select, listing
 
 
 def crossing_video(path, frames=130, up_start=27):

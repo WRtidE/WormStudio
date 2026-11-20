@@ -25,7 +25,7 @@ def catalog(root):
         except (OSError,ValueError,KeyError): continue
     targets_path=root/'config/target_videos.json'
     targets=json.loads(targets_path.read_text(encoding='utf-8')) if targets_path.exists() else []
-    from workspace_library import read, register
+    from app.workspace_library import read, register
     hidden = set(read(root).get('hidden_history', []))
     for run in runs:
         try: run['file']=register(root,run['video'],auto=True)
@@ -37,7 +37,7 @@ def catalog(root):
 
 
 def remove_history_entry(root, sample):
-    from workspace_library import read, write
+    from app.workspace_library import read, write
     if not isinstance(sample, str) or not sample or Path(sample).name != sample or sample in ('.', '..') or '\\' in sample:
         raise ValueError('无效的任务名称')
     state = read(root)
@@ -317,7 +317,7 @@ def reopen(progress,root,sample):
         error=None,notice='已重新打开保存结果，未重新计算或改写历史文件。',artifacts=[])
     progress.data['stages']=[dict(name=k,phase=k,label=k,status='complete',fraction=1,seconds=v.get('seconds',0))
         for k,v in completed if k in ('metrics','export')]
-    from result_overlay import OVERLAY_VERSION
+    from app.result_overlay import OVERLAY_VERSION
     exported = any(k=='export' for k,_ in completed)
     video = next(path for key, _, path, _ in result_video_files(base,config) if key=='video')
     progress.data['legacy_video'] = (exported and video.is_file() and summary.get('overlay_version') != OVERLAY_VERSION
@@ -334,7 +334,7 @@ def refresh_saved_video(progress, root, sample):
     base,config=load_config(root,sample)
     source=method_source(config['centerline_method'])
     report=json.loads((base/('phenotypes-'+source)/'summary.json').read_text(encoding='utf-8'))
-    stage=dict(name='export',phase='export',command=[sys.executable,'-u',str(root/'src/review_configured_video.py'),
+    stage=dict(name='export',phase='export',command=[sys.executable,'-u','-m','app.review_configured_video',
         '--sample',sample,'--centerline-source',source,'--refresh-saved-video'])
     info=dict(frames=report['worms'][0]['frames'],fps=report['fps'],ids=[w['worm_id'] for w in report['worms']])
     with tempfile.TemporaryDirectory(prefix='worm-video-progress-') as temporary:

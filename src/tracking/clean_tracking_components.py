@@ -1,6 +1,6 @@
 """Remove remote whole-object duplicates while retaining smaller body fragments."""
 import argparse
-from pipeline_progress import report_progress
+from app.pipeline_progress import report_progress
 import csv
 import json
 import shutil

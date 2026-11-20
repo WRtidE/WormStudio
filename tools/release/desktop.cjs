@@ -35,7 +35,7 @@ async function launch() {
     splash.on('closed', () => { if (splash) app.quit(); });
     fs.cpSync(path.join(payload,'code'), workspace, {recursive:true});
     status('正在启动分析工作台…');
-    execFileSync(python, ['-c','from pathlib import Path; import sys; sys.path.insert(0,"src"); from workspace_library import register; register(Path.cwd(), Path("examples/practice.avi"), auto=True)'],
+    execFileSync(python, ['-c','from pathlib import Path; import sys; sys.path.insert(0,"src"); from app.workspace_library import register; register(Path.cwd(), Path("examples/practice.avi"), auto=True)'],
       {cwd:workspace,windowsHide:true});
     app.once('browser-window-created', (_,win) => win.once('ready-to-show', () => {
       const startup = splash; splash = null; startup.close();

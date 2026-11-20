@@ -13,7 +13,7 @@ import urllib.request
 
 import cv2
 import numpy as np
-import manual_worm_annotation as manual
+from app import manual_worm_annotation as manual
 from measurements import analyze_phenotypes as metrics
 from quality import quality_stage
 import worm_pipeline
@@ -21,8 +21,8 @@ from quality_fixture import make_fixture
 from quality.quality_schema import VERSION, permissions
 from measurements.frame_metrics import present_frame
 from measurements.measurement_units import validate_scale, pixel_fields
-from pipeline_progress import PipelineProgress
-from workspace_sessions import save_draft, get_draft, load_config, confirm_head
+from app.pipeline_progress import PipelineProgress
+from app.workspace_sessions import save_draft, get_draft, load_config, confirm_head
 from worm_pipeline import run_stage
 from runtime.video_timing import verify_timebase
 

@@ -1,7 +1,7 @@
 """Export full-frame H.264 video and verify any configured worm sample."""
 import argparse
-from pipeline_progress import report_progress
-from live_preview import report_preview
+from app.pipeline_progress import report_progress
+from app.live_preview import report_preview
 import csv
 import json
 import shutil
@@ -13,7 +13,7 @@ import cv2
 import imageio_ffmpeg
 import numpy as np
 from measurements.analyze_phenotypes import ROOT, load_sample, write_png
-from worm_colors import worm_color
+from app.worm_colors import worm_color
 from quality.quality_schema import permissions, describe
 
 
@@ -92,7 +92,7 @@ def main():
     filename = f'{args.sample}_annotated_full-frame.mp4'
     if args.refresh_saved_video:
         from measurements.analyze_phenotypes import render_saved
-        from workspace_sessions import clean_video_path
+        from app.workspace_sessions import clean_video_path
         config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
         identity = json.loads((base/'pipeline-state.json').read_text(encoding='utf-8')).get('identity') or {}
         if 'video_size' in identity and Path(source['video']).stat().st_size != identity['video_size']:

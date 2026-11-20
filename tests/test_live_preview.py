@@ -12,9 +12,9 @@ import urllib.error
 import cv2
 import numpy as np
 
-from live_preview import report_preview, report_geometry, report_tracking, preview_batch
-from pipeline_progress import PipelineProgress
-from manual_worm_annotation import create_server
+from app.live_preview import report_preview, report_geometry, report_tracking, preview_batch
+from app.pipeline_progress import PipelineProgress
+from app.manual_worm_annotation import create_server
 from worm_pipeline import run_stage
 
 
@@ -99,7 +99,7 @@ class LivePreviewTests(unittest.TestCase):
         image = np.zeros((60, 40, 3), np.uint8)
         mask = np.zeros(image.shape[:2], bool)
         self.assertTrue(report_geometry(mask, None, 0, 3, image=image))
-        with patch('live_preview.focus_patch', side_effect=OSError('missing mask')):
+        with patch('app.live_preview.focus_patch', side_effect=OSError('missing mask')):
             self.assertTrue(report_preview(image, 1, 3, raw=image))
         items = self.progress.preview(self.progress.run_id)['frames']
         self.assertEqual([item['frame'] for item in items], [0, 1])
@@ -109,7 +109,7 @@ class LivePreviewTests(unittest.TestCase):
         for stage in range(2):
             log = self.base / f'stage-{stage}.log'
             self.progress.begin(stage, log)
-            command = [sys.executable, '-c', 'import numpy as np; from live_preview import report_preview; '
+            command = [sys.executable, '-c', 'import numpy as np; from app.live_preview import report_preview; '
                        '[report_preview(np.zeros((20,30,3),np.uint8),f,3) for f in range(3)]']
             run_stage(dict(name='preview-test', command=command), log, self.progress)
             self.progress.done(stage)

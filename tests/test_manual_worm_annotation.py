@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
-import manual_worm_annotation as manual
+from app import manual_worm_annotation as manual
 from worm_pipeline import validate_config
 
 

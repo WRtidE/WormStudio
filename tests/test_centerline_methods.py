@@ -13,6 +13,14 @@ class CenterlineMethodTests(unittest.TestCase):
                               dict(ids=[1], frames=5), Path('cfg.json'), Path('metrics.json'))
         self.assertEqual([s['name'] for s in stages],
                          ['tracking', 'cleanup', 'quality', 'body_sequence-worm-1', 'metrics', 'export'])
+        self.assertEqual([s['command'][2:4] for s in stages], [
+            ['-m', 'tracking.track_configured_video'],
+            ['-m', 'tracking.clean_tracking_components'],
+            ['-m', 'quality.quality_stage'],
+            ['-m', 'pose.extract_body_sequence'],
+            ['-m', 'measurements.analyze_phenotypes'],
+            ['-m', 'app.review_configured_video'],
+        ])
         self.assertIn('centerlines-body-sequence', stages[-1]['command'])
 
     def test_archived_methods_are_readable_but_not_computable(self):

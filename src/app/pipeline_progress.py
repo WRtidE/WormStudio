@@ -165,7 +165,7 @@ class PipelineProgress:
 
     def finish(self, base, config, stop_after):
         from pose.centerline_methods import method_source
-        from workspace_sessions import result_video_files
+        from app.workspace_sessions import result_video_files
         with self.lock:
             self.ended = time.time()
             self.data.update(status='complete', detail='全部处理完成' if stop_after == 'export' else f'已完成所选阶段：{PHASE_LABELS[stop_after]}', active=None)
@@ -294,7 +294,7 @@ class PipelineProgress:
             return result
 
     def preview(self, run, after=0, sequence=None, *, focus=False):
-        from live_preview import preview_batch, latest_sequence
+        from app.live_preview import preview_batch, latest_sequence
         with self.lock:
             if not self.preview_dir or run != self.run_id:
                 raise ValueError('预览任务已切换，请重新读取进度')

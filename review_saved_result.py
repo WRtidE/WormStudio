@@ -8,8 +8,8 @@ import argparse
 import json
 from platforms.shell import open_view
 import cv2
-from pipeline_progress import PipelineProgress
-from manual_worm_annotation import create_server
+from app.pipeline_progress import PipelineProgress
+from app.manual_worm_annotation import create_server
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
     cap=cv2.VideoCapture(config['video'])
     info=dict(frames=int(cap.get(7)),fps=cap.get(5),ids=[w['id'] for g in config['groups'] for w in g['worms']]);cap.release()
     progress=PipelineProgress()
-    from workspace_sessions import restore_saved_timing
+    from app.workspace_sessions import restore_saved_timing
     restore_saved_timing(progress,base,config['sample'])
     if args.method != saved_method:
         progress.data.update(saved_elapsed_seconds=None,saved_finished_at=None)

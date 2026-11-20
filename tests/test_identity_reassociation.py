@@ -81,7 +81,7 @@ class AssociationTests(unittest.TestCase):
         validate_reviews(dict(identity_reviews=[noted]),[1],15)
 
     def test_local_reviewer_is_recorded_when_the_form_omits_it(self):
-        from workspace_sessions import local_reviewer
+        from app.workspace_sessions import local_reviewer
         self.assertTrue(local_reviewer().strip())
 
     def test_rejected_parent_does_not_imply_accepted_child(self):

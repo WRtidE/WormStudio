@@ -9,7 +9,7 @@ sys.path.insert(0, str(STUDIO/'src'))
 
 
 def main():
-    from evaluation_dataset import inventory, read_json, write_new, freeze_split, build_tasks, snapshot_baseline
+    from app.evaluation_dataset import inventory, read_json, write_new, freeze_split, build_tasks, snapshot_baseline
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     scan = commands.add_parser('inventory')
@@ -42,7 +42,7 @@ def main():
         write_new(args.dataset/'tasks.json', result)
         print(json.dumps(result['summary'], ensure_ascii=False))
     else:
-        from evaluation_annotations import DatasetStore
+        from app.evaluation_annotations import DatasetStore
         dataset = DatasetStore(args.dataset)
         result = dataset.export_truth(args.out) if args.command == 'export' else dataset.verify()
         print(json.dumps(result, ensure_ascii=False, indent=2))

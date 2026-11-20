@@ -5,10 +5,12 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
+import zipfile
 from unittest.mock import patch
 
-from evaluation_annotations import DatasetStore, RevisionConflict, validate_frames
-from evaluation_dataset import VERSION, build_tasks, digest, freeze_split, inventory, read_json, write_new
+from app.evaluation_annotations import DatasetStore, RevisionConflict, validate_frames
+from app.evaluation_dataset import (VERSION, build_tasks, digest, freeze_split, inventory,
+                                    read_json, snapshot_baseline, write_new)
 from evaluation_fixture import make_dataset, marked_frame
 
 
@@ -25,6 +27,18 @@ class EvaluationTests(unittest.TestCase):
     def body(self,role='annotator_a',author='Reviewer A',status='submitted'):
         return dict(task_id=self.task['task_id'],role=role,annotator=author,status=status,base_revision=None,
             frames=[marked_frame(n) for n in self.task['frames']],active_seconds=12,review=None)
+
+    def test_baseline_includes_nested_modules_and_wormtracker_defaults(self):
+        studio = Path(__file__).resolve().parents[1]
+        output = self.root/'baseline.json'
+        record = snapshot_baseline(studio, output)
+        paths = {item['path'] for item in record['files']}
+        self.assertTrue({
+            'src/app/evaluation_dataset.py', 'src/pose/body_sequence_solver.py',
+            'src/platforms/device.py', 'src/wormtracker/defaults.yaml',
+        } <= paths)
+        with zipfile.ZipFile(output.with_name(record['source_archive']['path'])) as archive:
+            self.assertEqual(set(archive.namelist()), paths)
 
     def test_exact_copies_merge_and_keep_both_paths(self):
         source=Path(self.video['primary_path']); (self.root/'copy.avi').write_bytes(source.read_bytes())
@@ -136,8 +150,8 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):write_new(self.root/'manifest.json',{})
 
     def test_http_auth_static_assets_and_missing_dataset_isolation(self):
-        from manual_worm_annotation import create_server
-        from pipeline_progress import PipelineProgress
+        from app.manual_worm_annotation import create_server
+        from app.pipeline_progress import PipelineProgress
         progress=PipelineProgress();server=create_server(progress=progress);server.evaluation_store=self.store
         progress.bind_server(server);base=progress.url.removesuffix('/progress')
         try:

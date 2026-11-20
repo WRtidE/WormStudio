@@ -12,14 +12,14 @@ import cv2
 import numpy as np
 from measurements import analyze_phenotypes as metrics
 from pose import extract_body_sequence as body_sequence
-import manual_worm_annotation as manual
+from app import manual_worm_annotation as manual
 from quality import quality_stage
 import worm_pipeline
 from measurements.frame_metrics import present_frame
-from pipeline_progress import PipelineProgress
+from app.pipeline_progress import PipelineProgress
 from quality_fixture import make_fixture
 from quality.quality_schema import VERSION
-from workspace_sessions import confirm_head
+from app.workspace_sessions import confirm_head
 
 SOURCE = 'centerlines-body-sequence'
 
@@ -52,7 +52,7 @@ class CurrentPipelineTests(unittest.TestCase):
 
     def analyze(self, sample):
         with patch.object(metrics, 'render'), patch.object(metrics, 'write_report'), \
-                patch('head_tail.head_tail.head_appearance.extract_profiles', side_effect=AssertionError('Unexpected legacy video pass')):
+                patch('head_tail.head_appearance.extract_profiles', side_effect=AssertionError('Unexpected legacy video pass')):
             return metrics.analyze(sample, self.settings, 'body_sequence', SOURCE)
 
     def run_pipeline(self, sample):

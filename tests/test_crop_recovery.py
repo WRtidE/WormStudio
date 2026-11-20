@@ -12,7 +12,7 @@ import numpy as np
 from measurements.analyze_phenotypes import read_image, write_png
 from tracking.crop_recovery import place, replay_incident, touched, incidents
 from head_tail.head_tail import anchors_in_crop
-from mask_correction import prepare_recovered_edit
+from app.mask_correction import prepare_recovered_edit
 
 
 class CropReplayTests(unittest.TestCase):

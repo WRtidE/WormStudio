@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from evaluation_annotations import DatasetStore, RevisionConflict
+from app.evaluation_annotations import DatasetStore, RevisionConflict
 from runtime.resource_paths import PROJECT_ROOT
 
 

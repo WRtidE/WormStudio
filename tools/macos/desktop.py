@@ -45,7 +45,7 @@ def populate(res, workspace):
     shutil.copytree(res/'app', workspace, dirs_exist_ok=True)
     sample = workspace/'examples/practice.avi'
     sys.path.insert(0, str(workspace/'src'))
-    from workspace_library import register
+    from app.workspace_library import register
     register(workspace, sample, auto=True)
 
 

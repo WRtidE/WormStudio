@@ -11,13 +11,13 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 from measurements import analyze_phenotypes as metrics
-import manual_worm_annotation as manual
+from app import manual_worm_annotation as manual
 from quality import quality_stage
-import result_overlay
-import review_configured_video as review
+from app import result_overlay
+from app import review_configured_video as review
 from measurements.frame_metrics import present_frame
 from quality.multiworm_quality import sequence_guards, validate_reviews
-from pipeline_progress import PipelineProgress
+from app.pipeline_progress import PipelineProgress
 from quality.quality_schema import VERSION, permissions
 from quality_fixture import make_fixture
 from worm_pipeline import compatible_identity

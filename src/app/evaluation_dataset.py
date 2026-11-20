@@ -350,7 +350,13 @@ def build_tasks(manifest, splits, plan):
 def snapshot_baseline(studio, output):
     studio = Path(studio)
     paths = [studio/name for name in ('worm_pipeline.py','studio.py','evaluation.py','requirements.txt')]
-    paths += [p for folder in ('src', 'web', 'config') for p in (studio/folder).glob('*') if p.is_file() and p.suffix in ('.py','.js','.css','.html','.json','.txt')]
+    source_suffixes = ('.py', '.js', '.css', '.html', '.json', '.txt')
+    paths += [p for p in (studio/'src').rglob('*') if p.is_file() and p.suffix in source_suffixes]
+    paths += [p for folder in ('web', 'config') for p in (studio/folder).glob('*')
+              if p.is_file() and p.suffix in source_suffixes]
+    defaults = studio/'src/wormtracker/defaults.yaml'
+    if defaults.is_file():
+        paths.append(defaults)
     archive=Path(output).with_name('baseline-source.zip')
     with zipfile.ZipFile(archive,'x',zipfile.ZIP_DEFLATED) as handle:
         for path in sorted(set(paths)): handle.write(path,path.relative_to(studio))

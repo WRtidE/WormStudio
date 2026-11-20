@@ -46,8 +46,8 @@ def prepare_recovered_edit(source, summary, seed_folder):
 
 
 def request_edit(progress, root, run, sequence):
-    from manual_worm_annotation import Annotation, png
-    from live_preview import latest_sequence
+    from app.manual_worm_annotation import Annotation, png
+    from app.live_preview import latest_sequence
     from runtime.run_storage import fresh_sample
     from head_tail.head_tail import anchors_in_crop
 
@@ -134,7 +134,7 @@ def validate_edit(annotation, absolute, masks):
 
 def merge_edit(annotation, config, masks):
     """Keep other groups and anchors; add/replace only this frame's reviewed masks."""
-    from manual_worm_annotation import png
+    from app.manual_worm_annotation import png
     from head_tail.head_tail import normalize_anchors
     source = annotation.correction_source
     groups = copy.deepcopy(source['groups'])

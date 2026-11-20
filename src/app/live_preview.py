@@ -41,7 +41,7 @@ def focus_patch(raw, masks):
     """Use a stable visible ID and keep a margin around its complete mask."""
     import cv2
     import numpy as np
-    from worm_colors import worm_color
+    from app.worm_colors import worm_color
     height, width = raw.shape[:2]
     for worm, mask in masks:
         mask = np.asarray(mask, np.uint8)
@@ -164,7 +164,7 @@ def report_tracking(path, masks, frame, total, detail, *, reader=None, offset=(0
     try:
         import cv2
         import numpy as np
-        from worm_colors import worm_color
+        from app.worm_colors import worm_color
         if reader is None:
             raw = cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), cv2.IMREAD_COLOR)
         else:

@@ -8,8 +8,8 @@ Head coordinates in phenotype_config.json: {"2-1-1314:1": [x, y], ...}.
 Coordinates are within the saved cropped first frame, not the full video.
 """
 import argparse
-from pipeline_progress import report_progress
-from live_preview import enabled as preview_enabled, report_preview
+from app.pipeline_progress import report_progress
+from app.live_preview import enabled as preview_enabled, report_preview
 import csv
 import json
 import math
@@ -24,7 +24,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
 from skimage.morphology import skeletonize
 from pose.centerline_topology import geometry_quality
-from result_overlay import OVERLAY_VERSION, draw_worm
+from app.result_overlay import OVERLAY_VERSION, draw_worm
 from head_tail.head_tail import detect_head_tail, endpoint_labels, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
 from pose.display_centerlines import build_display, VERSION as DISPLAY_VERSION
 from measurements.phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics

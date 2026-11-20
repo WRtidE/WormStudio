@@ -11,8 +11,8 @@ import urllib.request
 
 import cv2
 import numpy as np
-import manual_worm_annotation as manual
-from pipeline_progress import PipelineProgress, summarize_quality
+from app import manual_worm_annotation as manual
+from app.pipeline_progress import PipelineProgress, summarize_quality
 from runtime.run_storage import preserve_run, input_identity
 from worm_pipeline import compatible_identity
 
@@ -57,8 +57,8 @@ class ResultSessionTests(unittest.TestCase):
             self.assertEqual(error.exception.code, status)
 
     def test_completed_chamber_streams_its_own_video_while_another_run_is_active(self):
-        from batch_queue import BatchQueue
-        from workspace_sessions import result_video_files
+        from app.batch_queue import BatchQueue
+        from app.workspace_sessions import result_video_files
         sample = 'first-chamber'
         config = dict(sample=sample, video=str(self.video), centerline_method='body_sequence')
         base = self.root/'outputs'/sample
@@ -121,7 +121,7 @@ class ResultSessionTests(unittest.TestCase):
         self.assertTrue(self.progress.closed.is_set())
 
     def test_cancel_preparation_keeps_draft_and_releases_annotation(self):
-        from workspace_sessions import save_draft,get_draft
+        from app.workspace_sessions import save_draft,get_draft
         self.progress.data.update(status='ready')
         with self.post('/api/new-video',{'video_path':str(self.video)}): pass
         self.progress.wait()
@@ -153,7 +153,7 @@ class ResultSessionTests(unittest.TestCase):
         self.assertIsNone(row['mean_speed_um_s'])
 
     def test_reopened_result_uses_saved_duration_without_changing_history(self):
-        from workspace_sessions import reopen
+        from app.workspace_sessions import reopen
         base=self.root/'outputs'/'saved';folder=base/'phenotypes-centerlines-body-sequence'
         folder.mkdir(parents=True)
         (folder/'summary.json').write_text(json.dumps({'worms':[{'frames':6}], 'fps':12}),encoding='utf-8')
@@ -171,7 +171,7 @@ class ResultSessionTests(unittest.TestCase):
                 record.write_text(json.dumps(saved),encoding='utf-8');before=record.read_bytes()
                 self.progress.started=1  # An unrelated previous session must not leak into history.
                 self.progress.data['device']='old GPU'
-                with patch('workspace_sessions.load_config',return_value=(base,config)):
+                with patch('app.workspace_sessions.load_config',return_value=(base,config)):
                     reopen(self.progress,self.root,'saved')
                 result=self.progress.snapshot()
                 self.assertTrue(result['history_reopened'])
@@ -181,7 +181,7 @@ class ResultSessionTests(unittest.TestCase):
                 self.assertEqual(record.read_bytes(),before)
                 self.assertEqual(result['device'],'saved GPU' if expected else '')
         record.unlink()
-        with patch('workspace_sessions.load_config',return_value=(base,config)):
+        with patch('app.workspace_sessions.load_config',return_value=(base,config)):
             reopen(self.progress,self.root,'saved')
         self.assertIsNone(self.progress.snapshot()['elapsed_seconds'])
         self.progress.configure(config,dict(frames=6,ids=[1]),[],base)

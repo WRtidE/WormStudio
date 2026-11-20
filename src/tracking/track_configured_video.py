@@ -2,8 +2,8 @@
 import argparse
 from platforms.device import selected_device, inference_context, device_label, release_device_cache
 from runtime.resource_paths import RESOURCE_ROOT, sam2_checkpoint
-from pipeline_progress import report_progress
-from live_preview import PreviewCrop, report_tracking
+from app.pipeline_progress import report_progress
+from app.live_preview import PreviewCrop, report_tracking
 import csv
 import gc
 import json
@@ -16,7 +16,7 @@ from scipy.interpolate import splprep,splev
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from measurements.analyze_phenotypes import ROOT,read_image,write_png
-from worm_colors import worm_color
+from app.worm_colors import worm_color
 from tracking.sam2_models import model_spec, tracking_model_matches
 from tracking.sam2_frames import init_tracking_state, propagate_frames
 

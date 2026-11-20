@@ -7,8 +7,8 @@ import numpy as np
 
 from measurements.analyze_phenotypes import ROOT, load_sample, json_safe
 from pose.body_sequence_solver import solve, VERSION, signature
-from live_preview import report_geometry
-from pipeline_progress import report_progress
+from app.live_preview import report_geometry
+from app.pipeline_progress import report_progress
 from runtime.body_frame_cache import cached_frames
 
 

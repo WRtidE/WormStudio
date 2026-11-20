@@ -9,9 +9,9 @@ import urllib.error
 
 import cv2
 import numpy as np
-import manual_worm_annotation as manual
-from batch_queue import BatchQueue
-from pipeline_progress import PipelineProgress
+from app import manual_worm_annotation as manual
+from app.batch_queue import BatchQueue
+from app.pipeline_progress import PipelineProgress
 
 
 class BatchTests(unittest.TestCase):

@@ -216,7 +216,7 @@ def build_stages(config, info, snapshot, phenotype_path):
             'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
             'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
             'behavior_events.csv','trajectory_segments.csv')])
-    add('export', 'export', 'review_configured_video', ['--sample', sample,'--centerline-source',source],
+    add('export', 'export', 'app.review_configured_video', ['--sample', sample,'--centerline-source',source],
         [results / f'{sample}_annotated_full-frame.mp4', results / 'verification.json'])
     return stages
 
@@ -257,7 +257,7 @@ def complete(stage, config, info):
         from quality.quality_schema import VERSION as QUALITY_VERSION
         try:
             report=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
-            from result_overlay import OVERLAY_VERSION
+            from app.result_overlay import OVERLAY_VERSION
             if report.get('overlay_version')!=OVERLAY_VERSION:return False
             if report.get('head_detection_version')!=VERSION: return False
             from pose.display_centerlines import VERSION as DISPLAY_VERSION
@@ -361,7 +361,7 @@ def run_stage(stage, log, progress=None):
 
 def _main(progress, raw_override=None):
     if raw_override and '_refresh_video' in raw_override:
-        from workspace_sessions import refresh_saved_video
+        from app.workspace_sessions import refresh_saved_video
         return refresh_saved_video(progress,ROOT,raw_override['_refresh_video'])
     if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')
     if hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(encoding='utf-8')
@@ -392,7 +392,7 @@ def _main(progress, raw_override=None):
         print(f'计算设备: {device_label(device)}；FFmpeg: {imageio_ffmpeg.get_ffmpeg_version()}', flush=True)
     resume_saved = raw.pop('_resume_saved', False)
     if (raw_override and not resume_saved) or args.annotate or (not args.config and MANUAL_ANNOTATION and not resume_saved):
-        from manual_worm_annotation import collect_annotation
+        from app.manual_worm_annotation import collect_annotation
         input_path=Path(raw['video'])
         if not input_path.is_absolute():raw['video']=str((args.config.resolve().parent if args.config else ROOT)/input_path)
         raw=collect_annotation(raw,frame=ANNOTATION_FRAME,reuse=RESUME and not args.no_resume and not args.annotate,
@@ -453,7 +453,7 @@ def _main(progress, raw_override=None):
     progress.data['notice'] = notice
     if not args.no_progress_ui and progress.server is None:
         from platforms.shell import open_view
-        from manual_worm_annotation import create_server
+        from app.manual_worm_annotation import create_server
         progress.bind_server(create_server(progress=progress))
         print(f'处理进度：{progress.url}', flush=True)
         if OPEN_BROWSER:
@@ -518,7 +518,7 @@ def _main(progress, raw_override=None):
 
 
 def main():
-    from pipeline_progress import PipelineProgress
+    from app.pipeline_progress import PipelineProgress
     progress = PipelineProgress()
     next_settings = None
     try:

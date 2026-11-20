@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import secrets
 
-from evaluation_dataset import VERSION, digest, now, read_json, sha256, write_new
+from app.evaluation_dataset import VERSION, digest, now, read_json, sha256, write_new
 
 ANNOTATION_VERSION = 'wormstudio-human-annotation-v1'
 ROLES = ('annotator_a', 'annotator_b', 'adjudicator')

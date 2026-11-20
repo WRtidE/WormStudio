@@ -374,7 +374,7 @@ class Annotation:
                 heads[str(worm)]=dict(frame=self.frame,point=[point[0]-x,point[1]-y])
         absolute = [x + self.crop[0], y + self.crop[1], x1 + self.crop[0], y1 + self.crop[1]]
         if hasattr(self, 'correction_source'):
-            from mask_correction import validate_edit
+            from app.mask_correction import validate_edit
             validate_edit(self, absolute, masks)
         has_run = (self.output.parent/'pipeline-state.json').exists() or (self.output.parent/'sam2-tracking').exists()
         old_record = json.loads(self.path.read_text(encoding='utf-8')) if self.path.is_file() else {}
@@ -420,7 +420,7 @@ class Annotation:
         if previous_sample or self.settings.get('previous_sample'):
             config['previous_sample'] = previous_sample or self.settings['previous_sample']
         if hasattr(self, 'correction_source'):
-            from mask_correction import merge_edit
+            from app.mask_correction import merge_edit
             merge_edit(self, config, masks)
         record = dict(input=self.identity, config=config, calibration=calibration,
                       provenance=body.get('provenance', 'Masks drawn and confirmed in the local browser'),
@@ -478,7 +478,7 @@ def save_chambers(progress, annotation, body):
     from contextlib import ExitStack
     from shutil import rmtree
     from runtime.run_storage import fresh_sample
-    from workspace_sessions import save_draft
+    from app.workspace_sessions import save_draft
 
     chambers = body.get('chambers')
     if not isinstance(chambers, list) or not chambers:
@@ -608,13 +608,13 @@ def create_server(annotation=None, progress=None):
             from urllib.parse import parse_qs, urlsplit, quote
             query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
             if library:
-                from workspace_library import media
+                from app.workspace_library import media
                 path = media(ROOT, query.get('id', [''])[0])
             else:
                 key = query.get('key', [''])[0]
                 sample = query.get('run', [None])[0]
                 if 'group' in query:
-                    from workspace_sessions import load_config, saved_videos
+                    from app.workspace_sessions import load_config, saved_videos
                     try:
                         with progress.lock:
                             items = progress.batch.group_items(query['group'][0] or None) if progress.batch else []
@@ -645,7 +645,7 @@ def create_server(annotation=None, progress=None):
                     self.send_header('Content-Length', '0'); self.end_headers(); return
             inline = query.get('inline') == ['1']
             self.send_response(code)
-            from workspace_library import content_type
+            from app.workspace_library import content_type
             self.send_header('Content-Type', content_type(path) if library else 'video/mp4' if inline and path.suffix.lower()=='.mp4' else 'application/octet-stream')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Content-Length', str(end-start+1))
@@ -702,13 +702,13 @@ def create_server(annotation=None, progress=None):
                     self.respond(400, dict(error=str(exc)))
                 return
             if self.path == '/api/layout':
-                from workspace_layout import read
+                from app.workspace_layout import read
                 token = progress.token if progress else annotation.token if annotation else None
                 if not token: self.respond(404, {}); return
                 try: self.respond(200, dict(read(ROOT), token=token))
                 except (ValueError, OSError) as exc: self.respond(500, dict(error=str(exc), token=token))
             elif progress and self.path == '/api/library':
-                from workspace_library import listing
+                from app.workspace_library import listing
                 try: self.respond(200, listing(ROOT))
                 except (ValueError, OSError) as exc: self.respond(500, dict(error='文件工作区读取失败：'+str(exc)))
             elif progress and self.path.startswith('/api/library-media?'): self.send_artifact(library=True)
@@ -719,14 +719,14 @@ def create_server(annotation=None, progress=None):
                 kind = 'text/html' if name.endswith('.html') else 'text/css' if name.endswith('.css') else 'text/javascript'
                 self.respond(200, (ROOT/'web'/name).read_bytes(), kind + '; charset=utf-8')
             elif self.path.startswith('/api/evaluation/'):
-                from evaluation_http import get
+                from app.evaluation_http import get
                 get(self)
             elif progress and self.path == '/api/projects':
-                from workspace_sessions import catalog
+                from app.workspace_sessions import catalog
                 self.respond(200,catalog(ROOT))
             elif progress and (self.path.startswith('/api/identity-links?') or self.path.startswith('/api/identity-frame?')):
                 from urllib.parse import parse_qs,urlsplit
-                from workspace_sessions import identity_links,identity_frame
+                from app.workspace_sessions import identity_links,identity_frame
                 query=parse_qs(urlsplit(self.path).query);sample=query.get('run',[''])[0]
                 if not progress.config or progress.config['sample']!=sample:
                     self.respond(409,dict(error='结果会话已变化'));return
@@ -743,12 +743,12 @@ def create_server(annotation=None, progress=None):
                     self.respond(409,dict(error='结果会话已变化'));return
                 self.respond(200,dict(sample=sample,anchors={w:normalize_anchors(a) for w,a in progress.config.get('head_annotations',{}).items()}))
             elif annotation and self.path == '/api/draft':
-                from workspace_sessions import get_draft
+                from app.workspace_sessions import get_draft
                 self.respond(200,get_draft(annotation))
             elif progress and self.path == '/api/progress':
                 self.respond(200, progress.snapshot())
             elif progress and urlsplit(self.path).path in ('/api/chamber-summaries', '/api/batch-results', '/api/saved-timeline'):
-                from workspace_sessions import chamber_summaries, saved_timeline
+                from app.workspace_sessions import chamber_summaries, saved_timeline
                 route = urlsplit(self.path)
                 query = parse_qs(route.query)
                 try:
@@ -890,7 +890,7 @@ def create_server(annotation=None, progress=None):
                         self.respond_before_body(403, dict(error='Invalid layout session')); return
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 32768: raise ValueError('布局请求过大或为空')
-                    from workspace_layout import update
+                    from app.workspace_layout import update
                     self.respond(200, update(ROOT, json.loads(self.rfile.read(size)))); return
                 if progress and self.path == '/api/edit-preview-mask':
                     if self.headers.get('X-Annotation-Token') != progress.token:
@@ -898,13 +898,13 @@ def create_server(annotation=None, progress=None):
                     size = int(self.headers.get('Content-Length', '0'))
                     if not 0 < size <= 8192: raise ValueError('掩膜修正请求无效')
                     body = json.loads(self.rfile.read(size))
-                    from mask_correction import request_edit
+                    from app.mask_correction import request_edit
                     result = request_edit(progress, ROOT, body.get('run'), body.get('sequence'))
                     self.respond(202 if result.get('waiting') else 200, result); return
                 if progress and (self.path.startswith('/api/library-upload?') or self.path in ('/api/library-selection','/api/library-tree','/api/library-link')):
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond_before_body(403,dict(error='Invalid processing session')); return
-                    from workspace_library import upload, select, organize
+                    from app.workspace_library import upload, select, organize
                     from urllib.parse import parse_qs, urlsplit
                     size = int(self.headers.get('Content-Length', '0'))
                     if self.path == '/api/library-tree':
@@ -912,7 +912,7 @@ def create_server(annotation=None, progress=None):
                         result=organize(ROOT,json.loads(self.rfile.read(size)))
                     elif self.path == '/api/library-link':
                         if not 0 < size <= 8192: raise ValueError('视频路径无效')
-                        from workspace_library import register, VIDEO
+                        from app.workspace_library import register, VIDEO
                         path = Path(json.loads(self.rfile.read(size))['path']).expanduser()
                         if not path.is_absolute() or path.suffix.lower() not in VIDEO:
                             raise ValueError('请选择视频文件的完整路径')
@@ -931,7 +931,7 @@ def create_server(annotation=None, progress=None):
                     if not 0 < size <= 8192: raise ValueError('任务请求无效')
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict): raise ValueError('任务请求无效')
-                    from workspace_sessions import remove_history_entry
+                    from app.workspace_sessions import remove_history_entry
                     remove_history_entry(ROOT, body.get('sample'))
                     self.respond(200, dict(removed=True)); return
                 if progress and self.path in ('/api/open-run','/api/resume-run','/api/refresh-video','/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review','/api/cancel'):
@@ -952,7 +952,7 @@ def create_server(annotation=None, progress=None):
                     size=int(self.headers.get('Content-Length','0'))
                     if not 0<size<=8192: raise ValueError('任务请求无效')
                     body=json.loads(self.rfile.read(size))
-                    from workspace_sessions import reopen,load_config
+                    from app.workspace_sessions import reopen,load_config
                     if self.path=='/api/open-run': reopen(progress,ROOT,body.get('sample'))
                     elif self.path=='/api/refresh-video':
                         sample=body.get('sample')
@@ -968,23 +968,23 @@ def create_server(annotation=None, progress=None):
                         if self.path in ('/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review'):
                             if not progress.config or body.get('sample')!=progress.config['sample']:
                                 raise ValueError('当前结果已改变，请重新加载后复核')
-                            from workspace_sessions import confirm_head
+                            from app.workspace_sessions import confirm_head
                             if self.path=='/api/auto-head':
-                                from workspace_sessions import derive_geometry_run
+                                from app.workspace_sessions import derive_geometry_run
                                 _,settings=load_config(ROOT,body.get('sample'))
                                 settings['head_detection']=body.get('head_mode','twardis')
                                 if settings['head_detection'] not in ('twardis','taper_seed','manual_seed'):raise ValueError('头尾初始化选项无效')
                                 settings=derive_geometry_run(ROOT,body.get('sample'),settings)
                             elif self.path=='/api/review-identity':
-                                from workspace_sessions import review_identity
+                                from app.workspace_sessions import review_identity
                                 settings=review_identity(ROOT,body.get('sample'),body.get('link_id'),body.get('decision'),body.get('reviewer'),body.get('evidence'))
                             elif self.path=='/api/remove-identity-review':
-                                from workspace_sessions import remove_identity_review
+                                from app.workspace_sessions import remove_identity_review
                                 settings=remove_identity_review(ROOT,body.get('sample'),body.get('review_id'))
                             elif self.path=='/api/confirm-head':
                                 settings=confirm_head(ROOT,body.get('sample'),body.get('worm_id'),body.get('frame'),body.get('endpoint'))
                             else:
-                                from workspace_sessions import remove_head
+                                from app.workspace_sessions import remove_head
                                 settings=remove_head(ROOT,body.get('sample'),body.get('worm_id'),body.get('anchor_id'))
                         else: _,settings=load_config(ROOT,body.get('sample'))
                         progress.path=None
@@ -1006,7 +1006,7 @@ def create_server(annotation=None, progress=None):
                         change_annotation_mode(annotation, progress, body.get('chamber_mode'))
                         self.respond(200, dict(ok=True));return
                     if self.path=='/api/draft':
-                        from workspace_sessions import save_draft
+                        from app.workspace_sessions import save_draft
                         self.respond(200,save_draft(annotation,body));return
                     if hasattr(annotation, 'correction_source'):
                         raise ValueError('当前正在修正指定帧的掩膜，请保存后再选择其他帧')
@@ -1017,7 +1017,7 @@ def create_server(annotation=None, progress=None):
                         setattr(annotation,key,getattr(candidate,key))
                     self.respond(200,dict(ok=True));return
                 if self.path == '/api/evaluation/save':
-                    from evaluation_http import save
+                    from app.evaluation_http import save
                     save(self, progress)
                     return
                 if progress and self.path == '/api/reannotate':
@@ -1088,7 +1088,7 @@ def create_server(annotation=None, progress=None):
                         if uploaded:
                             uploaded.unlink(missing_ok=True); uploaded.parent.rmdir()
                         raise
-                    from workspace_library import register
+                    from app.workspace_library import register
                     library_file = register(ROOT, video)
                     deferred = bool(sequence) or (self.path == '/api/new-video' and body.get('batch') is True)
                     if deferred and progress.batch is None: raise ValueError('请使用 Worm Studio 启动批处理')
@@ -1125,7 +1125,7 @@ def create_server(annotation=None, progress=None):
                           '/api/annotation-metrics': lambda request: measure_annotation(annotation, request)}
                 result = action[self.path](body)
                 if self.path == '/save':
-                    from workspace_sessions import save_draft
+                    from app.workspace_sessions import save_draft
                     save_draft(annotation, dict(submitted=True))
                 if self.path == '/save' and progress:
                     if getattr(annotation, 'start_on_submit', False):

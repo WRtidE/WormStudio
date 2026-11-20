@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from quality.multiworm_quality import frame_geometry
-from pipeline_progress import report_progress
+from app.pipeline_progress import report_progress
 from quality.tracking_quality import mark_quality
 
 VERSION = 'sam2-crop-replay-v1'
