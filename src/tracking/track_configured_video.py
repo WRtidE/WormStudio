@@ -17,8 +17,8 @@ from sam2.build_sam import build_sam2_video_predictor
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from analyze_phenotypes import ROOT,read_image,write_png
 from worm_colors import worm_color
-from sam2_models import model_spec, tracking_model_matches
-from sam2_frames import init_tracking_state, propagate_frames
+from tracking.sam2_models import model_spec, tracking_model_matches
+from tracking.sam2_frames import init_tracking_state, propagate_frames
 
 
 def sam2_input_transform(mode):
@@ -172,7 +172,7 @@ def main():
     capture.release()
     if args.seeds_only:return
     rows.sort(key=lambda row:(row['frame'],row['worm_id']))
-    from tracking_quality import mark_quality
+    from quality.tracking_quality import mark_quality
     mark_quality(rows,ids,config.get('review_intervals',[]))
     for name in ('frame_metrics.csv','tracking-quality.csv'):
         with (out/name).open('w',newline='') as handle:

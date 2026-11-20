@@ -1,7 +1,7 @@
 import copy
 import unittest
-from local_tracklets import measure
-from quality_schema import exclude_unusable, VERSION
+from quality.local_tracklets import measure
+from quality.quality_schema import exclude_unusable, VERSION
 from frame_metrics import present_frame
 
 

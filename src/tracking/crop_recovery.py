@@ -9,9 +9,9 @@ from tempfile import TemporaryDirectory
 import cv2
 import numpy as np
 
-from multiworm_quality import frame_geometry
+from quality.multiworm_quality import frame_geometry
 from pipeline_progress import report_progress
-from tracking_quality import mark_quality
+from quality.tracking_quality import mark_quality
 
 VERSION = 'sam2-crop-replay-v1'
 FOLDER = 'crop-recovery'
@@ -59,9 +59,9 @@ def replay_model(config):
     from platforms.device import selected_device, inference_context
     from sam2.build_sam import build_sam2_video_predictor
     from runtime.resource_paths import sam2_checkpoint
-    from sam2_models import model_spec
-    from sam2_frames import init_tracking_state, propagate_frames
-    from track_configured_video import sam2_input_transform
+    from tracking.sam2_models import model_spec
+    from tracking.sam2_frames import init_tracking_state, propagate_frames
+    from tracking.track_configured_video import sam2_input_transform
     spec = model_spec(config.get('sam2_model', 'large'))
     device = selected_device()
     model = build_sam2_video_predictor(spec['config'], str(sam2_checkpoint(spec['checkpoint'])), device=device,
@@ -182,7 +182,7 @@ def save_masks(dest, raw, meta, config, ids, get, patches, final_box):
 
 def run(sample, predictor=None):
     from analyze_phenotypes import ROOT, load_sample
-    from quality_stage import load_guards, run as guard_stage
+    from quality.quality_stage import load_guards, run as guard_stage
     base = ROOT/'outputs'/sample
     config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8-sig'))
     raw, meta, ids, get, _ = load_sample(sample, base/'sam2-tracking', apply_guards=False)
@@ -232,7 +232,7 @@ def run(sample, predictor=None):
                             continue
                         neighbours = [f for f in (first-1,last+1) if 0 <= f < count]
                         if (not refs_checked and len(ids)==1 and (config.get('identity_reviews') or any(not reviewed[f]['identity_valid'] for f in neighbours))):
-                            from identity_reassociation import reassociate
+                            from quality.identity_reassociation import reassociate
                             linked, _ = reassociate({w:guards[w]}, meta, get, reviews=config.get('identity_reviews', []))
                             reviewed = linked[w]
                             refs_checked = True

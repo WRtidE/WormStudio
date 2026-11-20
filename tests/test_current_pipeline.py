@@ -13,12 +13,12 @@ import numpy as np
 import analyze_phenotypes as metrics
 import extract_body_sequence as body_sequence
 import manual_worm_annotation as manual
-import quality_stage
+from quality import quality_stage
 import worm_pipeline
 from frame_metrics import present_frame
 from pipeline_progress import PipelineProgress
 from quality_fixture import make_fixture
-from quality_schema import VERSION
+from quality.quality_schema import VERSION
 from workspace_sessions import confirm_head
 
 SOURCE = 'centerlines-body-sequence'

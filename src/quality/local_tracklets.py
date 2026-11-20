@@ -8,7 +8,7 @@ import csv
 import json
 import math
 import numpy as np
-from quality_schema import flag
+from quality.quality_schema import flag
 
 VERSION = 'anonymous-tracklets-v1'
 MIN_SPAN_S = .25

@@ -48,7 +48,7 @@ import re
 import subprocess
 import sys
 import time
-from sam2_models import model_spec, tracking_model_matches
+from tracking.sam2_models import model_spec, tracking_model_matches
 from platforms.system import check_memory_pressure, stage_wait_slice, terminate_children
 
 PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'metrics', 'export')
@@ -176,11 +176,11 @@ def validate_config(config, relative_to=ROOT):
     if c.get('sam2_model', 'large') != 'large': raise ValueError('当前方法使用 SAM2 Large')
     if c.get('tracking_point_count', 13) != 13: raise ValueError('当前方法使用 13 个身体跟踪点')
     c['sam2_model'] = model_spec(c.get('sam2_model', 'large'))['size']
-    from quality_schema import VERSION as QUALITY_VERSION
-    from tracking_quality import MAX_AREA_JUMP_FRACTION
-    from multiworm_quality import validate_reviews
+    from quality.quality_schema import VERSION as QUALITY_VERSION
+    from quality.tracking_quality import MAX_AREA_JUMP_FRACTION
+    from quality.multiworm_quality import validate_reviews
     validate_reviews(c, ids, n)
-    from identity_reassociation import validate_reviews as validate_fragment_reviews
+    from quality.identity_reassociation import validate_reviews as validate_fragment_reviews
     validate_fragment_reviews(c, ids, n)
     c['quality_schema_version'] = QUALITY_VERSION
     c['quality_rules_version'] = 'quality-guards-v6-single-body'
@@ -193,30 +193,30 @@ def build_stages(config, info, snapshot, phenotype_path):
     base = ROOT / 'outputs' / sample
     tracking = base / 'sam2-tracking'
     stages = []
-    def add(name, phase, script, arguments, outputs):
-        stages.append(dict(name=name, phase=phase, command=[sys.executable, '-u', str(ROOT / 'src' / script), *map(str, arguments)],
+    def add(name, phase, module, arguments, outputs):
+        stages.append(dict(name=name, phase=phase, command=[sys.executable, '-u', '-m', module, *map(str, arguments)],
                            outputs=[str(p) for p in outputs]))
     masks = [tracking / 'masks' / f'worm-{w}' / f'{f:06d}.png' for w in info['ids'] for f in range(info['frames'])]
-    add('tracking', 'tracking', 'track_configured_video.py', ['--config', snapshot],
+    add('tracking', 'tracking', 'tracking.track_configured_video', ['--config', snapshot],
         [tracking / 'summary.json', tracking / 'tracking-quality.csv', *masks])
-    add('cleanup', 'cleanup', 'clean_tracking_components.py', ['--sample', sample], [tracking / 'component-cleanup.json'])
-    add('quality', 'quality', 'quality_stage.py', ['--sample', sample], [tracking / 'quality-guards.json'])
+    add('cleanup', 'cleanup', 'tracking.clean_tracking_components', ['--sample', sample], [tracking / 'component-cleanup.json'])
+    add('quality', 'quality', 'quality.quality_stage', ['--sample', sample], [tracking / 'quality-guards.json'])
     method = analysis_method(config.get('centerline_method'))
     source = method_source(method)
     for worm in info['ids']:
         out = base / source / f'worm-{worm}'
-        add(f'{method}-worm-{worm}', 'fit', f'extract_{method}.py',
+        add(f'{method}-worm-{worm}', 'fit', f'extract_{method}',
             ['--sample', sample, '--worm', worm],
             [out/'centerlines.npy', out/'run.json', out/'quality.json'])
     results = base / ('phenotypes-'+source)
-    add('metrics', 'metrics', 'analyze_phenotypes.py', ['--sample', sample, '--config', phenotype_path,
+    add('metrics', 'metrics', 'analyze_phenotypes', ['--sample', sample, '--config', phenotype_path,
         '--centerline-method',method,'--wormtracer-source',source],
         [results / name for name in ('summary.json', 'per_frame_metrics.csv', 'worm_summary.csv', 'centerlines.npz',
             'phenotypes-overlay.mp4', '报告.md', 'quality.json', 'per_frame_metrics.json',
             'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
             'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
             'behavior_events.csv','trajectory_segments.csv')])
-    add('export', 'export', 'review_configured_video.py', ['--sample', sample,'--centerline-source',source],
+    add('export', 'export', 'review_configured_video', ['--sample', sample,'--centerline-source',source],
         [results / f'{sample}_annotated_full-frame.mp4', results / 'verification.json'])
     return stages
 
@@ -246,7 +246,7 @@ def complete(stage, config, info):
             if not tracking_model_matches(summary,config.get('sam2_model','large')):return False
         except (OSError,ValueError):return False
     if stage['phase']=='quality':
-        from quality_stage import load_guards
+        from quality.quality_stage import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
         except (OSError, ValueError, KeyError, TypeError): return False
     if stage['phase']=='metrics' and config.get('centerline_method')=='body_sequence':
@@ -254,7 +254,7 @@ def complete(stage, config, info):
         if json.loads(Path(stage['outputs'][0]).read_text(encoding='utf8')).get('body_sequence_signature')!=signature():return False
     if stage['phase']=='metrics':
         from head_tail import VERSION
-        from quality_schema import VERSION as QUALITY_VERSION
+        from quality.quality_schema import VERSION as QUALITY_VERSION
         try:
             report=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
             from result_overlay import OVERLAY_VERSION
@@ -265,9 +265,9 @@ def complete(stage, config, info):
             if report.get('quality_schema_version')!=QUALITY_VERSION: return False
             from phenotype_statistics import VERSION as METRIC_VERSION
             if report.get('metric_definition_version') != METRIC_VERSION: return False
-            from local_tracklets import VERSION as TRACKLET_VERSION
+            from quality.local_tracklets import VERSION as TRACKLET_VERSION
             if report.get('tracklet_version')!=TRACKLET_VERSION: return False
-            from identity_reassociation import VERSION as ASSOCIATION_VERSION
+            from quality.identity_reassociation import VERSION as ASSOCIATION_VERSION
             if report.get('identity_reassociation_version')!=ASSOCIATION_VERSION:return False
         except (OSError,ValueError): return False
     if stage['phase'] == 'fit':

@@ -15,10 +15,10 @@ import cv2
 import numpy as np
 import manual_worm_annotation as manual
 import analyze_phenotypes as metrics
-import quality_stage
+from quality import quality_stage
 import worm_pipeline
 from quality_fixture import make_fixture
-from quality_schema import VERSION, permissions
+from quality.quality_schema import VERSION, permissions
 from frame_metrics import present_frame
 from measurement_units import validate_scale, pixel_fields
 from pipeline_progress import PipelineProgress

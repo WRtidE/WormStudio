@@ -140,7 +140,7 @@ class HeadTailTests(unittest.TestCase):
         self.assertEqual(result[13]['head_endpoint'],0)
 
     def test_present_candidate_does_not_unlock_head_metrics(self):
-        from quality_schema import finish_dimensions,VERSION
+        from quality.quality_schema import finish_dimensions,VERSION
         from frame_metrics import present_frame
         row=dict(worm_id=1,quality_schema_version=VERSION,source_valid=True,mask_valid=True,
                  centerline_valid=True,identity_valid=True,measurement_mode='pixels',

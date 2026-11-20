@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 import copy,tempfile,unittest
 import cv2,numpy as np
-from identity_reassociation import reassociate,validate_reviews,ImageEvidence
+from quality.identity_reassociation import reassociate,validate_reviews,ImageEvidence
 
 
 def inputs():

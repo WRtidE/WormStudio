@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from importlib.resources import as_file, files
 from pathlib import Path
 
 import cv2
@@ -20,7 +21,8 @@ from wormtracker.core.grid_reference import ChannelGridReference
 from wormtracker.engine.mog2 import MOG2Engine
 
 
-BASE = WormTrackerConfig.from_yaml(Path(__file__).parent/'wormtracker/defaults.yaml')
+with as_file(files('wormtracker').joinpath('defaults.yaml')) as defaults:
+    BASE = WormTrackerConfig.from_yaml(defaults)
 FIELDS = ('num_channels', 'mask_top_ratio', 'tripwire_ratio', 'mask_bottom_ratio')
 DEFAULTS = {key: getattr(BASE, key) for key in FIELDS}
 

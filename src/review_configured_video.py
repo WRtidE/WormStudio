@@ -14,7 +14,7 @@ import imageio_ffmpeg
 import numpy as np
 from analyze_phenotypes import ROOT, load_sample, write_png
 from worm_colors import worm_color
-from quality_schema import permissions, describe
+from quality.quality_schema import permissions, describe
 
 
 def selected_frames(count, samples=9):

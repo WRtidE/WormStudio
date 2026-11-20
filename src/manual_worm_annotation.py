@@ -13,7 +13,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from centerline_methods import display_method, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
-from sam2_models import model_spec
+from tracking.sam2_models import model_spec
 from pathlib import Path
 
 import cv2
@@ -1165,7 +1165,7 @@ def create_server(annotation=None, progress=None):
 
         def channel_counts(self):
             if self.counts is None:
-                from channel_counts import ChannelCounts
+                from tracking.channel_counts import ChannelCounts
                 self.counts = ChannelCounts(ROOT)
             return self.counts
 

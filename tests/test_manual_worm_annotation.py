@@ -130,7 +130,7 @@ class ManualAnnotationTests(unittest.TestCase):
         config, info = validate_config(historical)
         stages = build_stages(config, info, self.root/'pipeline-config.json', self.root/'phenotypes.json')
         fit = next(stage for stage in stages if stage['phase'] == 'fit')
-        self.assertEqual(Path(fit['command'][2]).name, 'extract_body_sequence.py')
+        self.assertEqual(fit['command'][2:4], ['-m', 'extract_body_sequence'])
         self.assertIn('centerlines-body-sequence', stages[-1]['command'])
         self.assertEqual(method_source(historical['centerline_method']), 'centerlines-tapnext')
         self.assertEqual(historical['centerline_method'], 'tapnext')

@@ -192,7 +192,7 @@ class PipelineProgress:
                        ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
                        ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
             if config.get('centerline_method')=='self_contact':
-                from crop_recovery import FOLDER
+                from tracking.crop_recovery import FOLDER
                 outputs.append(('crop-recovery','触边扩框复核记录 JSON',base/'sam2-tracking'/FOLDER/'summary.json','quality'))
             for key, label, path, phase in outputs:
                 if phase in finished and path.is_file():

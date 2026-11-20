@@ -28,7 +28,7 @@ from result_overlay import OVERLAY_VERSION, draw_worm
 from head_tail import detect_head_tail, endpoint_labels, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
 from display_centerlines import build_display, VERSION as DISPLAY_VERSION
 from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
-from quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
+from quality.quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
 
 from runtime.resource_paths import PROJECT_ROOT as ROOT
 # 导出视频中的中心线宽度（原来为 3 像素）；可在这里调整。
@@ -209,7 +209,7 @@ def load_sample(sample,mask_source=None,apply_guards=True):
     default_source='sam2-tracking' if (base/'pipeline-config.json').exists() else ('multiworm-tracking-manual' if sample=='2-1-1314' else 'sam2-tracking')
     data=Path(mask_source) if mask_source is not None else base/default_source
     if mask_source is None and (base/'pipeline-config.json').is_file():
-        from crop_recovery import tracking_directory
+        from tracking.crop_recovery import tracking_directory
         data=tracking_directory(base,json.loads((base/'pipeline-config.json').read_text(encoding='utf-8')))
     summary=json.loads((data/'summary.json').read_text(encoding='utf-8'))
     summary['mask_source']=str(data)
@@ -225,7 +225,7 @@ def load_sample(sample,mask_source=None,apply_guards=True):
         def get_mask(worm,frame):return np.unpackbits(packed_masks[frame],count=int(np.prod(shape))).reshape(shape).astype(bool)
         ids=[1]
     if apply_guards:
-        from quality_stage import load_guards
+        from quality.quality_stage import load_guards
         snapshot=base/'pipeline-config.json'
         config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
         guards=load_guards(data,ids,n,required=bool(config.get('quality_schema_version')))
@@ -276,10 +276,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     times=np.asarray(timebase['timestamps_s'])
     snapshot=ROOT/'outputs'/sample/'pipeline-config.json'
     video_config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
-    from quality_stage import load_guards
+    from quality.quality_stage import load_guards
     guards=load_guards(data,ids,n,required=bool(video_config.get('quality_schema_version')))
     tracking_guards = guards
-    from identity_reassociation import reassociate,VERSION as ASSOCIATION_VERSION,RULES
+    from quality.identity_reassociation import reassociate,VERSION as ASSOCIATION_VERSION,RULES
     association_report=dict(version=ASSOCIATION_VERSION,rules=RULES,edges=[],scope='legacy guards unavailable')
     if method == 'self_contact':
         # Use the very same identity boundaries and reviewed jumps that constrained the fit.
@@ -628,7 +628,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
             from measurement_units import pixel_fields
             for row in rows: pixel_fields(row)
             pixel_fields(all_summaries[-1])
-        from local_tracklets import measure as measure_tracklets
+        from quality.local_tracklets import measure as measure_tracklets
         tracklet_report=measure_tracklets(rows,fps,scale,timestamps=times)
         tracklet_reports.append(tracklet_report)
         all_summaries[-1].update(tracklet_pose_frames=sum(r['tracklet_pose_valid'] for r in rows),
@@ -638,9 +638,9 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         diagnostics.extend(exclude_unusable(row) for row in rows)
         all_rows.extend(rows)
         print(f'{sample} worm {worm}: {valid.sum()}/{n} posture-valid, {mask_valid.sum()}/{n} mask-valid, head={head_status}',flush=True)
-    from quality_audit import write_audit
+    from quality.quality_audit import write_audit
     write_audit(output,all_rows)
-    from local_tracklets import write as write_tracklets, VERSION as TRACKLET_VERSION
+    from quality.local_tracklets import write as write_tracklets, VERSION as TRACKLET_VERSION
     tracklet_report=dict(tracklet_reports[0],tracklets=[t for report in tracklet_reports for t in report['tracklets']])
     write_tracklets(output,all_rows,tracklet_report)
     fields=list(dict.fromkeys(k for r in all_rows for k in r))

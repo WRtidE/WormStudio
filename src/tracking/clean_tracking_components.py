@@ -6,7 +6,7 @@ import json
 import shutil
 import numpy as np
 from scipy import ndimage as ndi
-from tracking_quality import reference_area, mark_quality
+from quality.tracking_quality import reference_area, mark_quality
 from analyze_phenotypes import ROOT,load_sample,write_png
 
 

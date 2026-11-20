@@ -10,7 +10,7 @@ import numpy as np
 
 def prepare_recovered_edit(source, summary, seed_folder):
     """Rebase original prompts into the larger ROI so a repaired mask can be edited."""
-    from crop_recovery import place
+    from tracking.crop_recovery import place
     from head_tail import anchors_in_crop
     info = summary.get('crop_recovery', {})
     restored = [e for e in info.get('events', []) if e['decision']=='recovered']
@@ -71,7 +71,7 @@ def request_edit(progress, root, run, sequence):
         if progress.next_ready.is_set() or progress.data['status'] not in ('running', 'complete', 'failed', 'cancelled'):
             raise ValueError('当前任务正在切换，请稍后重试')
         source = copy.deepcopy(progress.config)
-        from crop_recovery import tracking_directory
+        from tracking.crop_recovery import tracking_directory
         tracking = tracking_directory(root/'outputs'/source['sample'],source)
         paths = {worm['id']: tracking / 'masks' /
                  f"worm-{worm['id']}" / f'{frame:06d}.png'

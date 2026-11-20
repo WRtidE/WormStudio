@@ -2,7 +2,7 @@
 import csv
 import json
 from collections import Counter
-from quality_schema import flag,permissions
+from quality.quality_schema import flag,permissions
 
 VERSION='quality-attrition-v1'
 

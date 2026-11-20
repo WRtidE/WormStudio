@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from analyze_phenotypes import read_image, write_png
-from crop_recovery import place, replay_incident, touched, incidents
+from tracking.crop_recovery import place, replay_incident, touched, incidents
 from head_tail import anchors_in_crop
 from mask_correction import prepare_recovered_edit
 
@@ -71,8 +71,8 @@ class CropReplayTests(unittest.TestCase):
 
     def test_reverse_seed_recovers_first_frames_and_preserves_a_true_edge(self):
         from analyze_phenotypes import load_sample
-        from crop_recovery import run
-        from quality_stage import run as guard_stage
+        from tracking.crop_recovery import run
+        from quality.quality_stage import run as guard_stage
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'中文 Windows'
             base=root/'outputs'/'replay'

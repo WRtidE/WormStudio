@@ -4,7 +4,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 import unittest
 import cv2
 import numpy as np
-from multiworm_quality import frame_geometry,sequence_guards
+from quality.multiworm_quality import frame_geometry,sequence_guards
 
 
 def worm(a,b):

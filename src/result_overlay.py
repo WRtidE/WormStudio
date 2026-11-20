@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 from frame_metrics import present_frame
-from quality_schema import flag
+from quality.quality_schema import flag
 from functools import lru_cache
 import json
 from PIL import Image,ImageDraw,ImageFont

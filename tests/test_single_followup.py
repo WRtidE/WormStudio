@@ -6,8 +6,8 @@ import numpy as np
 from head_tail import detect_head_tail,normalize_anchors
 from test_head_tail import poses
 from runtime.cache_integrity import snapshot,matches
-from quality_audit import audit
-from quality_schema import VERSION
+from quality.quality_audit import audit
+from quality.quality_schema import VERSION
 
 
 class FollowupTests(unittest.TestCase):

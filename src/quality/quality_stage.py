@@ -3,8 +3,8 @@ import argparse
 import json
 from pathlib import Path
 
-from multiworm_quality import sequence_guards, VERSION as GUARD_VERSION
-from quality_schema import VERSION
+from quality.multiworm_quality import sequence_guards, VERSION as GUARD_VERSION
+from quality.quality_schema import VERSION
 from pipeline_progress import report_progress
 
 

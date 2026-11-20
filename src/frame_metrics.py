@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from result_metrics import number
-from quality_schema import flag, permissions, describe
+from quality.quality_schema import flag, permissions, describe
 
 
 def present_frame(row):
@@ -153,7 +153,7 @@ def load_frame_metrics(path, fps, count, trend_only=False):
         rows.sort(key=lambda r: r['worm_id'])
     result = dict(fps=fps, frame_count=count, worm_ids=sorted(ids), frames=frames)
     if not trend_only:
-        from quality_audit import audit
+        from quality.quality_audit import audit
         result['quality_audit'] = audit(raw_rows)
         result['events'] = recorded_events(Path(path).parent, ids, count)
     return result

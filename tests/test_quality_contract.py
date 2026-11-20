@@ -12,13 +12,13 @@ import cv2
 import numpy as np
 import analyze_phenotypes as metrics
 import manual_worm_annotation as manual
-import quality_stage
+from quality import quality_stage
 import result_overlay
 import review_configured_video as review
 from frame_metrics import present_frame
-from multiworm_quality import sequence_guards, validate_reviews
+from quality.multiworm_quality import sequence_guards, validate_reviews
 from pipeline_progress import PipelineProgress
-from quality_schema import VERSION, permissions
+from quality.quality_schema import VERSION, permissions
 from quality_fixture import make_fixture
 from worm_pipeline import compatible_identity
 

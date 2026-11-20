@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve
-from quality_schema import VERSION
+from quality.quality_schema import VERSION
 
 class DisplayTests(unittest.TestCase):
     def row(self,frame=0):

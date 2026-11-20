@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 import weakref
 
-from sam2_frames import init_tracking_state
+from tracking.sam2_frames import init_tracking_state
 
 
 @unittest.skipUnless(importlib.util.find_spec('sam2'), 'SAM2 not installed')
@@ -27,7 +27,7 @@ class TrackingFramesTests(unittest.TestCase):
             for i in range(5):
                 Image.new('RGB', (20, 12), (17*i, 47, 132)).save(directory / f'{i:06d}.jpg')
             expected, _, _ = load_video_frames(tmp, 32, True)
-            with patch('sam2_frames.sys.platform', 'darwin'):
+            with patch('tracking.sam2_frames.sys.platform', 'darwin'):
                 state = init_tracking_state(Predictor(), directory, 5)
             self.assertEqual((state['warmup_count'], state['num_frames']), (1, 5))
             self.assertEqual((state['video_height'], state['video_width']), (12, 20))
@@ -41,7 +41,7 @@ class TrackingFramesTests(unittest.TestCase):
 
 class TrackingHistoryTests(unittest.TestCase):
     def test_bidirectional_history_matches_unpruned_lookups(self):
-        from sam2_frames import propagate_frames
+        from tracking.sam2_frames import propagate_frames
 
         class Model:
             num_maskmem = 4
@@ -73,5 +73,5 @@ class TrackingHistoryTests(unittest.TestCase):
                         self.assertLessEqual(len(outputs['non_cond_frame_outputs']), 40)
             return results
 
-        with patch('sam2_frames.sys.platform', 'darwin'):
+        with patch('tracking.sam2_frames.sys.platform', 'darwin'):
             self.assertEqual(run(True), run(False))

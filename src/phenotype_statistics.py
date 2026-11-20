@@ -4,7 +4,7 @@ from itertools import groupby
 
 import numpy as np
 
-from quality_schema import flag, permissions
+from quality.quality_schema import flag, permissions
 
 
 VERSION = 'wormstudio-phenotypes-v4'
