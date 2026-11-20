@@ -6,7 +6,7 @@ import time
 import hashlib
 import copy
 import shutil
-from resource_paths import motion_constraints_path
+from runtime.resource_paths import motion_constraints_path
 from datetime import datetime,timezone
 
 
@@ -64,7 +64,7 @@ def confirm_head(root, sample, worm, frame, endpoint):
     """User review creates a derived run; segmentation and pose stay unchanged."""
     import numpy as np
     from centerline_methods import method_source
-    from run_storage import fresh_sample, input_identity
+    from runtime.run_storage import fresh_sample, input_identity
     from worm_pipeline import complete, build_stages, validate_config
     old,config=load_config(root,sample)
     if type(worm) is not int or type(frame) is not int or type(endpoint) is not int or endpoint not in (0,1):
@@ -174,7 +174,7 @@ def identity_frame(root,sample,worm,frame):
 
 def derive_geometry_run(root,sample,config=None):
     """Recompute metrics in a new run, provided all geometric inputs are identical."""
-    from run_storage import fresh_sample,input_identity,copy_tracking_snapshot
+    from runtime.run_storage import fresh_sample,input_identity,copy_tracking_snapshot
     from worm_pipeline import complete,build_stages,validate_config
     old,original=load_config(root,sample)
     config=copy.deepcopy(config if config is not None else original)
@@ -192,7 +192,7 @@ def derive_geometry_run(root,sample,config=None):
         reusable=[s for s in reusable if s['phase']!='fit']
     if not all(complete(s,checked,info) for s in reusable):
         raise ValueError('原运行的算法版本或产物不再匹配，请先继续原任务完成重算')
-    from cache_integrity import matches,snapshot
+    from runtime.cache_integrity import matches,snapshot
     state_path=old/'pipeline-state.json'
     old_state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
     for stage in reusable:

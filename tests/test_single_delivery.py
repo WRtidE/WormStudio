@@ -24,12 +24,12 @@ from measurement_units import validate_scale, pixel_fields
 from pipeline_progress import PipelineProgress
 from workspace_sessions import save_draft, get_draft, load_config, confirm_head
 from worm_pipeline import run_stage
-from video_timing import verify_timebase
+from runtime.video_timing import verify_timebase
 
 
 class SingleDeliveryTests(unittest.TestCase):
     def test_short_opening_interval_preserves_pts_but_interior_jumps_fail(self):
-        with patch('video_timing.cv2.VideoCapture') as capture:
+        with patch('runtime.video_timing.cv2.VideoCapture') as capture:
             def check(milliseconds):
                 capture.return_value.read.side_effect = [(True,None)]*len(milliseconds)+[(False,None)]
                 capture.return_value.get.side_effect = milliseconds

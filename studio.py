@@ -3,12 +3,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from resource_paths import ensure_runtime
+from runtime.resource_paths import ensure_runtime
 
 
 def main(open_browser=True):
     if open_browser:
-        from electron_desktop import launch
+        from platforms.shell import launch
         return launch()
     from manual_worm_annotation import create_server
     from pipeline_progress import PipelineProgress

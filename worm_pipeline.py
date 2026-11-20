@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
 from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
-from resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
+from runtime.resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
     ensure_runtime()
@@ -382,7 +382,7 @@ def _main(progress, raw_override=None):
         if args.sample: raw['sample'] = args.sample
     if not args.dry_run:
         import torch
-        from compute_device import selected_device, device_label
+        from platforms.device import selected_device, device_label
         device = selected_device()
         checkpoint=model_spec(raw.get('sam2_model','large'))['checkpoint']
         required = sam2_checkpoint(checkpoint)
@@ -407,7 +407,7 @@ def _main(progress, raw_override=None):
     state = {}
     notice = (f'已保存为新的分析任务，旧结果及原始标注保留在 {config["previous_sample"]}。'
               if config.get('previous_sample') else '')
-    from run_storage import input_identity, preserve_run
+    from runtime.run_storage import input_identity, preserve_run
     identity = input_identity(config, phenotype, motion_constraints_path(ROOT))
     if not (args.dry_run or args.check or CHECK_ONLY):
         state_path = base / 'pipeline-state.json'
@@ -452,7 +452,7 @@ def _main(progress, raw_override=None):
     progress.configure(config, info, stages, base, device_label(device))
     progress.data['notice'] = notice
     if not args.no_progress_ui and progress.server is None:
-        from electron_desktop import open_view
+        from platforms.shell import open_view
         from manual_worm_annotation import create_server
         progress.bind_server(create_server(progress=progress))
         print(f'处理进度：{progress.url}', flush=True)
@@ -469,7 +469,7 @@ def _main(progress, raw_override=None):
     logs = base / 'pipeline-logs'; logs.mkdir(exist_ok=True)
     snapshot.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
     dirty = not resume
-    from cache_integrity import snapshot as output_snapshot, matches as outputs_match
+    from runtime.cache_integrity import snapshot as output_snapshot, matches as outputs_match
     if dirty:
         for stage in all_stages: state['stages'][stage['name']] = dict(status='pending')
     for index, stage in enumerate(stages):

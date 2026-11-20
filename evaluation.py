@@ -49,6 +49,6 @@ def main():
 
 
 if __name__ == '__main__':
-    from resource_paths import ensure_runtime
+    from runtime.resource_paths import ensure_runtime
     ensure_runtime()
     main()

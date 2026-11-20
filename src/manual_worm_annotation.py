@@ -19,8 +19,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, sam2_checkpoint
-from compute_device import release_device_cache
+from runtime.resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, sam2_checkpoint
+from platforms.device import release_device_cache
 
 from platforms.system import is_darwin
 
@@ -74,7 +74,7 @@ class MaskPredictor:
         worm_id=body.get('worm_id',1)
         if type(worm_id) is not int or not 1<=worm_id<=10000: raise ValueError('线虫编号无效')
         import torch
-        from compute_device import selected_device, inference_context
+        from platforms.device import selected_device, inference_context
         device = selected_device()
         if self.predictor is None:
             from sam2.build_sam import build_sam2
@@ -393,7 +393,7 @@ class Annotation:
         previous_sample = None
         keep_original = has_run and same_inputs
         if has_run and not same_inputs:
-            from run_storage import fresh_sample
+            from runtime.run_storage import fresh_sample
             previous_sample = self.settings['sample']
             self.settings = dict(self.settings, sample=fresh_sample(previous_sample, ROOT/'outputs'))
             self.output = ROOT/'outputs'/self.settings['sample']/'manual-initialization'
@@ -442,7 +442,7 @@ class Annotation:
 
 
 def new_video_annotation(video, defaults):
-    from run_storage import fresh_sample
+    from runtime.run_storage import fresh_sample
     settings = dict(sample=fresh_sample(video.stem, ROOT/'outputs'), video=str(video.resolve()),
                     crop_xyxy=None, scale_um_per_px=None, measurement_mode='pixels', groups=[], review_intervals=[],
                     centerline_method=CURRENT_METHOD,
@@ -477,7 +477,7 @@ def save_chambers(progress, annotation, body):
     """Save one single-worm run per ROI and publish the video to the queue as a unit."""
     from contextlib import ExitStack
     from shutil import rmtree
-    from run_storage import fresh_sample
+    from runtime.run_storage import fresh_sample
     from workspace_sessions import save_draft
 
     chambers = body.get('chambers')
@@ -1029,7 +1029,7 @@ def create_server(annotation=None, progress=None):
                     if not 0 < size <= 8192: raise ValueError('标注帧请求无效')
                     frame = json.loads(self.rfile.read(size)).get('frame')
                     if type(frame) is not int: raise ValueError('请选择整数帧号')
-                    from run_storage import fresh_sample
+                    from runtime.run_storage import fresh_sample
                     settings = dict(progress.config, sample=fresh_sample(progress.config['sample'], ROOT/'outputs'),
                                     previous_sample=progress.config['sample'], crop_xyxy=None, groups=[], review_intervals=[])
                     candidate = Annotation(settings, frame=frame)
@@ -1201,7 +1201,7 @@ def collect_annotation(settings, frame=0, reuse=True, check_only=False, open_bro
     if progress and not reused_server: progress.bind_server(server)
     close_window = None
     if open_browser and not reused_server:
-        from electron_desktop import open_view
+        from platforms.shell import open_view
         def window_closed():
             if progress:
                 progress.cancel_requested.set()

@@ -13,7 +13,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'src'))
-from electron_desktop import verified_archive
+from platforms.shell import verified_archive
 
 
 def build(archive, destination):

@@ -2,11 +2,11 @@
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent/'src'))
-from resource_paths import ensure_runtime, PROJECT_ROOT
+from runtime.resource_paths import ensure_runtime, PROJECT_ROOT
 if __name__=='__main__':ensure_runtime()
 import argparse
 import json
-from electron_desktop import open_view
+from platforms.shell import open_view
 import cv2
 from pipeline_progress import PipelineProgress
 from manual_worm_annotation import create_server

@@ -48,7 +48,7 @@ def prepare_recovered_edit(source, summary, seed_folder):
 def request_edit(progress, root, run, sequence):
     from manual_worm_annotation import Annotation, png
     from live_preview import latest_sequence
-    from run_storage import fresh_sample
+    from runtime.run_storage import fresh_sample
     from head_tail import anchors_in_crop
 
     with progress.lock:

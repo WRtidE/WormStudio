@@ -30,7 +30,7 @@ from display_centerlines import build_display, VERSION as DISPLAY_VERSION
 from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
 from quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
 
-from resource_paths import PROJECT_ROOT as ROOT
+from runtime.resource_paths import PROJECT_ROOT as ROOT
 # 导出视频中的中心线宽度（原来为 3 像素）；可在这里调整。
 CENTERLINE_WIDTH_PX = 2
 
@@ -57,7 +57,7 @@ def read_image(path, gray=False):
 
 
 def write_png(path, image):
-    from run_storage import replace_bytes
+    from runtime.run_storage import replace_bytes
     ok, encoded = cv2.imencode('.png', image)
     if not ok:
         raise ValueError(f'Cannot encode {path}')
@@ -270,7 +270,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     output=ROOT/'outputs'/sample/('phenotypes-'+wormtracer_source if method!='skeleton' else 'phenotypes');output.mkdir(parents=True,exist_ok=True)
     scale,scale_info=calibration(sample,source,config)
     fps=source['fps'];n=source['frames'];all_rows=[];all_summaries=[];all_events=[];lines={}
-    from video_timing import verify_timebase
+    from runtime.video_timing import verify_timebase
     timebase=verify_timebase(source['video'],n,fps)
     fps=timebase['fps']
     times=np.asarray(timebase['timestamps_s'])
@@ -717,7 +717,7 @@ def write_report(output,report,rows):
     title_style = {}
     if not title.isascii():
         from matplotlib import font_manager
-        from resource_paths import RESOURCE_ROOT
+        from runtime.resource_paths import RESOURCE_ROOT
         font = RESOURCE_ROOT / 'fonts/NotoSansCJKsc-Regular.otf'
         if font.is_file():
             title_style['fontproperties'] = font_manager.FontProperties(fname=font, size=matplotlib.rcParams['figure.titlesize'])

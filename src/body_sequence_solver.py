@@ -40,7 +40,7 @@ def signature():
 def availability():
     """Check the current pipeline without loading models or any point tracker."""
     from importlib.util import find_spec
-    from resource_paths import sam2_checkpoint
+    from runtime.resource_paths import sam2_checkpoint
     from sam2_models import model_spec
     missing=[name for name in ('cv2','numpy','scipy','skimage','torch','sam2') if find_spec(name) is None]
     checkpoint=sam2_checkpoint(model_spec('large')['checkpoint'])

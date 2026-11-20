@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import manual_worm_annotation as manual
 from pipeline_progress import PipelineProgress, summarize_quality
-from run_storage import preserve_run, input_identity
+from runtime.run_storage import preserve_run, input_identity
 from worm_pipeline import compatible_identity
 
 

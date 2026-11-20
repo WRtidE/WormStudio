@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from head_tail import detect_head_tail,normalize_anchors
 from test_head_tail import poses
-from cache_integrity import snapshot,matches
+from runtime.cache_integrity import snapshot,matches
 from quality_audit import audit
 from quality_schema import VERSION
 

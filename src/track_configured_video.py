@@ -1,7 +1,7 @@
 """Track configured objects from separated anchor frames, on CUDA in both directions."""
 import argparse
-from compute_device import selected_device, inference_context, device_label, release_device_cache
-from resource_paths import RESOURCE_ROOT, sam2_checkpoint
+from platforms.device import selected_device, inference_context, device_label, release_device_cache
+from runtime.resource_paths import RESOURCE_ROOT, sam2_checkpoint
 from pipeline_progress import report_progress
 from live_preview import PreviewCrop, report_tracking
 import csv

@@ -56,9 +56,9 @@ def contiguous(frames):
 
 def replay_model(config):
     import torch
-    from compute_device import selected_device, inference_context
+    from platforms.device import selected_device, inference_context
     from sam2.build_sam import build_sam2_video_predictor
-    from resource_paths import sam2_checkpoint
+    from runtime.resource_paths import sam2_checkpoint
     from sam2_models import model_spec
     from sam2_frames import init_tracking_state, propagate_frames
     from track_configured_video import sam2_input_transform

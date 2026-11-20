@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from evaluation_annotations import DatasetStore, RevisionConflict
-from resource_paths import PROJECT_ROOT
+from runtime.resource_paths import PROJECT_ROOT
 
 
 def store(server):
