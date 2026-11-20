@@ -357,10 +357,13 @@ def snapshot_baseline(studio, output):
     defaults = studio/'src/wormtracker/defaults.yaml'
     if defaults.is_file():
         paths.append(defaults)
+    entries = [(p.relative_to(studio).as_posix(), p) for p in sorted(set(paths))]
     archive=Path(output).with_name('baseline-source.zip')
     with zipfile.ZipFile(archive,'x',zipfile.ZIP_DEFLATED) as handle:
-        for path in sorted(set(paths)): handle.write(path,path.relative_to(studio))
-    record = dict(created_at=now(), thresholds_changed=False, files=[dict(path=str(p.relative_to(studio)), sha256=sha256(p)) for p in sorted(set(paths))],
+        for name, path in entries:
+            handle.write(path, name)
+    record = dict(created_at=now(), thresholds_changed=False,
+        files=[dict(path=name, sha256=sha256(path)) for name, path in entries],
         source_archive=dict(path=archive.name,sha256=sha256(archive)),
         models='See docs/MODELS.md and model manifests; weights not copied or rehashed by this snapshot. No inference or weights changed in this stage.')
     write_new(output, record)
