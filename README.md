@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip">下载 Windows 版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
@@ -28,16 +28,18 @@
 
 ## 下载与启动
 
-桌面包已经包含运行环境、识别模型和练习视频。第一次使用，下载与你的电脑对应的**桌面包**即可。
+Windows v1.1.0 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时自动检测显卡、下载并校验运行环境和模型。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.0.3 基础包，约 1.40 GiB](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”。打开解压后的 `WormStudio` 文件夹，双击 `WormStudio.exe`。基础包可直接用 CPU 分析。 |
+| Windows 64 位（x64） | [Windows v1.1.0 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
+
+Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.03 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。Release 中的 `.tar.gz` 和模型附件由程序自动使用，无需逐一手动下载。
 
 ## 用练习视频完成第一次分析
 
-下面以 Windows v1.0.3 为例。随包的 `practice.avi` 只有 5 帧，适合第一次熟悉标注和导出。
+首次准备完成后，可用随包的 `practice.avi` 熟悉标注和导出；练习视频只有 5 帧。
 
 1. **选择视频。** 在左侧文件列表中选择 `practice.avi`，点击 **开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
 2. **选择区域和单位。** 练习视频选择 **完整画面** 和 **像素单位**，点击 **下一步：点选线虫**。分析实验视频时，如果需要以微米报告体长，选择 **标尺标定**，填入画面中标尺的实际长度（μm），再用 **手动选两端** 点出标尺的两个端点。
@@ -71,6 +73,8 @@
 v1.0.3 导出的标注视频保留完整画面，逐帧数值显示在播放器右侧。打开带黑色指标条的旧任务，在 **查看分析视频** 中点击 **生成无黑条副本**。保留原视频和任务目录即可复用已有标注。完成后，回放和 **其他文件 → 标注视频** 都会使用新版副本。
 
 ## Windows 可选 GPU 加速
+
+v1.1.0 在线版会自动选择兼容的 NVIDIA 显卡。验证失败时可点击 **改用 CPU**；之后也可以在 **设置 → 通用 → 检测 GPU** 安排下次启动准备 GPU 环境。以下离线分包步骤仅适用于旧版 v1.0.3。
 
 打开 **设置 → 通用 → 检测 GPU**。先看检测结果，再决定是否下载组件。
 
