@@ -5,9 +5,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
-import manual_worm_annotation as manual
-from pipeline_progress import PipelineProgress
-import workspace_layout as layout
+from app import manual_worm_annotation as manual
+from app.pipeline_progress import PipelineProgress
+from app import workspace_layout as layout
 
 class WorkspaceLayoutTests(unittest.TestCase):
     def setUp(self):

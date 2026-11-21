@@ -18,7 +18,7 @@ jobs:
         run: |
           python -m pip check
           python -c "import platform; assert platform.machine() == 'arm64'; import cv2, torch, torchvision"
-          python -c "from electron_desktop import command; import subprocess; subprocess.run([*command()[:1], '--version'], check=True)"
+          python -c "from platforms.shell import command; import subprocess; subprocess.run([*command()[:1], '--version'], check=True)"
           python tools/check_environment.py --code-only
           python -m unittest discover -s tests -p 'test_macos_portability.py'
         env:

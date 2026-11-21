@@ -3,11 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
-from head_tail import detect_head_tail,normalize_anchors
+from head_tail.head_tail import detect_head_tail,normalize_anchors
 from test_head_tail import poses
-from cache_integrity import snapshot,matches
-from quality_audit import audit
-from quality_schema import VERSION
+from runtime.cache_integrity import snapshot,matches
+from quality.quality_audit import audit
+from quality.quality_schema import VERSION
 
 
 class FollowupTests(unittest.TestCase):

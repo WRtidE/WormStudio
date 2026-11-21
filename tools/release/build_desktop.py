@@ -54,7 +54,7 @@ def verify(file, expected):
 
 def build(system, source, cache, sam, weights, example, stage):
     sys.path.insert(0, str(source/'src'))
-    from electron_desktop import verified_archive
+    from platforms.shell import verified_archive
     archive = cache/f'electron-{system}.zip'
     mac = system == 'mac'
     verified_archive(archive, 'darwin-arm64' if mac else 'win32-x64')

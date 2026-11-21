@@ -3,19 +3,19 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from resource_paths import ensure_runtime
+from runtime.resource_paths import ensure_runtime
 
 
 def main(open_browser=True):
     if open_browser:
-        from electron_desktop import launch
+        from platforms.shell import launch
         return launch()
-    from manual_worm_annotation import create_server
-    from pipeline_progress import PipelineProgress
+    from app.manual_worm_annotation import create_server
+    from app.pipeline_progress import PipelineProgress
     from worm_pipeline import _main, video_config
 
     progress = PipelineProgress()
-    from batch_queue import BatchQueue
+    from app.batch_queue import BatchQueue
     progress.batch = BatchQueue(Path(__file__).resolve().parent / 'config/batch.local.json')
     progress.data.update(status='ready', detail='选择一个视频，开始新的分析')
     server = create_server(progress=progress)

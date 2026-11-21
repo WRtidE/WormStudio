@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import cv2
 import numpy as np
-from quality_schema import VERSION
+from quality.quality_schema import VERSION
 
 
 def make_fixture(root):

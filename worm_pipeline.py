@@ -3,8 +3,8 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
-from resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
+from pose.centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
+from runtime.resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
 
 if __name__ == '__main__':
     ensure_runtime()
@@ -48,7 +48,7 @@ import re
 import subprocess
 import sys
 import time
-from sam2_models import model_spec, tracking_model_matches
+from tracking.sam2_models import model_spec, tracking_model_matches
 from platforms.system import check_memory_pressure, stage_wait_slice, terminate_children
 
 PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'metrics', 'export')
@@ -95,7 +95,7 @@ def validate_config(config, relative_to=ROOT):
             raise ValueError(f'{label} 应在 0–{n - 1} 之间')
 
     rect(c.get('crop_xyxy'), [0, 0, width, height], '分析裁剪范围')
-    from measurement_units import validate_scale
+    from measurements.measurement_units import validate_scale
     validate_scale(c)
     c.setdefault('scale_source', 'User-supplied calibration')
     if not isinstance(c.get('groups'), list) or not c['groups']:
@@ -154,7 +154,7 @@ def validate_config(config, relative_to=ROOT):
     annotations=c.get('head_annotations',{})
     if not isinstance(annotations,dict) or not set(annotations)<=set(map(str,ids)):
         raise ValueError('头部标注必须使用当前线虫编号')
-    from head_tail import normalize_anchors
+    from head_tail.head_tail import normalize_anchors
     for item in [a for values in annotations.values() for a in normalize_anchors(values)]:
         frame(item.get('frame'),'头部标注帧')
         point=item.get('point')
@@ -176,11 +176,11 @@ def validate_config(config, relative_to=ROOT):
     if c.get('sam2_model', 'large') != 'large': raise ValueError('当前方法使用 SAM2 Large')
     if c.get('tracking_point_count', 13) != 13: raise ValueError('当前方法使用 13 个身体跟踪点')
     c['sam2_model'] = model_spec(c.get('sam2_model', 'large'))['size']
-    from quality_schema import VERSION as QUALITY_VERSION
-    from tracking_quality import MAX_AREA_JUMP_FRACTION
-    from multiworm_quality import validate_reviews
+    from quality.quality_schema import VERSION as QUALITY_VERSION
+    from quality.tracking_quality import MAX_AREA_JUMP_FRACTION
+    from quality.multiworm_quality import validate_reviews
     validate_reviews(c, ids, n)
-    from identity_reassociation import validate_reviews as validate_fragment_reviews
+    from quality.identity_reassociation import validate_reviews as validate_fragment_reviews
     validate_fragment_reviews(c, ids, n)
     c['quality_schema_version'] = QUALITY_VERSION
     c['quality_rules_version'] = 'quality-guards-v6-single-body'
@@ -193,30 +193,30 @@ def build_stages(config, info, snapshot, phenotype_path):
     base = ROOT / 'outputs' / sample
     tracking = base / 'sam2-tracking'
     stages = []
-    def add(name, phase, script, arguments, outputs):
-        stages.append(dict(name=name, phase=phase, command=[sys.executable, '-u', str(ROOT / 'src' / script), *map(str, arguments)],
+    def add(name, phase, module, arguments, outputs):
+        stages.append(dict(name=name, phase=phase, command=[sys.executable, '-u', '-m', module, *map(str, arguments)],
                            outputs=[str(p) for p in outputs]))
     masks = [tracking / 'masks' / f'worm-{w}' / f'{f:06d}.png' for w in info['ids'] for f in range(info['frames'])]
-    add('tracking', 'tracking', 'track_configured_video.py', ['--config', snapshot],
+    add('tracking', 'tracking', 'tracking.track_configured_video', ['--config', snapshot],
         [tracking / 'summary.json', tracking / 'tracking-quality.csv', *masks])
-    add('cleanup', 'cleanup', 'clean_tracking_components.py', ['--sample', sample], [tracking / 'component-cleanup.json'])
-    add('quality', 'quality', 'quality_stage.py', ['--sample', sample], [tracking / 'quality-guards.json'])
+    add('cleanup', 'cleanup', 'tracking.clean_tracking_components', ['--sample', sample], [tracking / 'component-cleanup.json'])
+    add('quality', 'quality', 'quality.quality_stage', ['--sample', sample], [tracking / 'quality-guards.json'])
     method = analysis_method(config.get('centerline_method'))
     source = method_source(method)
     for worm in info['ids']:
         out = base / source / f'worm-{worm}'
-        add(f'{method}-worm-{worm}', 'fit', f'extract_{method}.py',
+        add(f'{method}-worm-{worm}', 'fit', f'pose.extract_{method}',
             ['--sample', sample, '--worm', worm],
             [out/'centerlines.npy', out/'run.json', out/'quality.json'])
     results = base / ('phenotypes-'+source)
-    add('metrics', 'metrics', 'analyze_phenotypes.py', ['--sample', sample, '--config', phenotype_path,
+    add('metrics', 'metrics', 'measurements.analyze_phenotypes', ['--sample', sample, '--config', phenotype_path,
         '--centerline-method',method,'--wormtracer-source',source],
         [results / name for name in ('summary.json', 'per_frame_metrics.csv', 'worm_summary.csv', 'centerlines.npz',
             'phenotypes-overlay.mp4', '报告.md', 'quality.json', 'per_frame_metrics.json',
             'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
             'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
             'behavior_events.csv','trajectory_segments.csv')])
-    add('export', 'export', 'review_configured_video.py', ['--sample', sample,'--centerline-source',source],
+    add('export', 'export', 'app.review_configured_video', ['--sample', sample,'--centerline-source',source],
         [results / f'{sample}_annotated_full-frame.mp4', results / 'verification.json'])
     return stages
 
@@ -246,28 +246,28 @@ def complete(stage, config, info):
             if not tracking_model_matches(summary,config.get('sam2_model','large')):return False
         except (OSError,ValueError):return False
     if stage['phase']=='quality':
-        from quality_stage import load_guards
+        from quality.quality_stage import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
         except (OSError, ValueError, KeyError, TypeError): return False
     if stage['phase']=='metrics' and config.get('centerline_method')=='body_sequence':
-        from body_sequence_solver import signature
+        from pose.body_sequence_solver import signature
         if json.loads(Path(stage['outputs'][0]).read_text(encoding='utf8')).get('body_sequence_signature')!=signature():return False
     if stage['phase']=='metrics':
-        from head_tail import VERSION
-        from quality_schema import VERSION as QUALITY_VERSION
+        from head_tail.head_tail import VERSION
+        from quality.quality_schema import VERSION as QUALITY_VERSION
         try:
             report=json.loads(Path(stage['outputs'][0]).read_text(encoding='utf-8'))
-            from result_overlay import OVERLAY_VERSION
+            from app.result_overlay import OVERLAY_VERSION
             if report.get('overlay_version')!=OVERLAY_VERSION:return False
             if report.get('head_detection_version')!=VERSION: return False
-            from display_centerlines import VERSION as DISPLAY_VERSION
+            from pose.display_centerlines import VERSION as DISPLAY_VERSION
             if report.get('display_version')!=DISPLAY_VERSION:return False
             if report.get('quality_schema_version')!=QUALITY_VERSION: return False
-            from phenotype_statistics import VERSION as METRIC_VERSION
+            from measurements.phenotype_statistics import VERSION as METRIC_VERSION
             if report.get('metric_definition_version') != METRIC_VERSION: return False
-            from local_tracklets import VERSION as TRACKLET_VERSION
+            from quality.local_tracklets import VERSION as TRACKLET_VERSION
             if report.get('tracklet_version')!=TRACKLET_VERSION: return False
-            from identity_reassociation import VERSION as ASSOCIATION_VERSION
+            from quality.identity_reassociation import VERSION as ASSOCIATION_VERSION
             if report.get('identity_reassociation_version')!=ASSOCIATION_VERSION:return False
         except (OSError,ValueError): return False
     if stage['phase'] == 'fit':
@@ -282,7 +282,7 @@ def complete(stage, config, info):
                 for f, line in enumerate(p):
                     if not np.isfinite(line).all() and not (np.isnan(line).all() and not quality[f]['centerline_valid']): return False
             meta = json.loads(Path(stage['outputs'][1]).read_text(encoding='utf-8'))
-            from body_sequence_solver import signature
+            from pose.body_sequence_solver import signature
             if meta.get('algorithm_signature') != signature(): return False
             if meta.get('head_annotations') != config.get('head_annotations', {}): return False
         except (OSError, KeyError): return False
@@ -361,7 +361,7 @@ def run_stage(stage, log, progress=None):
 
 def _main(progress, raw_override=None):
     if raw_override and '_refresh_video' in raw_override:
-        from workspace_sessions import refresh_saved_video
+        from app.workspace_sessions import refresh_saved_video
         return refresh_saved_video(progress,ROOT,raw_override['_refresh_video'])
     if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')
     if hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(encoding='utf-8')
@@ -382,7 +382,7 @@ def _main(progress, raw_override=None):
         if args.sample: raw['sample'] = args.sample
     if not args.dry_run:
         import torch
-        from compute_device import selected_device, device_label
+        from platforms.device import selected_device, device_label
         device = selected_device()
         checkpoint=model_spec(raw.get('sam2_model','large'))['checkpoint']
         required = sam2_checkpoint(checkpoint)
@@ -392,7 +392,7 @@ def _main(progress, raw_override=None):
         print(f'计算设备: {device_label(device)}；FFmpeg: {imageio_ffmpeg.get_ffmpeg_version()}', flush=True)
     resume_saved = raw.pop('_resume_saved', False)
     if (raw_override and not resume_saved) or args.annotate or (not args.config and MANUAL_ANNOTATION and not resume_saved):
-        from manual_worm_annotation import collect_annotation
+        from app.manual_worm_annotation import collect_annotation
         input_path=Path(raw['video'])
         if not input_path.is_absolute():raw['video']=str((args.config.resolve().parent if args.config else ROOT)/input_path)
         raw=collect_annotation(raw,frame=ANNOTATION_FRAME,reuse=RESUME and not args.no_resume and not args.annotate,
@@ -407,7 +407,7 @@ def _main(progress, raw_override=None):
     state = {}
     notice = (f'已保存为新的分析任务，旧结果及原始标注保留在 {config["previous_sample"]}。'
               if config.get('previous_sample') else '')
-    from run_storage import input_identity, preserve_run
+    from runtime.run_storage import input_identity, preserve_run
     identity = input_identity(config, phenotype, motion_constraints_path(ROOT))
     if not (args.dry_run or args.check or CHECK_ONLY):
         state_path = base / 'pipeline-state.json'
@@ -452,8 +452,8 @@ def _main(progress, raw_override=None):
     progress.configure(config, info, stages, base, device_label(device))
     progress.data['notice'] = notice
     if not args.no_progress_ui and progress.server is None:
-        from electron_desktop import open_view
-        from manual_worm_annotation import create_server
+        from platforms.shell import open_view
+        from app.manual_worm_annotation import create_server
         progress.bind_server(create_server(progress=progress))
         print(f'处理进度：{progress.url}', flush=True)
         if OPEN_BROWSER:
@@ -469,7 +469,7 @@ def _main(progress, raw_override=None):
     logs = base / 'pipeline-logs'; logs.mkdir(exist_ok=True)
     snapshot.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
     dirty = not resume
-    from cache_integrity import snapshot as output_snapshot, matches as outputs_match
+    from runtime.cache_integrity import snapshot as output_snapshot, matches as outputs_match
     if dirty:
         for stage in all_stages: state['stages'][stage['name']] = dict(status='pending')
     for index, stage in enumerate(stages):
@@ -518,7 +518,7 @@ def _main(progress, raw_override=None):
 
 
 def main():
-    from pipeline_progress import PipelineProgress
+    from app.pipeline_progress import PipelineProgress
     progress = PipelineProgress()
     next_settings = None
     try:

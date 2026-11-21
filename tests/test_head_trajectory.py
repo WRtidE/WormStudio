@@ -1,8 +1,8 @@
 import unittest
 import numpy as np
 
-from head_tail import detect_head_tail
-from frame_metrics import present_frame
+from head_tail.head_tail import detect_head_tail
+from measurements.frame_metrics import present_frame
 
 
 class TrajectoryTest(unittest.TestCase):

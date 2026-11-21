@@ -9,10 +9,10 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from analyze_phenotypes import read_image, write_png
-from crop_recovery import place, replay_incident, touched, incidents
-from head_tail import anchors_in_crop
-from mask_correction import prepare_recovered_edit
+from measurements.analyze_phenotypes import read_image, write_png
+from tracking.crop_recovery import place, replay_incident, touched, incidents
+from head_tail.head_tail import anchors_in_crop
+from app.mask_correction import prepare_recovered_edit
 
 
 class CropReplayTests(unittest.TestCase):
@@ -70,9 +70,9 @@ class CropReplayTests(unittest.TestCase):
         self.assertEqual(self.replay('contact'),(set(),'other_worm_contact'))
 
     def test_reverse_seed_recovers_first_frames_and_preserves_a_true_edge(self):
-        from analyze_phenotypes import load_sample
-        from crop_recovery import run
-        from quality_stage import run as guard_stage
+        from measurements.analyze_phenotypes import load_sample
+        from tracking.crop_recovery import run
+        from quality.quality_stage import run as guard_stage
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'中文 Windows'
             base=root/'outputs'/'replay'
@@ -103,7 +103,7 @@ class CropReplayTests(unittest.TestCase):
                 np.testing.assert_array_equal(seed,real[2])
                 for i in frames[1:]:
                     yield i,real[i]
-            with patch('analyze_phenotypes.ROOT',root):
+            with patch('measurements.analyze_phenotypes.ROOT',root):
                 guard_stage('replay')
                 report=run('replay',predict)
                 self.assertEqual([e['decision'] for e in report['events']],['recovered','source_boundary'])

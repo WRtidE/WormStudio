@@ -7,10 +7,10 @@ from unittest.mock import patch
 import urllib.request
 import urllib.error
 
-import workspace_library as library
-import manual_worm_annotation as manual
-from pipeline_progress import PipelineProgress
-from workspace_sessions import catalog
+from app import workspace_library as library
+from app import manual_worm_annotation as manual
+from app.pipeline_progress import PipelineProgress
+from app.workspace_sessions import catalog
 
 
 class LibraryTreeTests(unittest.TestCase):

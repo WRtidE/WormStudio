@@ -13,23 +13,23 @@ import urllib.request
 
 import cv2
 import numpy as np
-import manual_worm_annotation as manual
-import analyze_phenotypes as metrics
-import quality_stage
+from app import manual_worm_annotation as manual
+from measurements import analyze_phenotypes as metrics
+from quality import quality_stage
 import worm_pipeline
 from quality_fixture import make_fixture
-from quality_schema import VERSION, permissions
-from frame_metrics import present_frame
-from measurement_units import validate_scale, pixel_fields
-from pipeline_progress import PipelineProgress
-from workspace_sessions import save_draft, get_draft, load_config, confirm_head
+from quality.quality_schema import VERSION, permissions
+from measurements.frame_metrics import present_frame
+from measurements.measurement_units import validate_scale, pixel_fields
+from app.pipeline_progress import PipelineProgress
+from app.workspace_sessions import save_draft, get_draft, load_config, confirm_head
 from worm_pipeline import run_stage
-from video_timing import verify_timebase
+from runtime.video_timing import verify_timebase
 
 
 class SingleDeliveryTests(unittest.TestCase):
     def test_short_opening_interval_preserves_pts_but_interior_jumps_fail(self):
-        with patch('video_timing.cv2.VideoCapture') as capture:
+        with patch('runtime.video_timing.cv2.VideoCapture') as capture:
             def check(milliseconds):
                 capture.return_value.read.side_effect = [(True,None)]*len(milliseconds)+[(False,None)]
                 capture.return_value.get.side_effect = milliseconds

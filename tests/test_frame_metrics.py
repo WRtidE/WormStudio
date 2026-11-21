@@ -8,9 +8,9 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from frame_metrics import load_frame_metrics, present_frame
-from pipeline_progress import PipelineProgress
-import manual_worm_annotation as manual
+from measurements.frame_metrics import load_frame_metrics, present_frame
+from app.pipeline_progress import PipelineProgress
+from app import manual_worm_annotation as manual
 
 
 class FrameMetricsTests(unittest.TestCase):

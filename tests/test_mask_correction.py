@@ -15,10 +15,10 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-import manual_worm_annotation as manual
-from live_preview import report_preview
-from mask_correction import request_edit
-from pipeline_progress import PipelineProgress
+from app import manual_worm_annotation as manual
+from app.live_preview import report_preview
+from app.mask_correction import request_edit
+from app.pipeline_progress import PipelineProgress
 from worm_pipeline import run_stage, validate_config
 
 

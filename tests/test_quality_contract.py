@@ -10,15 +10,15 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
-import analyze_phenotypes as metrics
-import manual_worm_annotation as manual
-import quality_stage
-import result_overlay
-import review_configured_video as review
-from frame_metrics import present_frame
-from multiworm_quality import sequence_guards, validate_reviews
-from pipeline_progress import PipelineProgress
-from quality_schema import VERSION, permissions
+from measurements import analyze_phenotypes as metrics
+from app import manual_worm_annotation as manual
+from quality import quality_stage
+from app import result_overlay
+from app import review_configured_video as review
+from measurements.frame_metrics import present_frame
+from quality.multiworm_quality import sequence_guards, validate_reviews
+from app.pipeline_progress import PipelineProgress
+from quality.quality_schema import VERSION, permissions
 from quality_fixture import make_fixture
 from worm_pipeline import compatible_identity
 
@@ -30,7 +30,7 @@ class OptionalIsolationTests(unittest.TestCase):
             release=threading.Event();entered=threading.Event()
             def failing():entered.set();release.wait(5);raise PermissionError('simulated optional permission error')
             progress=PipelineProgress()
-            with patch.object(manual,'ROOT',root),patch('body_sequence_solver.availability',side_effect=failing):
+            with patch.object(manual,'ROOT',root),patch('pose.body_sequence_solver.availability',side_effect=failing):
                 annotation=manual.Annotation(config)
                 progress.bind_server(manual.create_server(annotation=annotation,progress=progress))
                 url=progress.url.removesuffix('/progress')

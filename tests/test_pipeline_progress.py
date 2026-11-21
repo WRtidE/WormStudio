@@ -8,8 +8,8 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
-from manual_worm_annotation import create_server
-from pipeline_progress import PipelineProgress
+from app.manual_worm_annotation import create_server
+from app.pipeline_progress import PipelineProgress
 from worm_pipeline import check_memory_pressure, run_stage
 
 
@@ -29,7 +29,7 @@ class ProgressTests(unittest.TestCase):
     def test_actual_child_events_and_logs_reach_saved_status(self):
         log = self.base/'child.log'
         self.progress.begin(0, log)
-        command = [sys.executable, '-c', "from pipeline_progress import report_progress; print('real child output'); report_progress(4,12,'forward tracking',force=True)"]
+        command = [sys.executable, '-c', "from app.pipeline_progress import report_progress; print('real child output'); report_progress(4,12,'forward tracking',force=True)"]
         run_stage(dict(name='tracking', command=command), log, self.progress)
         state = self.progress.snapshot()
         self.assertEqual(state['stages'][0]['current'], 4)

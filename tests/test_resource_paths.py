@@ -5,10 +5,13 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-import resource_paths as paths
+from runtime import resource_paths as paths
 
 
 class PortableResources(unittest.TestCase):
+    def test_project_root_is_above_src(self):
+        self.assertEqual(paths.PROJECT_ROOT, Path(__file__).resolve().parents[1])
+
     def test_manual_constraints_stay_local(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'config').mkdir()

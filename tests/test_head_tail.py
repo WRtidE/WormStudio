@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from head_tail import detect_head_tail, endpoint_labels
+from head_tail.head_tail import detect_head_tail, endpoint_labels
 
 
 def poses(n=25, moving_end=0):
@@ -140,8 +140,8 @@ class HeadTailTests(unittest.TestCase):
         self.assertEqual(result[13]['head_endpoint'],0)
 
     def test_present_candidate_does_not_unlock_head_metrics(self):
-        from quality_schema import finish_dimensions,VERSION
-        from frame_metrics import present_frame
+        from quality.quality_schema import finish_dimensions,VERSION
+        from measurements.frame_metrics import present_frame
         row=dict(worm_id=1,quality_schema_version=VERSION,source_valid=True,mask_valid=True,
                  centerline_valid=True,identity_valid=True,measurement_mode='pixels',
                  head_status='unconfirmed_taper_candidate',head_identity_confirmed=False,
