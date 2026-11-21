@@ -3,7 +3,7 @@ from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import queue
 import shutil
 import subprocess
@@ -183,32 +183,46 @@ def prepare(wheels, destination, update):
             if digest.hexdigest() != WHEELS[path.name]:
                 raise ValueError(f'{path.name} 校验失败，请从原始离线包重新复制此文件。')
             archives.append(stack.enter_context(ZipFile(stream)))
-        # The desktop runs prebuilt operators; headers and linker archives are
-        # only needed to compile extensions. Keep runtime DLLs and all licenses.
-        members = []
-        for archive in archives:
-            for item in archive.infolist():
-                name = item.filename
-                license_file = name.rsplit('/', 1)[-1].upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))
-                build_file = (name.startswith('torch/include/') or
-                              (name.startswith('torch/lib/') and name.endswith('.lib')))
-                if not build_file or license_file:
-                    members.append((archive, item))
-        total = sum(item.file_size for _, item in members)
-        if shutil.disk_usage(destination.parent).free < total + 64 * 1024**2:
-            raise OSError(f'软件所在磁盘至少需要 {total / 1024**3 + 0.07:.1f} GiB 可用空间。')
-        done = 0
-        for archive, item in members:
-            target = destination / item.filename
-            if item.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(item) as source, target.open('xb') as output:
-                while block := source.read(CHUNK):
-                    output.write(block)
-                    done += len(block)
-                    update('正在解压加速组件', done, total)
+        extract_runtime_wheels(archives, destination, update)
+
+
+def runtime_file(name):
+    """Keep prebuilt operators and notices; omit caches and compilation inputs."""
+    parts = PurePosixPath(name).parts
+    if '__pycache__' in parts or name.endswith(('.pyc', '/direct_url.json')):
+        return False
+    if name.endswith('.pth') and 'gpu' in PurePosixPath(name).name.lower():
+        return False
+    license_file = PurePosixPath(name).name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))
+    return license_file or not ('torch/include/' in name or ('torch/lib/' in name and name.endswith('.lib')))
+
+
+def runtime_members(archive):
+    for item in archive.infolist():
+        name = item.filename
+        if (name.startswith('/') or '..' in PurePosixPath(name).parts or
+                '\\' in name or ':' in name or '.data/' in name or
+                (item.external_attr >> 16) & 0o170000 == 0o120000):
+            raise ValueError(f'Unexpected wheel layout: {name}')
+        if not item.is_dir() and runtime_file(name):
+            yield item
+
+
+def extract_runtime_wheels(archives, destination, update):
+    """Extract already hash-verified wheels into an unpublished runtime."""
+    members = [(archive, item) for archive in archives for item in runtime_members(archive)]
+    total = sum(item.file_size for _, item in members)
+    if shutil.disk_usage(destination.parent).free < total + 64 * 1024**2:
+        raise OSError(f'软件所在磁盘至少需要 {total / 1024**3 + 0.07:.1f} GiB 可用空间。')
+    done = 0
+    for archive, item in members:
+        target = destination / item.filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(item) as source, target.open('xb') as output:
+            while block := source.read(CHUNK):
+                output.write(block)
+                done += len(block)
+                update('正在解压加速组件', done, total)
 
 
 def install(python, wheels, update):
@@ -385,7 +399,10 @@ def main():
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--status-json']:
+    if sys.argv[1:2] == ['--extract-runtime-wheel']:
+        with ZipFile(sys.argv[2]) as archive:
+            extract_runtime_wheels([archive], Path(sys.argv[3]), lambda *_: None)
+    elif sys.argv[1:2] == ['--status-json']:
         print(json.dumps(detect(Path(sys.executable), probe_runtime)))
     elif sys.argv[1:2] == ['--probe']:
         print(json.dumps(probe_runtime(sys.argv[2])))

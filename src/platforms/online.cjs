@@ -27,6 +27,15 @@ async function detect(target, run = execute) {
 async function extract(archive, destination, signal) {
   await execute(host().tar, ['-xf', archive, '-C', destination], {windowsHide:true, signal, timeout:600000, maxBuffer:1024*1024});
 }
+async function extractWheel(archive, destination, signal) {
+  const env = {...process.env, PYTHONNOUSERSITE:'1', PYTHONUTF8:'1', PYTHONDONTWRITEBYTECODE:'1'};
+  delete env.PYTHONHOME;
+  delete env.PYTHONPATH;
+  const installer = path.resolve(__dirname, '../../tools/release/windows_gpu.py');
+  await execute(path.join(destination, host().python), ['-I', '-B', installer, '--extract-runtime-wheel',
+    archive, path.join(destination, 'python/Lib/site-packages')],
+    {env, windowsHide:true, signal, timeout:600000, maxBuffer:1024*1024});
+}
 async function probe(runtime, backend, signal) {
   const script = `import json,sys,torch,torchvision,numpy,cv2,scipy,matplotlib,sam2
 device='cuda' if sys.argv[1]=='cuda' else 'cpu'
@@ -44,4 +53,4 @@ print(json.dumps({'device':device,'torch':torch.__version__}))`;
     throw Error('运行环境验证失败：'+reason, {cause:error});
   }
 }
-module.exports = {host, detect, extract, probe};
+module.exports = {host, detect, extract, extractWheel, probe};

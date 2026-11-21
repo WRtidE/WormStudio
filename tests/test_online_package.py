@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from zipfile import ZipFile
 
-from tools.release.build_online import build, pack_parts, runtime_file, tree_entries
+from tools.release.build_online import build, gpu_assets, pack_parts, runtime_file, tree_entries
 
 
 class OnlinePackageTests(unittest.TestCase):
@@ -96,6 +96,40 @@ class OnlinePackageTests(unittest.TestCase):
                 self.assertIsNone(archive.testzip())
                 self.assertIn('WormStudio/resources/analysis/code/src/example.py', archive.namelist())
                 self.assertFalse(any('/analysis/python/' in name for name in archive.namelist()))
+            reused = build(source, output/'WormStudio', root/'update', 'https://example.org/v2',
+                           reuse_components=output/'WormStudio/resources/analysis/online-manifest.json')
+            self.assertEqual(reused, manifest)
+            self.assertEqual(list((root/'update/components').iterdir()), [])
+            self.assertEqual(len((root/'update/SHA256SUMS.txt').read_text().splitlines()), 1)
+
+    def test_gpu_mirrors_keep_official_hashes_and_runtime_only_extraction_sizes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = []
+            for name, version in [('torch', '2.7.0'), ('torchvision', '0.22.0')]:
+                file = root/f'{name}-{version}+cu128-cp311-cp311-win_amd64.whl'
+                with ZipFile(file, 'w') as archive:
+                    archive.writestr(f'{name}/library.pyd', b'runtime')
+                    archive.writestr('torch/include/header.h', b'compile only')
+                    archive.writestr('torch/include/LICENSE', b'license')
+                sha = hashlib.sha256(file.read_bytes()).hexdigest()
+                packages.append(f'''[[package]]
+name = "{name}"
+version = "{version}+cu128"
+wheels = [{{url = "https://download.pytorch.org/whl/cu128/{file.name}", hash = "sha256:{sha}"}}]
+''')
+            (root/'uv.lock').write_text('\n'.join(packages), encoding='utf-8')
+            assets = gpu_assets(root, root)
+            self.assertEqual(len(assets), 2)
+            for asset in assets:
+                self.assertEqual(asset['format'], 'wheel')
+                self.assertIn('%2Bcu128', asset['url'])
+                self.assertEqual(asset['unpackedSize'], 14)
+                self.assertTrue(asset['fallbackUrls'][-1].startswith('https://download.pytorch.org/'))
+            with (root/'torch-2.7.0+cu128-cp311-cp311-win_amd64.whl').open('ab') as file:
+                file.write(b'changed')
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                gpu_assets(root, root)
 
 
 if __name__ == '__main__':

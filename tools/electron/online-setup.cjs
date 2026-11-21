@@ -10,11 +10,14 @@ function validateManifest(manifest, target) {
     throw Error('安装器与当前电脑不匹配，或组件清单损坏');
   }
   validateAsset(manifest.model);
-  for (const assets of [manifest.common, ...Object.values(manifest.backends)]) {
+  for (const [kind, assets] of [['common', manifest.common], ...Object.entries(manifest.backends)]) {
     if (!Array.isArray(assets) || !assets.length) throw Error('运行组件清单不完整');
     for (const asset of assets) {
       validateAsset(asset);
       if (!Number.isSafeInteger(asset.unpackedSize) || asset.unpackedSize <= 0) throw Error('组件解压大小无效');
+      if (asset.format !== undefined && (asset.format !== 'wheel' || kind !== 'cuda' || target !== 'win32-x64')) {
+        throw Error('不支持的运行组件格式');
+      }
     }
   }
 }
@@ -68,6 +71,7 @@ class Setup {
         signal.throwIfAborted();
         items[index].status = 'downloading';
         const file = await download(asset, path.join(this.directory,'downloads'), {fetch:this.fetch, signal,
+          onRetry:() => this.update({detail:'下载连接异常，正在切换备用源继续。'}),
           progress:(done,cached) => {
             Object.assign(items[index], {done, status:cached ? 'cached' : 'downloading'});
             if (cached || Date.now()-last > 150) { last = Date.now(); this.update({received:completed+done, items}); }
@@ -85,7 +89,11 @@ class Setup {
         stage = path.join(this.directory,'runtimes',`.preparing-${randomUUID().slice(0,12)}`);
         await fs.promises.mkdir(stage, {recursive:true});
         this.update({phase:'installing', title:'正在安装组件', detail:'正在解压，请稍候。'});
-        for (const file of files.slice(0, assets.length)) { signal.throwIfAborted(); await this.platform.extract(file, stage, signal); }
+        for (const [index, asset] of assets.entries()) {
+          signal.throwIfAborted();
+          if (asset.format === 'wheel') await this.platform.extractWheel(files[index], stage, signal);
+          else await this.platform.extract(files[index], stage, signal);
+        }
         this.update({phase:'verifying', title:'正在验证环境', detail:backend === 'cuda' ? '检查 GPU 运算是否正常。' : '检查运行环境是否正常。'});
         await this.platform.probe(stage, backend, signal);
         signal.throwIfAborted();

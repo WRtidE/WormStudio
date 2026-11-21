@@ -1,8 +1,8 @@
 'use strict';
 // Integration harness: real release components over a loopback HTTP transport.
 // Production manifests/HTTPS policy are unchanged; only fetch is injected here.
-// node tools/release/smoke_online.cjs DISTRIBUTION PROFILE [cpu]
-// Electron tools/release/smoke_online.cjs DISTRIBUTION PROFILE [cpu]
+// node tools/release/smoke_online.cjs DISTRIBUTION PROFILE [cpu] [COMPONENT_DIRECTORY ...]
+// Additional directories contain reused components or the original GPU wheels.
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -11,17 +11,27 @@ const {pipeline} = require('node:stream/promises');
 const assert = require('node:assert/strict');
 const {Setup} = require('../electron/online-setup.cjs');
 const platform = require('../../src/platforms/online.cjs');
-const [distribution, profile, mode] = process.argv.slice(2).map((v,i) => i<2 ? path.resolve(v) : v);
+const [distribution, profile, ...extra] = process.argv.slice(2).map((v,i) => i<2 ? path.resolve(v) : v);
+const mode = extra.includes('cpu') ? 'cpu' : undefined;
 const manifest = JSON.parse(fs.readFileSync(path.join(distribution,'WormStudio/resources/analysis/online-manifest.json'),'utf8'));
 const requests = [];
 let paused = false, ui, server;
 const directory = path.join(profile,'components');
 async function main() {
   fs.mkdirSync(profile,{recursive:true});
+  const roots = [path.join(distribution,'components'), ...extra.filter(v=>v!=='cpu').map(v=>path.resolve(v))];
+  const assets = [...manifest.common,...Object.values(manifest.backends).flat(),manifest.model];
+  const files = new Map(assets.map(asset=>{
+    const name = decodeURIComponent(new URL(asset.url).pathname.split('/').pop());
+    const file = roots.map(root=>path.join(root,name)).find(file=>fs.existsSync(file));
+    if(!file)throw Error('Missing local component; pass its component directory: '+name);
+    return [name,file];
+  }));
   server = http.createServer(async (req,res) => {
     const name = decodeURIComponent(new URL(req.url,'http://localhost').pathname.slice(1));
     if (path.basename(name) !== name) { res.writeHead(400).end(); return; }
-    const file = path.join(distribution,'components',name);
+    const file = files.get(name);
+    if(!file){res.writeHead(404).end();return;}
     const size = (await fs.promises.stat(file)).size;
     const range = req.headers.range;
     const start = range ? Number(/^bytes=(\d+)-$/.exec(range)[1]) : 0;

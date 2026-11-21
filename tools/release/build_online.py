@@ -13,29 +13,23 @@ import shutil
 from stat import S_ISREG
 import tarfile
 import tomllib
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urlsplit
 from zipfile import ZipFile, ZIP_DEFLATED
+
+if __package__:
+    from .windows_gpu import runtime_file, runtime_members
+else:
+    from windows_gpu import runtime_file, runtime_members
 
 MAX_PART = 1400 * 1024**2
 TORCH_PREFIXES = ('torch', 'torchvision', 'torchgen', 'functorch')
+GPU_MIRRORS = ('https://mirror.sjtu.edu.cn/pytorch-wheels/cu128/',
+               'https://mirrors.aliyun.com/pytorch-wheels/cu128/')
 
 
 def digest(file):
     with file.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
-
-
-def runtime_file(name):
-    parts = PurePosixPath(name).parts
-    if '__pycache__' in parts or name.endswith(('.pyc', '/direct_url.json')):
-        return False
-    if name.endswith('.pth'):
-        # Distribution-owned path hooks (e.g. setuptools) remain; the old GPU
-        # overlay hook points outside this portable runtime and must not travel.
-        if 'gpu' in PurePosixPath(name).name.lower():
-            return False
-    license_file = PurePosixPath(name).name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))
-    return license_file or not ('torch/include/' in name or ('torch/lib/' in name and name.endswith('.lib')))
 
 
 def is_torch(relative):
@@ -89,7 +83,29 @@ def tree_entries(root, relative):
             yield name, info.st_size, lambda file=file: file.open('rb'), info.st_mode & 0o777
 
 
-def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None):
+def gpu_assets(source, directory):
+    lock = tomllib.loads((source/'uv.lock').read_text(encoding='utf-8'))
+    packages = [p for p in lock['package'] if p['name'] in ('torch', 'torchvision') and p['version'].endswith('+cu128')]
+    if len(packages) != 2:
+        raise ValueError('Missing pinned CUDA packages in uv.lock')
+    assets = []
+    for number, package in enumerate(packages, 1):
+        wheel = next(w for w in package['wheels'] if 'cp311-cp311-win_amd64.whl' in w['url'])
+        name = unquote(urlsplit(wheel['url']).path.rsplit('/', 1)[1])
+        file = directory/name
+        sha = wheel['hash'].removeprefix('sha256:')
+        if digest(file) != sha:
+            raise ValueError(f'Wheel checksum mismatch: {name}')
+        with ZipFile(file) as archive:
+            unpacked = sum(item.file_size for item in runtime_members(archive))
+        sources = [base + quote(name) for base in GPU_MIRRORS]
+        assets.append(dict(label=f'GPU 加速组件 · {number}/{len(packages)}', format='wheel',
+                           url=sources[0], fallbackUrls=[*sources[1:], wheel['url']],
+                           sha256=sha, size=file.stat().st_size, unpackedSize=unpacked))
+    return assets
+
+
+def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None, reuse_components=None):
     url = urlsplit(base_url)
     if url.scheme != 'https' or not url.netloc or url.username or url.password or url.query or url.fragment:
         raise ValueError('--base-url must be a public HTTPS directory')
@@ -99,56 +115,45 @@ def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None
     payload = resources / 'analysis'
     python_relative = 'python/bin/python3.11' if mac else 'python/python.exe'
     site = 'python/lib/python3.11/site-packages' if mac else 'python/Lib/site-packages'
-    if not (payload/python_relative).is_file() or (payload/'python/pyvenv.cfg').exists():
-        raise ValueError('Input must be a portable desktop build with bundled Python')
-    metadata = list((payload/site).glob('torch-2.7.0*.dist-info/METADATA'))
-    if len(metadata) != 1 or '+cu' in metadata[0].parent.name:
-        raise ValueError('Build the common components from the PyTorch 2.7.0 CPU desktop')
     manifest = json.loads((source/'SOURCE_MANIFEST.json').read_text(encoding='utf-8'))
     model = json.loads((source/'docs/models.json').read_text(encoding='utf-8'))['sam2']
-    checkpoint = payload/'models'/model['filename']
-    if digest(checkpoint) != model['sha256']:
-        raise ValueError('Model checksum mismatch')
+    reused = json.loads(reuse_components.read_text(encoding='utf-8')) if reuse_components else None
+    if reused:
+        if (reused.get('schema') != 1 or reused.get('target') != target or
+                reused['model']['sha256'] != model['sha256'] or reused['model']['filename'] != model['filename']):
+            raise ValueError('Reused components do not match the target or model')
+    else:
+        if not (payload/python_relative).is_file() or (payload/'python/pyvenv.cfg').exists():
+            raise ValueError('Input must be a portable desktop build with bundled Python')
+        metadata = list((payload/site).glob('torch-2.7.0*.dist-info/METADATA'))
+        if len(metadata) != 1 or '+cu' in metadata[0].parent.name:
+            raise ValueError('Build the common components from the PyTorch 2.7.0 CPU desktop')
+        checkpoint = payload/'models'/model['filename']
+        if digest(checkpoint) != model['sha256']:
+            raise ValueError('Model checksum mismatch')
     output.mkdir(parents=True, exist_ok=False)
     components = output/'components'; components.mkdir()
-    common, cpu = [], []
-    for directory in ('python', 'sam2', 'fonts'):
-        for entry in tree_entries(payload, directory):
-            name = entry[0]
-            destination = cpu if name.startswith(site+'/') and is_torch(name[len(site)+1:]) else common
-            destination.append(entry)
-    common_assets = pack_parts(common, components, f'common-{target}', base_url)
-    backends = {'cpu':pack_parts(cpu, components, f'cpu-{target}', base_url)}
+    if reused:
+        common_assets, backends, model_asset = reused['common'], reused['backends'], reused['model']
+    else:
+        common, cpu = [], []
+        for directory in ('python', 'sam2', 'fonts'):
+            for entry in tree_entries(payload, directory):
+                name = entry[0]
+                destination = cpu if name.startswith(site+'/') and is_torch(name[len(site)+1:]) else common
+                destination.append(entry)
+        common_assets = pack_parts(common, components, f'common-{target}', base_url)
+        backends = {'cpu':pack_parts(cpu, components, f'cpu-{target}', base_url)}
+        model_name = f'model-{model["sha256"][:20]}.pt'
+        shutil.copyfile(checkpoint, components/model_name)
+        model_asset = dict(label='SAM2 分析模型', filename=model['filename'], size=checkpoint.stat().st_size,
+                           sha256=model['sha256'], url=base_url+'/'+model_name)
     if gpu_wheels:
         if mac:
             raise ValueError('NVIDIA wheels are only supported by the Windows x64 build')
-        lock = tomllib.loads((source/'uv.lock').read_text(encoding='utf-8'))
-        selected = [p for p in lock['package'] if p['name'] in ('torch','torchvision') and p['version'].endswith('+cu128')]
-        if len(selected) != 2:
-            raise ValueError('Missing pinned CUDA packages in uv.lock')
-        from contextlib import ExitStack
-        with ExitStack() as stack:
-            entries = []
-            for package in selected:
-                wheel = next(w for w in package['wheels'] if 'cp311-cp311-win_amd64.whl' in w['url'])
-                from urllib.parse import unquote
-                file = gpu_wheels / unquote(urlsplit(wheel['url']).path.rsplit('/',1)[1])
-                if digest(file) != wheel['hash'].removeprefix('sha256:'):
-                    raise ValueError(f'Wheel checksum mismatch: {file.name}')
-                archive = stack.enter_context(ZipFile(file))
-                for info in archive.infolist():
-                    name = info.filename
-                    if info.is_dir() or not runtime_file(name):
-                        continue
-                    if name.startswith('/') or '..' in PurePosixPath(name).parts or '\\' in name or '.data/' in name:
-                        raise ValueError(f'Unexpected wheel layout: {name}')
-                    entries.append((site+'/'+name, info.file_size, lambda a=archive,i=info:a.open(i), 0o644))
-            backends['cuda'] = pack_parts(entries, components, f'cuda-{target}', base_url)
-    model_name = f'model-{model["sha256"][:20]}.pt'
-    shutil.copyfile(checkpoint, components/model_name)
+        backends['cuda'] = gpu_assets(source, gpu_wheels)
     online_manifest = dict(schema=1, target=target, common=common_assets, backends=backends,
-        model=dict(label='SAM2 分析模型', filename=model['filename'], size=checkpoint.stat().st_size,
-                   sha256=model['sha256'], url=base_url+'/'+model_name))
+                           model=model_asset)
     app = output/('WormStudio.app' if mac else 'WormStudio')
     def exclude(folder, names):
         if Path(folder) == resources:
@@ -196,7 +201,8 @@ def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None
                     archive.write(file,file.relative_to(output).as_posix())
     # Component hashes were computed while producing each immutable artifact.
     assets = [*common_assets, *(asset for group in backends.values() for asset in group), online_manifest['model']]
-    checksums = [(name, digest(output/name)), *sorted((asset['url'].rsplit('/',1)[1], asset['sha256']) for asset in assets)]
+    checksums = [(name, digest(output/name)), *sorted((asset['url'].rsplit('/',1)[1], asset['sha256'])
+        for asset in assets if (components/asset['url'].rsplit('/',1)[1]).is_file())]
     (output/'SHA256SUMS.txt').write_text(''.join(f'{sha}  {filename}\n' for filename, sha in checksums),encoding='utf-8')
     print(json.dumps(dict(app=str(app), package=str(output/name), bytes=(output/name).stat().st_size,
                          components=len(assets), base_url=base_url),ensure_ascii=False),flush=True)
@@ -210,4 +216,6 @@ if __name__ == '__main__':
     parser.add_argument('--base-url',required=True)
     parser.add_argument('--target',choices=('win32-x64','darwin-arm64'),default='win32-x64')
     parser.add_argument('--gpu-wheels',type=lambda value:Path(value).resolve())
+    parser.add_argument('--reuse-components',type=lambda value:Path(value).resolve(),
+                        help='Reuse an unchanged, previously verified runtime/model manifest without republishing its assets')
     build(**vars(parser.parse_args()))

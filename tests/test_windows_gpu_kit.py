@@ -78,6 +78,16 @@ class OfflineGpuTests(unittest.TestCase):
             self.assertFalse((self.stage / name).exists())
         self.assertEqual(events[-1], ('正在解压加速组件', retained, retained))
 
+    def test_wheel_member_paths_cannot_escape_or_relocate_the_runtime(self):
+        for name in ('../outside.py', '/absolute.py', '..\\outside.py', 'torch.data/data/file'):
+            with self.subTest(name=name):
+                with ZipFile(self.wheel, 'w') as archive:
+                    archive.writestr(name, b'invalid layout')
+                self.digest = hashlib.sha256(self.wheel.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, 'Unexpected wheel layout'):
+                    self.prepare()
+                self.assertEqual(list(self.stage.iterdir()), [])
+
     def test_unpacks_verified_bytes_and_reports_both_stages(self):
         events = []
         self.prepare(lambda *args: events.append(args))

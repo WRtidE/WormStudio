@@ -95,6 +95,43 @@ test('an idle network request times out and leaves a retryable error', async t =
     signal.addEventListener('abort',() => reject(signal.reason),{once:true});
   })}),/超时/);
 });
+test('mirror failure resumes the same verified bytes from a fallback source', async t => {
+  const directory = await folder(t), record = asset('abcdef');
+  record.fallbackUrls = ['https://fallback.example.org/component'];
+  const requests = [], switches = [];
+  const file = await download(record,directory,{onRetry:(...urls)=>switches.push(urls),fetch:async(url,options)=>{
+    requests.push([url,options.headers.Range]);
+    if(url===record.url)return new Response('abc');
+    assert.equal(options.headers.Range,'bytes=3-');
+    return new Response('def',{status:206,headers:{'content-range':'bytes 3-5/6'}});
+  }});
+  assert.equal(await fs.promises.readFile(file,'utf8'),'abcdef');
+  assert.equal(requests.length,2);
+  assert.deepEqual(switches,[[record.url,record.fallbackUrls[0]]]);
+});
+test('corrupt mirror data is discarded before the fallback is accepted', async t => {
+  const directory = await folder(t), record = asset('abcd');
+  record.fallbackUrls = ['https://fallback.example.org/component'];
+  const file = await download(record,directory,{fetch:async(url,options)=>{
+    if(url===record.url)return new Response('xxxx');
+    assert.equal(options.headers.Range,undefined);
+    return new Response('abcd');
+  }});
+  assert.equal(await fs.promises.readFile(file,'utf8'),'abcd');
+});
+test('pausing or a disk error does not start another mirror request', async t => {
+  const directory = await folder(t), record = asset('abcd');
+  record.fallbackUrls = ['https://fallback.example.org/component'];
+  const abort = new AbortController();let requests=0;
+  await assert.rejects(download(record,directory,{signal:abort.signal,fetch:async()=>{
+    requests++;abort.abort();throw abort.signal.reason;
+  }}));
+  assert.equal(requests,1);
+  t.mock.method(fs.promises,'open',async()=>{throw Object.assign(Error('disk full'),{code:'ENOSPC'});});
+  requests=0;
+  await assert.rejects(download(record,directory,{fetch:async()=>{requests++;return new Response('abcd');}}),{code:'ENOSPC'});
+  assert.equal(requests,1);
+});
 test('hardware detection selects compatible NVIDIA, old drivers use CPU, Mac uses native environment', async () => {
   assert.equal((await detect('win32-x64',async () => ({stdout:'NVIDIA RTX 4070, 596.21, 8.9\n'}))).backend,'cuda');
   assert.equal((await detect('win32-x64',async () => ({stdout:'NVIDIA GTX 1080, 512.00, 6.1\n'}))).backend,'cpu');
@@ -130,6 +167,26 @@ test('automatic GPU setup downloads one backend, atomically activates and reuses
   assert.deepEqual(f.requests,[]);
   assert.equal(f.extracts,2);
   assert.equal(update.state.reused,true);
+});
+test('mirrored GPU wheels install after the common interpreter and reuse across source changes', async t => {
+  const directory = await folder(t), f = fixture();let wheels=0;
+  f.manifest.backends.cuda[0].format='wheel';
+  f.platform.extractWheel=async(file,destination)=>{
+    assert.ok(fs.existsSync(path.join(destination,'python/python.exe')));
+    assert.equal(await fs.promises.readFile(file,'utf8'),'cuda runtime');wheels++;
+  };
+  const setup=new Setup({...f,directory});
+  const result=await setup.start();assert.ok(result,setup.state.error);
+  assert.equal(wheels,1);assert.equal(f.extracts,1);assert.equal(f.probes,1);
+  f.clear();f.manifest.backends.cuda[0].url='https://new.example.org/cuda';
+  f.manifest.backends.cuda[0].fallbackUrls=['https://fallback.example.org/cuda'];
+  const update=new Setup({...f,directory});
+  assert.deepEqual(await update.start(),result);assert.deepEqual(f.requests,[]);
+  f.manifest.backends.cuda[0].fallbackUrls=['http://insecure.example.org/cuda'];
+  assert.throws(()=>validateManifest(f.manifest,'win32-x64'),/组件清单/);
+  delete f.manifest.backends.cuda[0].fallbackUrls;
+  f.manifest.common[0].format='wheel';
+  assert.throws(()=>validateManifest(f.manifest,'win32-x64'),/格式/);
 });
 test('failed GPU validation does not activate; CPU retry reuses common/model downloads and persists choice', async t => {
   const directory = await folder(t), f = fixture();f.fail();

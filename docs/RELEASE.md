@@ -71,7 +71,11 @@ uv run --no-sync tools/release/build_online.py --source source-export --desktop 
 
 输出包含 `WormStudio/`、`WormStudio-Windows-x64.zip`、`components/` 和 `SHA256SUMS.txt`。Mac 在原生构建机上以 `--target darwin-arm64 --desktop desktop-build/WormStudio.app` 生成，其签名、公证仍按 Mac 发布规范执行；Windows 本地测试不代表 Mac 已验证。
 
-**发布顺序：**先将 `components/` 内文件原名上传至 `--base-url` 对应的公开 HTTPS 目录，验证下载地址与哈希，再分发桌面 ZIP。使用 GitHub Release 时把组件作为同一发布的附件上传，base URL 对应该标签的 `/releases/download/标签`。运行组件按文件分组，每个组件的未压缩文件总量不超过 1400 MiB，模型也是单独附件。组件清单内置在首包，不执行远端安装命令，不安装系统驱动。生成本地文件不会使下载地址自动可用。
+Windows GPU 组件直接使用 `uv.lock` 固定的官方 wheel，构建时校验本机 wheel 并生成包含文件大小、SHA-256 和保留文件解压大小的清单。当前下载顺序为上海交大 PyTorch 镜像、阿里 PyTorch 镜像、锁文件中的官方地址；失败切换仍使用相同内容哈希和下载断点。安装器在公共 Python 就绪后解压 wheel，省去编译头文件和链接归档，保留运行库与许可证，验证 GPU 运算后再启用。GPU wheel 不作为 GitHub 大附件重复上传。
+
+依赖和模型未变化时，可用 `--reuse-components 旧版在线清单.json` 配合旧版在线桌面目录构建更新，保留公共环境、CPU 和模型的原地址与哈希。必须保留这些地址对应的旧附件；新发布的校验清单只列本次实际生成的文件。GPU 从旧版归档切换为原始 wheel 时，两种文件内容不同，归档的未完成断点不能直接用于 wheel；已有公共环境、CPU 和模型缓存继续复用。
+
+**发布顺序：**先将新生成的 `components/` 内文件原名上传至 `--base-url` 对应的公开 HTTPS 目录，验证新地址和复用地址，再分发桌面 ZIP。使用 GitHub Release 时把新组件作为发布附件上传，base URL 对应该标签的 `/releases/download/标签`。公共和 CPU 归档按文件分组，每个组件的未压缩文件总量不超过 1400 MiB，模型也是单独附件；GPU wheel 使用上面的镜像地址。组件清单内置在首包，不执行远端安装命令，不安装系统驱动。生成本地文件不会使下载地址自动可用。
 
 组件保存在 Electron 用户数据目录的 `components/` 下，与实验工作区、程序目录分离。下载使用 `.partial`、HTTP Range 和 SHA-256；不支持 Range 的服务器会重新下载当前文件，校验失败的文件不会启用。关闭、暂停和网络失败保留进度。临时环境解压并通过运行验证后才会启用，旧环境继续保留。模型和下载文件按内容哈希保存，运行目录标识只依赖平台与组件哈希，因此更新应用版本或下载地址不强制重装环境。切换 CPU 后，可在“设置 → 通用 → 检测 GPU”安排下次启动重新准备 GPU，当前任务不受影响。
 
@@ -80,6 +84,8 @@ uv run --no-sync tools/release/build_online.py --source source-export --desktop 
 ```powershell
 node tools/release/smoke_online.cjs online-release validation/online-profile
 ```
+
+GPU wheel 和复用组件位于其它目录时，将目录依次附在命令末尾，例如 `node tools/release/smoke_online.cjs online-release validation/online-profile old-release/components wheels`。工具仅将清单中的文件映射到本机测试服务器。
 
 测试工具将组件 HTTPS 地址映射到本机 HTTP 服务器，实际传输完整文件、主动中断并续传、执行原生运算验证，再禁止联网测试复用。用 Electron 运行同一脚本可查看真实准备界面；它不修改正式包的下载地址，生产端仍只接受 HTTPS。
 
