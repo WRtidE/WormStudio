@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.1/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
@@ -28,14 +28,16 @@
 
 ## 下载与启动
 
-Windows v1.1.0 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时自动检测显卡、下载并校验运行环境和模型。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
+Windows v1.1.1 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时自动检测显卡、下载并校验运行环境和模型。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.1.0 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
+| Windows 64 位（x64） | [Windows v1.1.1 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.1/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
-Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.03 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。Release 中的 `.tar.gz` 和模型附件由程序自动使用，无需逐一手动下载。
+Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。
+
+GPU 组件优先从上海交大 PyTorch 镜像下载，失败时依次切换阿里镜像和官方源，并保留断点。基础环境、CPU 组件和模型仍从 GitHub 下载；组件由程序自动准备，无需逐一手动下载。
 
 ## 用练习视频完成第一次分析
 
@@ -74,7 +76,7 @@ v1.0.3 导出的标注视频保留完整画面，逐帧数值显示在播放器�
 
 ## Windows 可选 GPU 加速
 
-v1.1.0 在线版会自动选择兼容的 NVIDIA 显卡。验证失败时可点击 **改用 CPU**；之后也可以在 **设置 → 通用 → 检测 GPU** 安排下次启动准备 GPU 环境。以下离线分包步骤仅适用于旧版 v1.0.3。
+v1.1.1 在线版会自动选择兼容的 NVIDIA 显卡。验证失败时可点击 **改用 CPU**；之后也可以在 **设置 → 通用 → 检测 GPU** 安排下次启动准备 GPU 环境。以下离线分包步骤仅适用于旧版 v1.0.3。
 
 打开 **设置 → 通用 → 检测 GPU**。先看检测结果，再决定是否下载组件。
 
