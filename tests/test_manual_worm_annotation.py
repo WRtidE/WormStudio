@@ -244,7 +244,7 @@ class ManualAnnotationTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); worker.join()
 
-    @unittest.skipUnless(manual.sys.platform == 'darwin', 'Mac annotation worker')
+    @unittest.skipUnless(manual.is_darwin(), 'Mac annotation worker')
     def test_annotation_worker_is_reused_and_releases_on_frame_change(self):
         annotation = manual.Annotation(self.settings)
         try:

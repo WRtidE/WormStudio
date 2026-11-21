@@ -56,5 +56,5 @@ def ensure_runtime():
     if Path(sys.executable).resolve() != RUNTIME_PYTHON:
         if hasattr(sys.stdout, 'reconfigure'):
             sys.stdout.reconfigure(encoding='utf-8')
-        print(f'切换至 Conda WormStudio：{RUNTIME_PYTHON}', flush=True)
+        print(f'切换至项目 Python 环境：{RUNTIME_PYTHON}', flush=True)
         os.execv(str(RUNTIME_PYTHON), [str(RUNTIME_PYTHON), *sys.argv])

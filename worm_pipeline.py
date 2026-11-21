@@ -154,7 +154,7 @@ def validate_config(config, relative_to=ROOT):
     annotations=c.get('head_annotations',{})
     if not isinstance(annotations,dict) or not set(annotations)<=set(map(str,ids)):
         raise ValueError('头部标注必须使用当前线虫编号')
-    from head_tail import normalize_anchors
+    from head_evidence import normalize_anchors
     for item in [a for values in annotations.values() for a in normalize_anchors(values)]:
         frame(item.get('frame'),'头部标注帧')
         point=item.get('point')
@@ -188,7 +188,8 @@ def validate_config(config, relative_to=ROOT):
     return c, dict(frames=n, fps=fps, width=width, height=height, ids=ids)
 
 
-def build_stages(config, info, snapshot, phenotype_path):
+def build_stages(config, info, snapshot, phenotype_path, *, defer_video=False):
+    from run_storage import annotated_video_path
     sample = config['sample']
     base = ROOT / 'outputs' / sample
     tracking = base / 'sam2-tracking'
@@ -216,8 +217,14 @@ def build_stages(config, info, snapshot, phenotype_path):
             'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
             'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
             'behavior_events.csv','trajectory_segments.csv')])
+    if defer_video:
+        stages[-1]['command'].append('--defer-video')
+        stages[-1]['outputs'].remove(str(results/'phenotypes-overlay.mp4'))
     add('export', 'export', 'review_configured_video.py', ['--sample', sample,'--centerline-source',source],
-        [results / f'{sample}_annotated_full-frame.mp4', results / 'verification.json'])
+        [annotated_video_path(results, sample), results / 'verification.json'])
+    if defer_video:
+        stages[-1]['command'].append('--records-only')
+        stages[-1]['outputs'] = [str(results/'verification.json')]
     return stages
 
 
@@ -246,7 +253,7 @@ def complete(stage, config, info):
             if not tracking_model_matches(summary,config.get('sam2_model','large')):return False
         except (OSError,ValueError):return False
     if stage['phase']=='quality':
-        from quality_stage import load_guards
+        from tracking_data import load_guards
         try: load_guards(Path(stage['outputs'][0]).parent, info['ids'], info['frames'], required=True)
         except (OSError, ValueError, KeyError, TypeError): return False
     if stage['phase']=='metrics' and config.get('centerline_method')=='body_sequence':
@@ -303,7 +310,9 @@ def compatible_identity(previous, current):
     Mask hashes, scale values, video identity and all other inputs still match.
     """
     def inputs(identity):
-        identity = json.loads(json.dumps(identity))
+        identity = identity.copy()
+        if 'config' in identity:
+            identity['config'] = identity['config'].copy()
         config = identity.get('config', {})
         config.setdefault('head_detection','twardis')
         config.setdefault('head_annotations',{})
@@ -440,7 +449,14 @@ def _main(progress, raw_override=None):
             notice = f'{reason}，已自动创建新结果目录并重新计算。旧结果保留在 {old_name}。'
             print(notice, flush=True)
     snapshot = base / 'pipeline-config.json'
-    all_stages = build_stages(config, info, snapshot, phenotype)
+    defer_video = bool(config.get('chamber_id') and progress.batch and
+                       (progress.batch.active or progress.batch.group_for_result(config.get('previous_sample') or config['sample'])))
+    old_export = state.get('stages', {}).get('export', {})
+    retry_export = (resume_saved and args.stop_after == 'export' and old_export.get('status') == 'failed'
+                    and state.get('identity') == identity)
+    if retry_export:
+        defer_video = '--records-only' in old_export.get('command', [])
+    all_stages = build_stages(config, info, snapshot, phenotype, defer_video=defer_video)
     stages = [s for s in all_stages if PHASES.index(s['phase']) <= PHASES.index(args.stop_after)]
     print(f'{config["sample"]}: {len(info["ids"])} 条虫，{info["frames"]} 帧，{info["fps"]:g} fps', flush=True)
     if args.dry_run:
@@ -470,6 +486,11 @@ def _main(progress, raw_override=None):
     snapshot.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
     dirty = not resume
     from cache_integrity import snapshot as output_snapshot, matches as outputs_match
+    # A retry of just the failed export can reproduce the historical measurements,
+    # even after an app update. Require the complete original artifact hashes.
+    verified_inputs = retry_export and all(
+        rec.get('status') == 'complete' and rec.get('output_sha256') and outputs_match(stage, base, rec)
+        for stage in all_stages[:-1] for rec in [state['stages'].get(stage['name'], {})])
     if dirty:
         for stage in all_stages: state['stages'][stage['name']] = dict(status='pending')
     for index, stage in enumerate(stages):
@@ -477,7 +498,9 @@ def _main(progress, raw_override=None):
         name = stage['name']
         cached = state['stages'].get(name, {}).get('status')
         record=state['stages'].get(name,{})
-        if not dirty and cached not in ('pending', 'running', 'failed', 'cancelled') and complete(stage, config, info) and outputs_match(stage,base,record):
+        if not dirty and cached not in ('pending', 'running', 'failed', 'cancelled') and (
+                (verified_inputs and stage['phase'] != 'export') or
+                (complete(stage, config, info) and outputs_match(stage,base,record))):
             print(f'[{index + 1}/{len(stages)}] 已有结果：{name}', flush=True)
             state['stages'].setdefault(name, {}).update(status='complete', reused=True)
             if 'output_sha256' not in record:
@@ -511,8 +534,8 @@ def _main(progress, raw_override=None):
     state['completed_through'] = args.stop_after
     save_state(state_path, state)
     progress.finish(base, config, args.stop_after)
-    if args.stop_after == 'export':
-        print(f'处理完成：{base / ("phenotypes-" + method_source(config["centerline_method"])) / (config["sample"] + "_annotated_full-frame.mp4")}', flush=True)
+    if args.stop_after == 'export' and not defer_video:
+        print(f'处理完成：{all_stages[-1]["outputs"][0]}', flush=True)
     else:
         print(f'已完成至 {args.stop_after}：{base}', flush=True)
 

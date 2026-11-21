@@ -1,4 +1,4 @@
-"""Run the packaged regression suite using the same CUDA Python environment."""
+"""Run the packaged regression suite in the configured project environment."""
 from pathlib import Path
 import sys
 import unittest

@@ -4,7 +4,7 @@ import math
 import json
 from pathlib import Path
 
-from result_metrics import number
+from measurement_units import number
 from quality_schema import flag, permissions, describe
 
 
@@ -60,6 +60,19 @@ def present_frame(row):
         result['body_center_x_source_px']=value('body_center_x_source_px',posture)
         result['body_center_y_source_px']=value('body_center_y_source_px',posture)
         if result['head_section_status']=='body_sequence_estimate':result['head_status']='多帧身体跟踪 · 隐藏端点位置估计'
+    if (row.get('display_tip_source') and flag(row, 'source_valid') and flag(row, 'mask_valid')
+            and result['identity_valid'] and not result['head_anchor_conflict']):
+        tips = {}
+        for side in ('head', 'tail'):
+            xy = [number(row.get('display_'+side+'_tip_'+axis+'_px')) for axis in ('x','y')]
+            if None not in xy:
+                tips[side] = xy
+        result['display_tips'] = tips
+        result['display_tip_reference_frames'] = row.get('display_tip_reference_frames', '')
+        result['head_status'] = ('头尾均有候选位置' if len(tips) == 2 else '跟踪到头端 · 尾端暂不可见'
+                                 if 'head' in tips else '跟踪到尾端 · 头端暂不可见' if 'tail' in tips
+                                 else '头尾暂时无法定位')
+        result['head_review_allowed'] = False
     result['self_contact_state'] = row.get('self_contact_state')
     refs = row.get('head_trajectory_frames')
     if isinstance(refs, str):

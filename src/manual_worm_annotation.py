@@ -8,7 +8,6 @@ import multiprocessing
 import re
 import secrets
 import socket
-import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -19,15 +18,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from resource_paths import PROJECT_ROOT as ROOT, RESOURCE_ROOT, sam2_checkpoint
+from resource_paths import PROJECT_ROOT as ROOT, sam2_checkpoint
+from image_io import png
 from compute_device import release_device_cache
 
 from platforms.system import is_darwin
-
-def png(image):
-    ok, data = cv2.imencode('.png', image)
-    if not ok: raise ValueError('PNG encoding failed')
-    return data.tobytes()
 
 
 class MaskPredictor:
@@ -297,7 +292,7 @@ class Annotation:
             if mask is None or mask.shape!=(y1-y,x1-x): return result
             rgba=np.full((*self.image.shape[:2],4),255,np.uint8);rgba[:,:,3]=0
             rgba[y:y1,x:x1,3]=(mask>127).astype(np.uint8)*255
-            from head_tail import anchors_in_crop
+            from head_evidence import anchors_in_crop
             heads=[a for a in anchors_in_crop(config.get('head_annotations',{}).get(str(entry['id'])),config['crop_xyxy'],config['crop_xyxy']) if a['frame']==self.frame]
             head_point=[heads[0]['point'][0]+x,heads[0]['point'][1]+y] if len(heads)==1 else None
             worms.append(dict(id=entry['id'],area_px=int((mask>127).sum()),head_point=head_point,
@@ -610,11 +605,17 @@ def create_server(annotation=None, progress=None):
             if library:
                 from workspace_library import media
                 path = media(ROOT, query.get('id', [''])[0])
+            elif 'chamber_video' in query:
+                try:
+                    path = self.server.chamber_videos.artifact(query['chamber_video'][0])
+                except ValueError:
+                    self.respond(404, {}); return
             else:
                 key = query.get('key', [''])[0]
                 sample = query.get('run', [None])[0]
                 if 'group' in query:
-                    from workspace_sessions import load_config, saved_videos
+                    from workspace_sessions import load_config
+                    from run_storage import saved_videos
                     try:
                         with progress.lock:
                             items = progress.batch.group_items(query['group'][0] or None) if progress.batch else []
@@ -737,7 +738,7 @@ def create_server(annotation=None, progress=None):
                 except (ValueError,OSError,KeyError,TypeError) as exc:self.respond(400,dict(error=str(exc)))
             elif progress and self.path.startswith('/api/head-anchors?'):
                 from urllib.parse import parse_qs,urlsplit
-                from head_tail import normalize_anchors
+                from head_evidence import normalize_anchors
                 sample=parse_qs(urlsplit(self.path).query).get('run',[''])[0]
                 if not progress.config or progress.config['sample']!=sample:
                     self.respond(409,dict(error='结果会话已变化'));return
@@ -746,7 +747,7 @@ def create_server(annotation=None, progress=None):
                 from workspace_sessions import get_draft
                 self.respond(200,get_draft(annotation))
             elif progress and self.path == '/api/progress':
-                self.respond(200, progress.snapshot())
+                self.respond(200, dict(progress.snapshot(), chamber_videos=self.server.chamber_videos.summaries()))
             elif progress and urlsplit(self.path).path in ('/api/chamber-summaries', '/api/batch-results', '/api/saved-timeline'):
                 from workspace_sessions import chamber_summaries, saved_timeline
                 route = urlsplit(self.path)
@@ -767,6 +768,12 @@ def create_server(annotation=None, progress=None):
                         self.respond(200, chamber_summaries(ROOT, items))
                 except (KeyError, OSError, TypeError, ValueError) as exc:
                     self.respond(400, dict(error=str(exc)))
+            elif progress and urlsplit(self.path).path == '/api/chamber-video':
+                try:
+                    key = parse_qs(urlsplit(self.path).query).get('job', [''])[0]
+                    self.respond(200, self.server.chamber_videos.status(key))
+                except ValueError as exc:
+                    self.respond(404, dict(error=str(exc)))
             elif progress and self.path.startswith('/api/live-preview?'):
                 from urllib.parse import parse_qs, urlsplit
                 try:
@@ -853,6 +860,28 @@ def create_server(annotation=None, progress=None):
         def do_POST(self):
             annotation = self.server.annotation
             try:
+                if progress and self.path == '/api/chamber-video':
+                    if self.headers.get('X-Annotation-Token') != progress.token:
+                        self.respond_before_body(403, dict(error='Invalid processing session')); return
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= 1048576: raise ValueError('视频导出请求无效')
+                    body = json.loads(self.rfile.read(size))
+                    from chamber_videos import members_for_video
+                    group, sample = body.get('group'), body.get('sample')
+                    single = body.get('single') is True
+                    with progress.lock:
+                        if group and progress.batch:
+                            items = progress.batch.group_items(group)
+                        elif single and progress.data['status'] == 'complete' and progress.data['sample'] == sample:
+                            config = progress.config
+                            items = [dict(sample=sample, video_path=config['video'], chamber_id=config.get('chamber_id'), status='complete')]
+                        else:
+                            raise ValueError('请打开对应的培养槽结果')
+                    members, missing = members_for_video(items, sample, partial=bool(body.get('missing')), single=single)
+                    if sorted(missing) != sorted(body.get('missing', [])):
+                        raise ValueError('培养槽完成状态已改变，请重新选择导出')
+                    job = self.server.chamber_videos.start(group or '', members, missing, full=not single)
+                    self.respond(202, dict(job=job)); return
                 if progress and self.path == '/api/channel/task':
                     if self.headers.get('X-Annotation-Token') != progress.token:
                         self.respond_before_body(403, dict(error='Invalid processing session')); return
@@ -899,7 +928,7 @@ def create_server(annotation=None, progress=None):
                     if not 0 < size <= 8192: raise ValueError('掩膜修正请求无效')
                     body = json.loads(self.rfile.read(size))
                     from mask_correction import request_edit
-                    result = request_edit(progress, ROOT, body.get('run'), body.get('sequence'))
+                    result = request_edit(progress, ROOT, body.get('run'), body.get('sequence'), annotation_factory=Annotation)
                     self.respond(202 if result.get('waiting') else 200, result); return
                 if progress and (self.path.startswith('/api/library-upload?') or self.path in ('/api/library-selection','/api/library-tree','/api/library-link')):
                     if self.headers.get('X-Annotation-Token') != progress.token:
@@ -1174,9 +1203,12 @@ def create_server(annotation=None, progress=None):
                 self.annotation.release_predictor()
             if self.counts is not None:
                 self.counts.close()
+            self.chamber_videos.pool.shutdown(wait=True, cancel_futures=True)
             super().server_close()
 
     server = WorkspaceServer(('127.0.0.1', 0), Handler)
+    from chamber_videos import ChamberVideos
+    server.chamber_videos = ChamberVideos(ROOT)
     server.annotation = annotation
     return server
 

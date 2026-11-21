@@ -25,6 +25,15 @@ class CenterlineMethodTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     analysis_method(name)
 
+    def test_grouped_chambers_validate_records_without_encoding_individual_videos(self):
+        stages = build_stages(dict(sample='slot', centerline_method=CURRENT_METHOD, chamber_id=42),
+                              dict(ids=[1], frames=12), Path('cfg.json'), Path('metrics.json'), defer_video=True)
+        metrics, export = stages[-2:]
+        self.assertIn('--defer-video', metrics['command'])
+        self.assertIn('--records-only', export['command'])
+        self.assertFalse(any(path.endswith('.mp4') for s in (metrics, export) for path in s['outputs']))
+        self.assertEqual([Path(p).name for p in export['outputs']], ['verification.json'])
+
     def test_unknown_method_is_rejected(self):
         with self.assertRaises(ValueError):
             analysis_method('skeleton')

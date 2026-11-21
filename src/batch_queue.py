@@ -65,11 +65,13 @@ class BatchQueue:
 
     @staticmethod
     def summary(item):
-        return dict(id=item['id'], sample=item.get('result_sample', item['config']['sample']),
-                        name=Path(item['config']['video']).name + (
-                            f" · 槽 {item['config']['chamber_id']}" if 'chamber_id' in item['config'] else ''), status=item['status'], error=item['error'],
-                        chamber_id=item['config'].get('chamber_id'), video_name=Path(item['config']['video']).name,
-                        video_path=item['config']['video'])
+        config = item['config']
+        video_name = Path(config['video']).name
+        name = video_name + (f" · 槽 {config['chamber_id']}" if 'chamber_id' in config else '')
+        return dict(id=item['id'], sample=item.get('result_sample', config['sample']),
+                    name=name, status=item['status'], error=item['error'],
+                    chamber_id=config.get('chamber_id'), video_name=video_name,
+                    video_path=config['video'])
 
     def group_items(self, key=None):
         samples = self.result_samples
@@ -83,8 +85,9 @@ class BatchQueue:
                 for sample in samples if sample in by_sample or sample in self.archived]
 
     def snapshot(self):
-        by_sample = {sample: item for sample, item in self.archived.items()}
-        by_sample.update((i['config']['sample'], self.summary(i)) for i in self.items)
+        items = [self.summary(item) for item in self.items]
+        by_sample = self.archived.copy()
+        by_sample.update((item['config']['sample'], summary) for item, summary in zip(self.items, items))
         history = []
         current = None
         for group in reversed(self.groups):
@@ -92,12 +95,13 @@ class BatchQueue:
             if group['samples'] == self.result_samples:
                 current = group['id']
             if members:
-                videos = list(dict.fromkeys(i['video_path'] for i in members))
-                history.append(dict(id=group['id'], created=group['created'], name=Path(videos[0]).name,
+                videos = {item['video_path'] for item in members}
+                history.append(dict(id=group['id'], created=group['created'], name=Path(members[0]['video_path']).name,
                                     videos=len(videos), total=len(members),
                                     complete=sum(i['status'] == 'complete' for i in members)))
-        return dict(running=self.running, items=[self.summary(item) for item in self.items],
-                    result_items=self.group_items(), group_id=current, groups=history)
+        return dict(running=self.running, items=items,
+                    result_items=[by_sample[sample] for sample in self.result_samples if sample in by_sample],
+                    group_id=current, groups=history)
 
     def next_pending(self):
         return next((item for item in self.items if item['status'] == 'pending' and
@@ -107,8 +111,9 @@ class BatchQueue:
         if self.running:
             raise ValueError('批处理已启动')
         selection = list(dict.fromkeys(samples)) if samples is not None else None
+        selected = set(selection) if selection is not None else None
         pending = [item['config']['sample'] for item in self.items if item['status'] == 'pending'
-                   and (selection is None or item['config']['sample'] in selection)]
+                   and (selected is None or item['config']['sample'] in selected)]
         if not pending:
             raise ValueError('没有待处理任务，或批处理已启动')
         # Explicit sequences define a new viewing group. Resuming or retrying
@@ -123,7 +128,7 @@ class BatchQueue:
         self.persist_groups(group, groups)
         self.result_samples = list(group)
         self.groups = groups
-        self.selected_samples = set(selection) if selection is not None else None
+        self.selected_samples = selected
         self.running = True
 
     def persist_groups(self, group, groups):
@@ -142,10 +147,22 @@ class BatchQueue:
         item.update(status='running', error='')
         self.active = item
         self.persist()
-        return dict(copy.deepcopy(item['config']), _resume_saved=True)
+        config = copy.deepcopy(item['config'])
+        config['_resume_saved'] = True
+        return config
 
-    def finish(self, status, error='', cancelled=False, result_sample=None):
+    def finish(self, status, error='', cancelled=False, result_sample=None, previous_sample=None):
         item = self.active
+        if item is None and status == 'complete' and result_sample and previous_sample:
+            # A successful correction replaces only the version used by this slot.
+            item = next((i for i in self.items if i['config'].get('chamber_id') is not None
+                         and i.get('result_sample', i['config']['sample']) == previous_sample), None)
+            if item is None:
+                for saved in self.archived.values():
+                    if saved.get('chamber_id') is not None and saved['sample'] == previous_sample:
+                        saved.update(sample=result_sample, status='complete', error='')
+                        self.persist_groups(self.result_samples, self.groups)
+                        break
         if item is None and result_sample:
             # A run resumed outside the queue (open/continue from history) keeps
             # its original record; adopt it so the finished status is not lost.
@@ -161,6 +178,12 @@ class BatchQueue:
             self.persist()
         if cancelled or self.next_pending() is None:
             self.running = False
+
+    def group_for_result(self, sample):
+        keys = {i['config']['sample'] for i in self.items
+                if i.get('result_sample', i['config']['sample']) == sample}
+        keys.update(k for k, i in self.archived.items() if i['sample'] == sample)
+        return next((g['id'] for g in reversed(self.groups) if keys.intersection(g['samples'])), None)
 
     def remove(self, identifier):
         if self.running:

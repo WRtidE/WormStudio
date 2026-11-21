@@ -13,6 +13,9 @@ test('historical progress uses functional wording and retains worm identity',()=
 test('preserves actionable plain errors and keeps tracebacks out of the interface',()=>{
  assert.equal(presentation.error('视频只有 4 帧，至少需要 5 帧'),'视频只有 4 帧，至少需要 5 帧');
  assert(!presentation.error('Traceback: SAM2 failed').includes('Traceback'));
+ const long="export 失败（退出码 1）\nFileNotFoundError: [Errno 2] No such file or directory: 'C:/"+'x'.repeat(250)+"/annotated.mp4'";
+ assert.match(presentation.error(long),/路径过长.*继续此任务/);
+ assert.match(presentation.error('export 失败：编码器退出'),/视频导出失败/);
 });
 test('completed metrics become the default result without interrupting a batch or history',()=>{
  const prompt=presentation.totalsReady;

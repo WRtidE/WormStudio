@@ -1,2 +1,3 @@
-# Install after PyTorch and requirements.txt. See docs/INSTALL.md.
+# Legacy editable installation after PyTorch and requirements.txt.
+# uv installs the pinned Git commit directly; see pyproject.toml.
 -e ./resources/sam2

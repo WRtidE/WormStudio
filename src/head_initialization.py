@@ -5,7 +5,7 @@ from head_temporal import geometry_link, visible_tip_link, MAX_INTERVAL_S
 
 def initial_taper_seed(block, profiles, flipped, cfg, fps, visible):
     """Use the first supported local initialization in the common physical point order."""
-    from head_tail import taper_votes, vote_winner
+    from head_evidence import taper_votes, vote_winner
     windows = []
     for frames, parity, match in block:
         # A newly joined clip may supply a seed if the preceding clip had none.

@@ -4,15 +4,7 @@ import json
 import numpy as np
 
 from head_temporal import geometry_link, MAX_INTERVAL_S
-
-
-def sampled(points):
-    distance = np.r_[0., np.linalg.norm(np.diff(points, axis=0), axis=1).cumsum()]
-    if not np.isfinite(distance).all() or distance[-1] < 1:
-        return None
-    keep = np.r_[True, np.diff(distance) > 0]
-    return np.column_stack([np.interp(np.linspace(0, distance[-1], 101),
-                                      distance[keep], axis[keep]) for axis in points.T])
+from skeleton_geometry import sampled
 
 
 def same_track(rows, a, b, single):
@@ -236,7 +228,7 @@ def order_endpoints(rows, heads, display, worm, fps, manual, single, profiles=No
 
 def recover_from_anchor_profiles(rows, heads, blocks, profiles, parameters):
     """Compare disconnected blocks with a frozen template from the anchored track."""
-    from head_tail import appearance_fusion, DEFAULTS
+    from head_evidence import appearance_fusion, DEFAULTS
     params = dict(DEFAULTS, **(parameters or {}))
     params['min_vote_fraction'] = max(.85, params['min_vote_fraction'])
     # Use only original-frame intensity profiles from measured poses. Review

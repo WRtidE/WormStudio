@@ -37,7 +37,20 @@ def main(open_browser=True):
                 with progress.lock:
                     progress.batch.finish(progress.data['status'], progress.data.get('error'),
                                           cancelled=progress.cancel_requested.is_set(),
-                                          result_sample=progress.data.get('sample'))
+                                          result_sample=progress.data.get('sample'),
+                                          previous_sample=(progress.config or {}).get('previous_sample'))
+                    sample = progress.data.get('sample')
+                    group = progress.batch.group_for_result(sample)
+                    members = progress.batch.group_items(group) if group else []
+                # A video may finish before the rest of a multi-video batch.
+                if any(i['sample'] == sample and i['status'] == 'complete' and i.get('chamber_id') for i in members):
+                    from chamber_videos import members_for_video
+                    try:
+                        ready, missing = members_for_video(members, sample, partial=True)
+                        if not missing:
+                            server.chamber_videos.start(group, ready, full=True)
+                    except (OSError, ValueError) as exc:
+                        print(f'全槽视频暂未生成，可在结果页重试：{exc}', flush=True)
     finally:
         progress.close()
 

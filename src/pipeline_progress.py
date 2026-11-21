@@ -97,7 +97,6 @@ class PipelineProgress:
         return f'http://127.0.0.1:{self.server.server_port}/progress'
 
     def configure(self, config, info, stages, base, device=''):
-        from centerline_methods import METHODS
         base.mkdir(parents=True, exist_ok=True)
         with self.lock:
             if not (self.batch and self.batch.active):
@@ -165,7 +164,7 @@ class PipelineProgress:
 
     def finish(self, base, config, stop_after):
         from centerline_methods import method_source
-        from workspace_sessions import result_video_files
+        from run_storage import result_video_files
         with self.lock:
             self.ended = time.time()
             self.data.update(status='complete', detail='全部处理完成' if stop_after == 'export' else f'已完成所选阶段：{PHASE_LABELS[stop_after]}', active=None)
@@ -192,7 +191,7 @@ class PipelineProgress:
                        ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
                        ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
             if config.get('centerline_method')=='self_contact':
-                from crop_recovery import FOLDER
+                from tracking_data import RECOVERY_FOLDER as FOLDER
                 outputs.append(('crop-recovery','触边扩框复核记录 JSON',base/'sam2-tracking'/FOLDER/'summary.json','quality'))
             for key, label, path, phase in outputs:
                 if phase in finished and path.is_file():
@@ -200,7 +199,7 @@ class PipelineProgress:
                     self.data['artifacts'].append(dict(key=key, label=label, filename=path.name))
             if 'summary' in self.artifacts:
                 import csv
-                import math
+                from measurement_units import number
                 fields = ('worm_id', 'frames', 'valid_frames', 'mask_valid_frames', 'median_length_um', 'mean_speed_um_s',
                           'identity_valid_frames','trajectory_valid_frames')
                 with self.artifacts['summary'].open(encoding='utf-8-sig', newline='') as handle:
@@ -209,9 +208,7 @@ class PipelineProgress:
                         clean = {}
                         for key in fields:
                             if key not in row and key in ('identity_valid_frames','trajectory_valid_frames'):continue
-                            try: value = float(row.get(key, ''))
-                            except (ValueError, TypeError): value = None
-                            clean[key] = value if value is not None and math.isfinite(value) else None
+                            clean[key] = number(row.get(key))
                         rows.append(clean)
                     self.data['results'] = rows
                     self.data['quality'] = summarize_quality(rows)
@@ -345,4 +342,3 @@ class PipelineProgress:
             self.server.shutdown()
             self.server.server_close()
             self.worker.join(timeout=2)
-

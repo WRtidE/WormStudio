@@ -185,7 +185,7 @@ def review_terminal_link(a, b):
 
 def orient_loop_reviews(rows, heads, quality, display, worm):
     """Carry confirmed boundary identity across unambiguous links for display only."""
-    from endpoint_order import sampled
+    from skeleton_geometry import sampled
     intervals = {tuple(q['review_anchors']) for q in quality if q.get('review_anchors')}
     for left, right in sorted(intervals):
         span = rows[left:right + 1]

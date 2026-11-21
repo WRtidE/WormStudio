@@ -1,6 +1,5 @@
 """Keep the Mac tracker's normalized JPEG inputs on demand."""
 from pathlib import Path
-import sys
 
 from platforms.system import is_darwin
 from tempfile import TemporaryDirectory

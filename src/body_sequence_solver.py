@@ -13,16 +13,18 @@ from centerline_topology import topology_candidates, hidden_tip_candidates
 from body_geometry import local_field, candidate_score
 from head_recovery import end_contrast, appearance_vote, pose_parity
 from head_appearance import sample_profile
-from head_tail import normalize_anchors
+from head_evidence import normalize_anchors
 
 VERSION = 'sam2-body-sequence-v1'
+MIN_LENGTH_FRACTION = .85
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
 # and image appearance, even though those dependencies are imported indirectly.
 SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_sequence.py',
                    'centerline_topology.py', 'framewise_pose.py', 'body_geometry.py',
                    'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
-                   'analyze_phenotypes.py', 'body_frame_cache.py')
+                   'analyze_phenotypes.py', 'body_frame_cache.py', 'skeleton_geometry.py',
+                   'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py')
 
 
 def signature():
@@ -80,7 +82,7 @@ def candidates_for(mask,reference,observed):
         for c in candidates:
             candidate_score(c,mask,field,origin,reference,radius,None)
             if (c['inside_fraction']<.97 or c['reconstruction_iou']<.55 or c['local_hairpin']
-                    or abs(c['length_px']-reference)>.15*reference+2*radius):continue
+                    or not MIN_LENGTH_FRACTION*reference-2*radius <= c['length_px'] <= 1.15*reference+2*radius):continue
             if any(min(np.linalg.norm(c['points']-v['points'],axis=1).mean(),
                        np.linalg.norm(c['points'][::-1]-v['points'],axis=1).mean())<1.5 for v in out):continue
             out.append(c)
@@ -106,6 +108,48 @@ def candidates_for(mask,reference,observed):
     return keep(raw),radius
 
 
+def recover_short_observations(frames, observed, masks, reference, fps):
+    """Reconsider a short projected length only between two measured, separated poses."""
+    reliable = [i for i, choices in enumerate(frames)
+                if choices and choices[0]['name'] == 'clear_observation']
+    for left, right in zip(reliable, reliable[1:]):
+        span = right - left
+        if span not in (2, 3) or span / fps > .25:
+            continue
+        gap = range(left + 1, right)
+        if any(frames[i] or observed[i] is None for i in gap):
+            continue
+        a, b = observed[left], observed[right]
+        flip = pose_parity(a, b)
+        if flip is None:
+            continue
+        if flip:
+            b = b[::-1]
+        length = min(frames[i][0]['length_px'] for i in (left, right))
+        if any(np.linalg.norm(p[0] - p[-1]) < .45 * length for p in (a, b)):
+            continue
+        for i in gap:
+            points = observed[i]
+            guide = a + (b - a) * ((i - left) / span)
+            flip = pose_parity(guide, points)
+            if flip is None:
+                continue
+            delta = np.linalg.norm((points[::-1] if flip else points) - guide, axis=1)
+            if delta.mean() > .05 * length or max(delta[0], delta[-1]) > .08 * length:
+                continue
+            field, origin = local_field(masks[i])
+            radius = max(1., float(np.median(field[field > 0])) * 1.5)
+            candidate = dict(points=points, name='short_observation', connection_cost=0.,
+                             endpoint_observed=[True, True])
+            candidate_score(candidate, masks[i], field, origin, reference, radius, None)
+            if (.65 * reference <= candidate['length_px'] < MIN_LENGTH_FRACTION * reference - 2 * radius
+                    and candidate['length_px'] >= .85 * length
+                    and np.linalg.norm(points[0] - points[-1]) >= .45 * length
+                    and candidate['reconstruction_iou'] >= .85 and candidate['inside_fraction'] >= .99
+                    and not candidate['local_hairpin']):
+                frames[i].append(candidate)
+
+
 def fingerprint(gray,mask,line):
     radius=map_coordinates(distance_transform_edt(mask),line.T[::-1],order=1,mode='constant')
     profile=sample_profile(gray,line,radius)
@@ -121,6 +165,26 @@ def taper_seed(mask,line):
         ratios.append(float(np.median(r[2:13])/np.median(r[20:31])))
     if abs(ratios[0]-ratios[1])/max(sum(ratios),1e-9)<.15:return None
     return line[0 if np.argmax(ratios)==0 else -1].copy()
+
+
+def flow_supports_order(gray, masks, start, stop, earlier, later, indices):
+    """Check a proposed orientation using mask-supported motion on both terminal quarters."""
+    from motion import lk_step
+    points = earlier[indices].copy()
+    supported = np.ones(len(points), dtype=bool)
+    for frame in range(start, stop):
+        points, reliable, _ = lk_step(gray[frame], gray[frame+1], points)
+        inside = map_coordinates(masks[frame+1].astype(np.uint8), points.T[::-1], order=0, mode='constant')
+        supported &= reliable & (inside > 0)
+        if np.count_nonzero(supported) < 3:
+            return False
+    scale = min(np.linalg.norm(np.diff(p, axis=0), axis=1).sum() for p in (earlier, later))
+    same = np.linalg.norm(points - later[indices], axis=1)
+    opposite = np.linalg.norm(points - later[::-1][indices], axis=1)
+    matches = supported & (same <= .12 * scale) & (same + .15 * scale < opposite)
+    contradicts = supported & (opposite <= .12 * scale) & (opposite + .15 * scale < same)
+    return (not contradicts.any() and np.count_nonzero(matches) >= 3
+            and matches[indices <= 25].any() and matches[indices >= 75].any())
 
 
 def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None):
@@ -148,6 +212,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
         cs,radius=([],1.) if i in excluded else candidates_for(mask,reference,p)
         frames.append(cs);radii.append(radius)
         if progress:progress(i+1,n,'生成完整虫体与交叉支路候选',.15+.4*(i+1)/max(n,1))
+    recover_short_observations(frames, observed, masks, reference, fps)
     marks=[dict(a) for a in normalize_anchors(manual,n)]
     for a in marks:a['human']=True
     if not marks and auto_seed:
@@ -207,15 +272,27 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
         if not prior:continue
         previous=prior[-1]
         if any(i in excluded for i in range(previous,lo+1)):continue
-        votes=[pose_parity(output[previous],output[i],tracking_indices(point_count)) for i in range(lo,min(hi+1,lo+3))]
+        indices = tracking_indices(point_count)
+        votes=[pose_parity(output[previous],output[i],indices) for i in range(lo,min(hi+1,lo+3))]
         useful=[v for v in votes if v is not None]
-        if len(useful)<2 or len(set(useful))!=1:continue
+        if len(set(useful)) != 1:
+            continue
+        motion_checked = False
+        if len(useful) == 1:
+            if (votes[0] is None or not facts[previous].get('manual_lineage')
+                    or not all(facts[i]['head_observed'] and facts[i]['tail_observed'] for i in (previous, lo))
+                    or not flow_supports_order(gray, masks, previous, lo, output[previous],
+                                               output[lo][::-1] if votes[0] else output[lo], indices)):
+                continue
+            motion_checked = True
         for i in range(lo,hi+1):
             if useful[0]==1:
                 output[i]=output[i,::-1]
                 facts[i]['head_observed'],facts[i]['tail_observed']=facts[i]['tail_observed'],facts[i]['head_observed']
             facts[i].update(head_known=True,head_source='short_gap_body_candidate',manual_lineage=False,
                             preceding_reference=previous,body_votes=len(useful))
+            if motion_checked:
+                facts[i]['flow_order_supported'] = True
     # A frozen seed template supplies provisional recovery, not a new human mark.
     seed=next((a['frame'] for a in marks if facts[a['frame']] and facts[a['frame']]['head_known']),None)
     refs=[] if seed is None else [i for i in range(max(0,seed-3),min(n,seed+4))

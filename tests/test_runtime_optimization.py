@@ -10,7 +10,8 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from analyze_phenotypes import json_safe, read_image, write_png
+from serialization import json_safe
+from image_io import read_image, write_png
 from body_frame_cache import cached_frames
 from body_sequence_solver import signature, solve
 from run_storage import copy_tracking_snapshot
@@ -21,7 +22,8 @@ class SignatureTests(unittest.TestCase):
     def test_geometry_appearance_and_anchor_dependencies_invalidate_the_cache(self):
         before = signature()
         read = Path.read_bytes
-        for name in ('head_appearance.py', 'head_tail.py', 'analyze_phenotypes.py', 'body_frame_cache.py'):
+        for name in ('head_appearance.py', 'head_tail.py', 'analyze_phenotypes.py', 'body_frame_cache.py',
+                     'skeleton_geometry.py', 'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py'):
             with self.subTest(name=name):
                 def changed(path):
                     return read(path) + (b'\n# changed dependency' if path.name == name else b'')

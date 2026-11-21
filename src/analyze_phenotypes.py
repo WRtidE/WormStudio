@@ -1,6 +1,6 @@
 """Measure PPT-defined phenotypes from saved SAM2 masks, without re-segmenting.
 
-Run in Conda WormStudio: python src/analyze_phenotypes.py --sample all
+Run in the project environment: uv run --no-sync src/analyze_phenotypes.py --sample all
 Default: latest saved contact correction, or temporal WormTracer centerlines.
 Each corrected fit selects its matching mask source through mask-source.json.
 Use --centerline-method skeleton to reproduce the original baseline.
@@ -12,7 +12,6 @@ from pipeline_progress import report_progress
 from live_preview import enabled as preview_enabled, report_preview
 import csv
 import json
-import math
 import tempfile
 from pathlib import Path
 
@@ -20,13 +19,14 @@ import cv2
 import numpy as np
 from scipy import ndimage
 from scipy.signal import find_peaks, savgol_filter
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import dijkstra
-from skimage.morphology import skeletonize
 from centerline_topology import geometry_quality
 from result_overlay import OVERLAY_VERSION, draw_worm
-from head_tail import detect_head_tail, endpoint_labels, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
-from display_centerlines import build_display, VERSION as DISPLAY_VERSION
+from head_tail import detect_head_tail, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
+from image_io import write_png
+from serialization import json_safe, write_json_records
+from skeleton_geometry import centerline, frustum_volume
+from tracking_data import load_sample
+from display_centerlines import build_display, track_visible_tips, VERSION as DISPLAY_VERSION
 from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
 from quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
 
@@ -41,107 +41,10 @@ def finite_stat(values, statistic=np.median):
     return float(statistic(data)) if len(data) else np.nan
 
 
-def json_safe(value):
-    if isinstance(value,dict):return {k:json_safe(v) for k,v in value.items()}
-    if isinstance(value,(list,tuple)):return [json_safe(v) for v in value]
-    if isinstance(value,(float,np.floating)):return float(value) if np.isfinite(value) else None
-    if isinstance(value,np.integer):return int(value)
-    return value
-
-
-def read_image(path, gray=False):
-    im = cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), 0 if gray else 1)
-    if im is None:
-        raise ValueError(f"Cannot decode {path}")
-    return im
-
-
-def write_png(path, image):
-    from run_storage import replace_bytes
-    ok, encoded = cv2.imencode('.png', image)
-    if not ok:
-        raise ValueError(f'Cannot encode {path}')
-    replace_bytes(path, encoded.tobytes())
-
-
-def resample(points, count=101):
-    s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
-    keep = np.r_[True, np.diff(s) > 1e-8]
-    if s[-1] < 1:
-        raise ValueError('Degenerate centerline')
-    return np.column_stack([np.interp(np.linspace(0, s[-1], count), s[keep], points[keep, j]) for j in (0, 1)])
-
-
-def centerline(mask):
-    """Longest geodesic between skeleton endpoints; distances include diagonals."""
-    ys, xs = np.nonzero(mask)
-    if len(xs) < 20:
-        raise ValueError('Empty or very small mask')
-    x0, y0 = max(0, xs.min()-3), max(0, ys.min()-3)
-    local = mask[y0:ys.max()+4, x0:xs.max()+4]
-    labels, n = ndimage.label(local)
-    sizes = np.bincount(labels.ravel()); sizes[0] = 0
-    local = labels == sizes.argmax()
-    sk = skeletonize(local)
-    coords = np.argwhere(sk)
-    index = np.full(sk.shape, -1, int); index[sk] = np.arange(len(coords))
-    rows, cols, weights = [], [], []
-    for dy, dx in [(0, 1), (1, -1), (1, 0), (1, 1)]:
-        q = coords + [dy, dx]
-        valid = (q[:, 0]>=0)&(q[:, 0]<sk.shape[0])&(q[:, 1]>=0)&(q[:, 1]<sk.shape[1])
-        a = np.flatnonzero(valid); b = index[q[valid,0], q[valid,1]]
-        a, b = a[b>=0], b[b>=0]
-        rows.extend(a); cols.extend(b); weights.extend([math.hypot(dx,dy)]*len(a))
-        rows.extend(b); cols.extend(a); weights.extend([math.hypot(dx,dy)]*len(a))
-    graph = coo_matrix((weights,(rows,cols)),shape=(len(coords),len(coords))).tocsr()
-    ends = np.flatnonzero(np.diff(graph.indptr)==1)
-    if len(ends)<2:
-        raise ValueError('Closed/self-contact skeleton: no reliable pair of endpoints')
-    distances, predecessors = dijkstra(graph, indices=ends, return_predecessors=True)
-    end_dist = distances[:,ends]
-    end_dist[~np.isfinite(end_dist)] = -1
-    a,b = np.unravel_index(np.argmax(end_dist),end_dist.shape)
-    node = int(ends[b]); route = [node]
-    while node != ends[a]:
-        node = int(predecessors[a,node])
-        if node<0: raise ValueError('Disconnected centerline')
-        route.append(node)
-    points = coords[route][:,::-1].astype(float)
-    # Extend both terminal tangents to the mask boundary to include the tips.
-    for reverse in (False,True):
-        if reverse: points=points[::-1]
-        tangent=points[0]-points[min(8,len(points)-1)]
-        tangent/=max(np.linalg.norm(tangent),1e-9)
-        tip=points[0].copy()
-        for step in np.arange(.5,35,.5):
-            candidate=points[0]+step*tangent
-            xi,yi=np.rint(candidate).astype(int)
-            if not (0<=yi<local.shape[0] and 0<=xi<local.shape[1] and local[yi,xi]):break
-            tip=candidate
-        points=np.vstack([tip,points])
-        if reverse: points=points[::-1]
-    points=resample(points)
-    smooth=savgol_filter(points,7,2,axis=0)
-    smooth[0],smooth[-1]=points[0],points[-1]
-    points=resample(smooth)
-    dt=ndimage.distance_transform_edt(local)
-    radius=ndimage.map_coordinates(dt,[points[:,1],points[:,0]],order=1,mode='constant')
-    inside=ndimage.map_coordinates(local.astype(float),[points[:,1],points[:,0]],order=0,mode='constant')
-    points += [x0,y0]
-    return points,radius,dict(skeleton_endpoints=len(ends),
-                            skeleton_path_fraction=len(route)/len(coords),
-                            centerline_inside_fraction=float(inside.mean()))
-
-
 def signed_angle(points):
     # Head-outward tangent (0-10%) relative to the neck-outward tangent (10-30%).
     a=points[0]-points[10]; b=points[10]-points[30]
     return float(np.degrees(np.arctan2(b[0]*a[1]-b[1]*a[0],np.dot(b,a))))
-
-
-def frustum_volume(points,radius):
-    ds=np.linalg.norm(np.diff(points,axis=0),axis=1)
-    return float(np.sum(np.pi*ds*(radius[:-1]**2+radius[:-1]*radius[1:]+radius[1:]**2)/3))
 
 
 def runs(valid):
@@ -160,7 +63,8 @@ def smooth_valid(values,valid,window):
 def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None):
     if timestamps is None:timestamps=np.arange(len(valid))/fps
     events=[]; cycles=0
-    for idx in runs(valid):
+    segments = runs(valid)
+    for idx in segments:
         if len(idx)<3:continue
         signal=angles[idx]
         distance=max(1,int(round(min_interval*fps)))
@@ -175,7 +79,7 @@ def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None):
         cycles+=max(0,len(selected)-1)//2
         events.extend(dict(frame=int(idx[i]),time_s=float(timestamps[idx[i]]),direction=sign,
                            angle_deg=float(signal[i])) for i,sign in selected)
-    duration=sum(timestamps[idx[-1]]-timestamps[idx[0]] for idx in runs(valid))
+    duration=sum(timestamps[idx[-1]]-timestamps[idx[0]] for idx in segments)
     return events,cycles,duration
 
 
@@ -202,39 +106,6 @@ def calibration(sample,summary,config):
     return scale,{'source':'PPT pillar diameter 80 um / median equivalent diameter of cached AMG circles',
                   'status':'estimated_assuming_same_chip_as_PPT','pillar_count':len(diameters),
                   'median_diameter_px':median,'diameter_iqr_px':float(np.subtract(*np.percentile(diameters,[75,25])))}
-
-
-def load_sample(sample,mask_source=None,apply_guards=True):
-    base=ROOT/'outputs'/sample
-    default_source='sam2-tracking' if (base/'pipeline-config.json').exists() else ('multiworm-tracking-manual' if sample=='2-1-1314' else 'sam2-tracking')
-    data=Path(mask_source) if mask_source is not None else base/default_source
-    if mask_source is None and (base/'pipeline-config.json').is_file():
-        from crop_recovery import tracking_directory
-        data=tracking_directory(base,json.loads((base/'pipeline-config.json').read_text(encoding='utf-8')))
-    summary=json.loads((data/'summary.json').read_text(encoding='utf-8'))
-    summary['mask_source']=str(data)
-    n=summary['frames'];bad={}
-    if (data/'masks').is_dir():
-        with (data/'tracking-quality.csv').open() as handle:
-            for row in csv.DictReader(handle):
-                bad[(int(row['frame']),int(row['worm_id']))]=row['low_confidence'].lower()=='true'
-        def get_mask(worm,frame):return read_image(data/'masks'/f'worm-{worm}'/f'{frame:06d}.png',True)>0
-        ids=summary.get('worm_ids') or sorted(int(p.name.split('-')[-1]) for p in (data/'masks').glob('worm-*'))
-    else:
-        with np.load(data/'masks-packed.npz') as packed:shape=tuple(packed['shape']);packed_masks=packed['masks']
-        def get_mask(worm,frame):return np.unpackbits(packed_masks[frame],count=int(np.prod(shape))).reshape(shape).astype(bool)
-        ids=[1]
-    if apply_guards:
-        from quality_stage import load_guards
-        snapshot=base/'pipeline-config.json'
-        config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
-        guards=load_guards(data,ids,n,required=bool(config.get('quality_schema_version')))
-        if guards is not None:
-            for worm,records in guards.items():
-                for record in records:
-                    key=(record['frame'],worm)
-                    bad[key]=bad.get(key,False) or not record['mask_valid']
-    return data,summary,ids,get_mask,bad
 
 
 def fitted_mask_source(sample,source_name):
@@ -265,8 +136,8 @@ def pose_length_reference(rows):
         and r.get('identity_original_valid',r['identity_valid'])])
 
 
-def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
-    data,source,ids,get_mask,bad=load_sample(sample,fitted_mask_source(sample,wormtracer_source) if method!='skeleton' else None)
+def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,defer_video=False):
+    data,source,ids,get_mask,bad=load_sample(sample,fitted_mask_source(sample,wormtracer_source) if method!='skeleton' else None,root=ROOT)
     output=ROOT/'outputs'/sample/('phenotypes-'+wormtracer_source if method!='skeleton' else 'phenotypes');output.mkdir(parents=True,exist_ok=True)
     scale,scale_info=calibration(sample,source,config)
     fps=source['fps'];n=source['frames'];all_rows=[];all_summaries=[];all_events=[];lines={}
@@ -276,7 +147,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     times=np.asarray(timebase['timestamps_s'])
     snapshot=ROOT/'outputs'/sample/'pipeline-config.json'
     video_config=json.loads(snapshot.read_text(encoding='utf-8')) if snapshot.is_file() else {}
-    from quality_stage import load_guards
+    from tracking_data import load_guards
     guards=load_guards(data,ids,n,required=bool(video_config.get('quality_schema_version')))
     tracking_guards = guards
     from identity_reassociation import reassociate,VERSION as ASSOCIATION_VERSION,RULES
@@ -317,7 +188,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
         manual=video_config.get('head_annotations',{}).get(str(worm))
         if manual is None and head_point is not None: manual=dict(frame=0,point=head_point)
         if manual is not None and 'crop_xyxy' in source:
-            from head_tail import anchors_in_crop
+            from head_evidence import anchors_in_crop
             manual=anchors_in_crop(manual,video_config.get('crop_xyxy',source['crop_xyxy']),source['crop_xyxy'])
         head_status='unconfirmed_A_B_endpoints'
         initial_width_ratio=None
@@ -515,6 +386,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
                 row['tail_x_crop_px'],row['tail_y_crop_px']=p[-1]
                 heading=p[10]-p[30];heading/=max(np.linalg.norm(heading),1e-9)
                 row['heading_x'],row['heading_y']=heading
+        if method == 'body_sequence':
+            track_visible_tips(rows, display_lines, get_mask, fps)
         for i, row in enumerate(rows):
             finish_dimensions(row)
             measure_posture(row, lines.get((worm, i)), scale)
@@ -645,10 +518,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     write_tracklets(output,all_rows,tracklet_report)
     fields=list(dict.fromkeys(k for r in all_rows for k in r))
     with (output/'per_frame_metrics.csv').open('w',newline='',encoding='utf-8-sig') as f:
-        w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(json_safe(all_rows))
+        w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(json_safe(row) for row in all_rows)
     for name,payload in [('per_frame_metrics.json',all_rows),('diagnostic-metrics.json',diagnostics),
-                         ('quality.json',[dict(frame=r['frame'],worm_id=r['worm_id'],**describe(r)) for r in all_rows])]:
-        (output/name).write_text(json.dumps(json_safe(payload),ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+                         ('quality.json',(dict(frame=r['frame'],worm_id=r['worm_id'],**describe(r)) for r in all_rows))]:
+        write_json_records(output/name, payload)
     with (output/'bend_events.csv').open('w',newline='',encoding='utf-8-sig') as f:
         fields=['sample','worm_id','head_status','frame','time_s','direction','angle_deg']
         w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(all_events)
@@ -679,7 +552,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer'):
     lines={key:p for key,p in lines.items() if permissions(lookup[key])['posture']}
     np.savez_compressed(output/'centerlines.npz',**{f'w{w}_f{f}':p for (w,f),p in lines.items()})
     np.savez_compressed(output/'display-centerlines.npz',**{f'w{w}_f{f}':p for (w,f),p in display_lines.items()})
-    render(sample,source,output,ids,all_rows,display_lines)
+    if not defer_video:
+        render(sample,source,output,ids,all_rows,display_lines)
     write_report(output,report,all_rows)
     return report
 
@@ -769,7 +643,7 @@ def write_report(output,report,rows):
 
 
 def render(sample,source,output,ids,rows,lines):
-    _,_,_,get_mask,_=load_sample(sample,source.get('mask_source'))
+    _,_,_,get_mask,_=load_sample(sample,source.get('mask_source'),root=ROOT)
     fps=source['fps'];x0,y0,x1,y1=source['crop_xyxy']
     lookup={(r['worm_id'],r['frame']):r for r in rows}
     width,height=x1-x0,y1-y0
@@ -804,7 +678,7 @@ def render(sample,source,output,ids,rows,lines):
 
 
 def render_saved(sample, method, fit_source, destination):
-    _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if method!='skeleton' else None)
+    _,source,ids,_,_=load_sample(sample,fitted_mask_source(sample,fit_source) if method!='skeleton' else None,root=ROOT)
     folder=ROOT/'outputs'/sample/('phenotypes-'+fit_source if method!='skeleton' else 'phenotypes')
     with (folder/'per_frame_metrics.csv').open(encoding='utf-8-sig',newline='') as handle:
         rows=list(csv.DictReader(handle))
@@ -823,6 +697,7 @@ def main():
     parser.add_argument('--centerline-method',choices=['skeleton','wormtracer','niu','hybrid','topology','self_contact','body_sequence'],default='wormtracer')
     parser.add_argument('--wormtracer-source',default=None,help='Default: contact correction if present, otherwise temporal')
     parser.add_argument('--render-only',action='store_true',help='Refresh videos and previews using saved measurements')
+    parser.add_argument('--defer-video',action='store_true')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
     for sample in (['2-1-1314','5-1-910'] if args.sample=='all' else [args.sample]):
         from centerline_methods import method_source
@@ -832,7 +707,7 @@ def main():
             output=ROOT/'outputs'/sample/('phenotypes-'+fit_source if args.centerline_method!='skeleton' else 'phenotypes')
             render_saved(sample,args.centerline_method,fit_source,output)
             print(f'{sample}: refreshed annotated video and previews',flush=True)
-        else:analyze(sample,config,args.centerline_method,fit_source)
+        else:analyze(sample,config,args.centerline_method,fit_source,defer_video=args.defer_video)
 
 
 if __name__=='__main__':main()

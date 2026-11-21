@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import urllib.request
 
 import cv2
@@ -24,10 +24,70 @@ from measurement_units import validate_scale, pixel_fields
 from pipeline_progress import PipelineProgress
 from workspace_sessions import save_draft, get_draft, load_config, confirm_head
 from worm_pipeline import run_stage
-from video_timing import verify_timebase
+from video_timing import verify_encoded, verify_timebase
 
 
 class SingleDeliveryTests(unittest.TestCase):
+    def test_encoded_video_checks_all_frames_and_reports_progress(self):
+        with patch('video_timing.cv2.VideoCapture') as capture:
+            decoder = capture.return_value
+            decoder.get.side_effect = {cv2.CAP_PROP_FRAME_WIDTH: 128,
+                cv2.CAP_PROP_FRAME_HEIGHT: 80, cv2.CAP_PROP_FPS: 12}.__getitem__
+            decoder.read.side_effect = [(True, None)] * 3 + [(False, None)]
+            progress = Mock()
+            size = verify_encoded('clip', dict(frames=3, fps=12), (127, 79), progress=progress)
+            self.assertEqual(size, (128, 80))
+            self.assertEqual([call.args for call in progress.call_args_list], [(1, 3), (2, 3), (3, 3)])
+            decoder.release.assert_called_once_with()
+
+    def test_encoded_video_validation_closes_decoder_on_every_failure(self):
+        cases = [('open', 'Cannot open'), ('size', 'resolution'), ('fps', 'frame rate'),
+                 ('short', 'frame count'), ('extra', 'frame count'), ('decode', 'decode failed'),
+                 ('cancel', 'cancelled')]
+        for case, message in cases:
+            with self.subTest(case=case), patch('video_timing.cv2.VideoCapture') as capture:
+                decoder = capture.return_value
+                decoder.isOpened.return_value = case != 'open'
+                decoder.get.side_effect = {cv2.CAP_PROP_FRAME_WIDTH: 126 if case == 'size' else 128,
+                    cv2.CAP_PROP_FRAME_HEIGHT: 80, cv2.CAP_PROP_FPS: 10 if case == 'fps' else 12}.__getitem__
+                count = 2 if case == 'short' else 4 if case == 'extra' else 3
+                decoder.read.side_effect = (RuntimeError('decode failed') if case == 'decode'
+                    else [(True, None)] * count + [(False, None)])
+                progress = Mock(side_effect=RuntimeError('cancelled')) if case == 'cancel' else None
+                with self.assertRaisesRegex(RuntimeError, message):
+                    verify_encoded('clip', dict(frames=3, fps=12), (127, 79), progress=progress)
+                decoder.release.assert_called_once_with()
+
+    def test_export_startup_failures_release_opened_video_handles(self):
+        from review_configured_video import export_video
+        source = dict(video='source.mp4', crop_xyxy=[0, 0, 127, 79], frames=3, fps=12)
+        for failure in ('source', 'metadata', 'writer'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+                cropped, raw, writer = Mock(), Mock(), Mock()
+                cropped.isOpened.return_value = True
+                raw.isOpened.return_value = failure != 'source'
+                raw.get.side_effect = {cv2.CAP_PROP_FRAME_COUNT: 2 if failure == 'metadata' else 3,
+                    cv2.CAP_PROP_FPS: 12, cv2.CAP_PROP_FRAME_WIDTH: 128, cv2.CAP_PROP_FRAME_HEIGHT: 80}.__getitem__
+                writer.isOpened.return_value = False
+                with patch('review_configured_video.cv2.VideoCapture', side_effect=[cropped, raw]), \
+                        patch('review_configured_video.cv2.VideoWriter', return_value=writer), \
+                        self.assertRaises((RuntimeError, ValueError)):
+                    export_video(Path(folder), 'result.mp4', source, [1], Mock())
+                cropped.release.assert_called_once_with()
+                raw.release.assert_called_once_with()
+                if failure == 'writer':
+                    writer.release.assert_called_once_with()
+                else:
+                    writer.release.assert_not_called()
+
+    def test_tracking_review_decode_failure_releases_source(self):
+        from review_configured_video import tracking_review
+        with patch('review_configured_video.cv2.VideoCapture') as capture:
+            capture.return_value.read.return_value = (False, None)
+            with self.assertRaisesRegex(RuntimeError, 'Missing source frame'):
+                tracking_review(Path('.'), dict(video='clip', crop_xyxy=[0, 0, 128, 80], frames=3), [1], Mock())
+            capture.return_value.release.assert_called_once_with()
+
     def test_short_opening_interval_preserves_pts_but_interior_jumps_fail(self):
         with patch('video_timing.cv2.VideoCapture') as capture:
             def check(milliseconds):

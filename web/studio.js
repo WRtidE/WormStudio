@@ -49,9 +49,10 @@
 
   let historyGroup='', historyItems=[], pickedSample='', groupSignature='', historySignature='';
   let reportsReady=false;
+  let exportingVideo=false;
   const resultItems=()=>historyGroup?historyItems:ResultNavigation.group(progress);
   const groupId=()=>historyGroup||progress?.batch?.group_id||'';
-  const sourceKey=item=>item.video_path||item.video_name;
+  const sourceKey=item=>WorkspaceLinks.pathKey(item.video_path||item.video_name);
   const stateLabels={complete:'已完成',running:'处理中',pending:'待处理',failed:'失败',cancelled:'已中断',removed:'已移出'};
 
   function viewGroup(id){
@@ -95,7 +96,7 @@
     const meta=progress?.batch?.groups?.find(x=>x.id===g);
     const signature=g || JSON.stringify(currentItems.map(i=>i.id||i.sample));
     if(signature!==groupSignature){groupSignature=signature;pickedSample='';}
-    const requestKey=JSON.stringify([historyGroup,g,historyGroup?meta?.complete:currentItems.filter(i=>i.status==='complete').map(i=>i.sample)]);
+    const requestKey=JSON.stringify([historyGroup,g,historyGroup?[meta?.complete,progress?.sample,progress?.status]:currentItems.filter(i=>i.status==='complete').map(i=>i.sample)]);
     if(chamberRequestKey!==requestKey){
       chamberRequestKey=requestKey;chamberReadFailed=false;reportsReady=false;chamberTableKey='';
       const visible=historyGroup?historyItems:currentItems;
@@ -118,7 +119,7 @@
     pane.classList.toggle('group-summary',!live);
     pane.classList.toggle('chambers-only',!report?.worms?.length);
     if(chosen)$('#current-name').textContent=chosen.name;
-    const display=live?progress:report?{status:'complete',sample:chosen.sample,phenotypes:report,video_name:chosen.video_name,summaryOnly:true,group:g,artifacts:report.videos || []}: {status:'ready'};
+    const display=live?{...progress,group:g}:report?{status:'complete',sample:chosen.sample,phenotypes:report,video_name:chosen.video_name,summaryOnly:true,group:g,artifacts:report.videos || []}: {status:'ready'};
     window.StudioResults.update(display);
     const index=completed.indexOf(chosen);
     $('#result-switcher').hidden=completed.length<2;
@@ -133,14 +134,18 @@
     $('#open-result-review').hidden=live||!chosen;
     $('#open-result-review').disabled=!canStart();
     $('#open-result-review').onclick=()=>chosen&&openSavedResult(chosen.sample).catch(e=>status(e.message,true));
-    $('#export-group').textContent=new Set(items.map(sourceKey)).size===1?'导出整个视频':'导出整个批次';
+    $('#export-group').textContent=new Set(items.map(sourceKey)).size===1?'导出汇总表':'导出批次汇总表';
+    $('#export-chamber-video').hidden=chosen?.chamber_id==null;
+    $('#export-chamber-video').disabled=exportingVideo;
     $('#export-video').disabled=!reportsReady || !chosen;
     $('#export-video').hidden=new Set(items.map(sourceKey)).size<2;
-    const tableKey=JSON.stringify([items,pickedSample,renderPhenotypes.selected(),chamberReadFailed,reportsReady,!!canStart()]);
+    const merged=chosen && progress?.chamber_videos?.find(job=>job.group===g && sourceKey(job)===sourceKey(chosen));
+    const tableKey=JSON.stringify([items,pickedSample,renderPhenotypes.selected(),chamberReadFailed,reportsReady,!!canStart(),merged]);
     if(chamberTableKey===tableKey)return;
     chamberTableKey=tableKey;
     $('#chamber-results-title').textContent=historyGroup?'历史批次结果':'本次分析结果';
     $('#chamber-count').textContent=items.length?new Set(items.map(sourceKey)).size+' 个视频 · '+completed.length+' / '+items.length+' 项已完成':chamberReadFailed?'读取失败':'正在读取批次…';
+    if(merged)$('#chamber-count').append(' · '+(merged.status==='running'?'正在合成全槽视频':merged.status==='complete'?'全槽视频已就绪':'合成失败：'+merged.error));
     $('#chamber-retry').hidden=!chamberReadFailed;
     const rows=$('#chamber-rows');rows.replaceChildren();
     for(const item of items){
@@ -162,7 +167,7 @@
           cell.append(button);
         }
         const videos = item.sample === progress.sample ? progress.artifacts : data?.videos;
-        if (item.status === 'complete' && videos?.some(a => a.key === 'video')) {
+        if (item.status === 'complete' && (videos?.some(a => a.key === 'video') || (worm && item.chamber_id!=null))) {
           const play = document.createElement('button');
           play.className = 'small-button';
           play.textContent = '查看视频';
@@ -180,6 +185,33 @@
     }
   }
   $('#chamber-retry').onclick=()=>{chamberRequestKey='';chamberTableKey='';renderResultNavigation();};
+  window.prepareChamberVideo = async (options) => {
+    const {job}=await jsonRequest('/api/chamber-video',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token},body:JSON.stringify(options)});
+    for (;;) {
+      const info=await jsonRequest('/api/chamber-video?job='+encodeURIComponent(job));
+      if(info.status==='complete')return {job,filename:info.filename};
+      if(info.status==='failed')throw Error(info.error);
+      await new Promise(resolve=>setTimeout(resolve,1000));
+    }
+  };
+  $('#export-chamber-video').onclick=async()=>{
+    const items=resultItems(), selected=items.find(i=>i.sample===pickedSample);
+    if(!selected || exportingVideo)return;
+    const missing=items.filter(i=>i.chamber_id!=null && sourceKey(i)===sourceKey(selected) && i.status!=='complete').map(i=>i.chamber_id);
+    if(missing.length && !window.confirm('槽 '+missing.join('、')+' 尚未完成。只导出已完成的槽吗？'))return;
+    const message=$('#chamber-video-status');
+    exportingVideo=true;renderResultNavigation();message.hidden=false;
+    message.textContent='正在准备 '+selected.video_name+' 的标注视频…';
+    try{
+      const file=await window.prepareChamberVideo({group:groupId(),sample:selected.sample,missing});
+      const link=document.createElement('a');
+      link.href='/artifact?chamber_video='+encodeURIComponent(file.job);
+      link.download=file.filename;link.textContent='保存 '+file.filename;
+      message.replaceChildren(link);link.click();
+    }catch(error){message.textContent='导出失败：'+error.message;}
+    finally{exportingVideo=false;renderResultNavigation();}
+  };
   $('#return-group').onclick=()=>{viewGroup('');if(!ResultNavigation.group(progress).length&&progress?.status!=='complete')showView(progress?.sample?'progress':'preview');};
   for(const [id,whole] of [['export-video',false],['export-group',true]]){
     $('#'+id).onclick=()=>{

@@ -58,7 +58,7 @@ class CurrentPipelineTests(unittest.TestCase):
     def run_pipeline(self, sample):
         with patch.object(metrics, 'ROOT', self.root), patch.object(body_sequence, 'ROOT', self.root), \
                 patch.object(worm_pipeline, 'ROOT', self.root):
-            quality_stage.run(sample)
+            quality_stage.run(sample, root=self.root)
             body_sequence.run(sample, 1)
             return self.analyze(sample)
 

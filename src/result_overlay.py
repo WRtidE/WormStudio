@@ -116,16 +116,25 @@ def draw_pose(image, mask, points, row, view):
 
 
 
-def draw_worm(image, mask, points, row):
+def draw_worm(image, mask, points, row, *, label=None):
     view=present_frame(row)
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(image, contours, -1, CONTOUR, 2, cv2.LINE_AA)
     yy,xx=np.nonzero(mask)
     if len(xx):
         xy=(int(xx.mean()),int(yy.mean()))
-        label=f'W{row["worm_id"]} '+('LEGACY' if view['quality']['legacy'] else 'ID REVIEW' if not view['identity_valid'] else 'REVIEW' if not view['posture_valid'] else '')
+        label=(label or f'W{row["worm_id"]}')+' '+('LEGACY' if view['quality']['legacy'] else 'ID REVIEW' if not view['identity_valid'] else 'REVIEW' if not view['posture_valid'] else '')
         cv2.putText(image,label,(xy[0]+7,xy[1]+17),0,.5,(0,0,0),3,cv2.LINE_AA)
         cv2.putText(image,label,(xy[0]+7,xy[1]+17),0,.5,CONTOUR if view['posture_valid'] else UNCERTAIN,1,cv2.LINE_AA)
+    if 'display_tips' in view:
+        if points is not None:
+            cv2.polylines(image, [np.rint(points).astype(np.int32)], False, CENTERLINE, 1, cv2.LINE_AA)
+        for side, point in view['display_tips'].items():
+            xy = tuple(np.rint(point).astype(int))
+            symbol, color = ('H?', (255,200,0)) if side == 'head' else ('T?', (0,110,255))
+            cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
+            cv2.putText(image, symbol, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
+        return
     if points is None: return
     points = np.rint(points).astype(np.int32)
     valid = view['posture_valid'] and row.get('display_source','formal')=='formal'

@@ -1,7 +1,7 @@
 """Track configured objects from separated anchor frames, on CUDA in both directions."""
 import argparse
 from compute_device import selected_device, inference_context, device_label, release_device_cache
-from resource_paths import RESOURCE_ROOT, sam2_checkpoint
+from resource_paths import sam2_checkpoint
 from pipeline_progress import report_progress
 from live_preview import PreviewCrop, report_tracking
 import csv
@@ -15,7 +15,8 @@ from scipy import ndimage as ndi
 from scipy.interpolate import splprep,splev
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-from analyze_phenotypes import ROOT,read_image,write_png
+from resource_paths import PROJECT_ROOT as ROOT
+from image_io import read_image, write_png
 from worm_colors import worm_color
 from sam2_models import model_spec, tracking_model_matches
 from sam2_frames import init_tracking_state, propagate_frames

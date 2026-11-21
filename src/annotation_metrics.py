@@ -13,7 +13,7 @@ def measure_mask(mask, *, frame, worm_id, measurement_mode, scale_um_per_px=None
     from measurement_units import validate_scale
     from framewise_pose import observed_pose, arc_midpoint
     from centerline_topology import geometry_quality
-    from analyze_phenotypes import frustum_volume
+    from skeleton_geometry import frustum_volume
     from phenotype_statistics import measure_posture
 
     units = dict(measurement_mode=measurement_mode, scale_um_per_px=scale_um_per_px)
@@ -21,19 +21,20 @@ def measure_mask(mask, *, frame, worm_id, measurement_mode, scale_um_per_px=None
     scale = 1. if measurement_mode == 'pixels' else float(scale_um_per_px)
     unit = 'px' if measurement_mode == 'pixels' else 'μm'
     mask = np.asarray(mask, dtype=bool)
-    if mask.ndim != 2 or mask.sum() < 20:
+    area = int(mask.sum())
+    if mask.ndim != 2 or area < 20:
         raise ValueError('请先确认面积足够的虫体轮廓。')
     row = dict(mask_valid=True, centerline_valid=True)
-    values = dict(length=None, width=None, area=float(mask.sum() * scale ** 2),
+    values = dict(length=None, width=None, area=float(area * scale ** 2),
                   extension=None, ratio=None, volume=None)
     line, reason, ignored = None, '', 0
     labels, count = ndimage.label(mask, structure=np.ones((3, 3)))
     sizes = np.bincount(labels.ravel()); sizes[0] = 0
     main = labels == sizes.argmax()
-    extra = int(mask.sum() - main.sum())
+    extra = area - int(sizes.max())
     # Permit only tiny isolated speckles, never reconnect a broken body. Keep the
     # original mask/area intact and disclose every excluded pixel to the user.
-    speckles_only = extra <= min(20, .001 * mask.sum())
+    speckles_only = extra <= min(20, .001 * area)
     if count > 1 and not speckles_only:
         reason = '轮廓不连续，请补全虫体或擦除分离的小块。'
     else:

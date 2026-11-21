@@ -1,3 +1,5 @@
+# Legacy Conda bootstrap, retained for existing portable-build workflows.
+# Source development uses pyproject.toml and uv.lock; see docs/INSTALL.md.
 name: WormStudio
 channels:
   - defaults

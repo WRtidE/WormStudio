@@ -11,7 +11,7 @@ import numpy as np
 def prepare_recovered_edit(source, summary, seed_folder):
     """Rebase original prompts into the larger ROI so a repaired mask can be edited."""
     from crop_recovery import place
-    from head_tail import anchors_in_crop
+    from head_evidence import anchors_in_crop
     info = summary.get('crop_recovery', {})
     restored = [e for e in info.get('events', []) if e['decision']=='recovered']
     if not restored:
@@ -45,11 +45,11 @@ def prepare_recovered_edit(source, summary, seed_folder):
     source['crop_xyxy']=result_crop
 
 
-def request_edit(progress, root, run, sequence):
-    from manual_worm_annotation import Annotation, png
+def request_edit(progress, root, run, sequence, *, annotation_factory):
+    from image_io import png
     from live_preview import latest_sequence
     from run_storage import fresh_sample
-    from head_tail import anchors_in_crop
+    from head_evidence import anchors_in_crop
 
     with progress.lock:
         current = getattr(progress.server, 'annotation', None)
@@ -71,7 +71,7 @@ def request_edit(progress, root, run, sequence):
         if progress.next_ready.is_set() or progress.data['status'] not in ('running', 'complete', 'failed', 'cancelled'):
             raise ValueError('当前任务正在切换，请稍后重试')
         source = copy.deepcopy(progress.config)
-        from crop_recovery import tracking_directory
+        from tracking_data import tracking_directory
         tracking = tracking_directory(root/'outputs'/source['sample'],source)
         paths = {worm['id']: tracking / 'masks' /
                  f"worm-{worm['id']}" / f'{frame:06d}.png'
@@ -92,7 +92,7 @@ def request_edit(progress, root, run, sequence):
         settings = dict(source, sample=sample,
                         previous_sample=source['sample'])
         settings.pop('identity_confirmations', None)
-        candidate = Annotation(settings, frame=frame)
+        candidate = annotation_factory(settings, frame=frame)
         h, w = candidate.image.shape[:2]
         worms = []
         for worm, path in paths.items():
@@ -134,8 +134,8 @@ def validate_edit(annotation, absolute, masks):
 
 def merge_edit(annotation, config, masks):
     """Keep other groups and anchors; add/replace only this frame's reviewed masks."""
-    from manual_worm_annotation import png
-    from head_tail import normalize_anchors
+    from image_io import png
+    from head_evidence import normalize_anchors
     source = annotation.correction_source
     groups = copy.deepcopy(source['groups'])
     cx, cy, _, _ = source['crop_xyxy']

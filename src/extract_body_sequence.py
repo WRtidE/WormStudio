@@ -5,7 +5,9 @@ import time
 
 import numpy as np
 
-from analyze_phenotypes import ROOT, load_sample, json_safe
+from resource_paths import PROJECT_ROOT as ROOT
+from tracking_data import load_sample
+from serialization import json_safe
 from body_sequence_solver import solve, VERSION, signature
 from live_preview import report_geometry
 from pipeline_progress import report_progress
@@ -15,7 +17,7 @@ from body_frame_cache import cached_frames
 def run(sample,worm):
     base=ROOT/'outputs'/sample
     config=json.loads((base/'pipeline-config.json').read_text(encoding='utf8'))
-    data,source,ids,get_mask,_=load_sample(sample,apply_guards=False)
+    data,source,ids,get_mask,_=load_sample(sample,apply_guards=False,root=ROOT)
     if ids!=[worm]:raise ValueError('当前方法每次处理一个腔室的一条线虫')
     started=time.monotonic()
     with cached_frames(source,get_mask,worm,progress=lambda current,total:
@@ -27,7 +29,7 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
     """Keep mappings alive through geometry previews and quality serialization."""
     def progress(current,total,detail,fraction):
         report_progress(current,total,detail,fraction=.1+.85*fraction)
-    from head_tail import anchors_in_crop
+    from head_evidence import anchors_in_crop
     manual=anchors_in_crop(config.get('head_annotations',{}).get(str(worm)),config['crop_xyxy'],source['crop_xyxy'])
     lines,facts,audit=solve(masks,gray,source['fps'],manual=manual,
         point_count=config.get('tracking_point_count',13),source_invalid=config.get('source_invalid_frames',()),
@@ -37,7 +39,7 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
         valid=f is not None
         quality.append(dict(frame=i,mask_valid=bool(masks[i].any()),centerline_valid=valid,
             quality_reasons=[] if valid else ['no_supported_body_path'],
-            topology='simple' if f and f['candidate']=='clear_observation' else 'paired_contact' if valid else 'uncertain',
+            topology='simple' if f and f['candidate'] in ('clear_observation','short_observation') else 'paired_contact' if valid else 'uncertain',
             selected_candidate=f['candidate'] if f else None,branch_score_margin=None,
             endpoint_a_inferred=bool(f and not f['head_observed']),endpoint_b_inferred=bool(f and not f['tail_observed']),
             uncertain_point_ranges=([[0,4]] if f and not f['head_observed'] else [])+

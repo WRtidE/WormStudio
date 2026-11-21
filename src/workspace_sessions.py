@@ -4,9 +4,9 @@ from pathlib import Path
 import secrets
 import time
 import hashlib
-import copy
 import shutil
 from resource_paths import motion_constraints_path
+from run_storage import annotated_video_path, result_video_files, saved_videos
 from datetime import datetime,timezone
 
 
@@ -77,7 +77,7 @@ def confirm_head(root, sample, worm, frame, endpoint):
     if row.get('centerline_topology','simple')!='simple': raise ValueError('自交帧不用于头尾确认')
     with np.load(result/'centerlines.npz',allow_pickle=False) as lines:
         point=lines[f'w{worm}_f{frame}'][0 if endpoint==0 else -1].tolist()
-    from head_tail import normalize_anchors
+    from head_evidence import normalize_anchors
     anchors=normalize_anchors(config.get('head_annotations',{}).get(str(worm)))
     space = {}
     summary_path = result/'summary.json'
@@ -93,7 +93,7 @@ def confirm_head(root, sample, worm, frame, endpoint):
 
 
 def remove_head(root,sample,worm,anchor_id):
-    from head_tail import normalize_anchors
+    from head_evidence import normalize_anchors
     _,config=load_config(root,sample)
     if type(worm) is not int or not isinstance(anchor_id,str):raise ValueError('锚点标识无效')
     anchors=normalize_anchors(config.get('head_annotations',{}).get(str(worm)))
@@ -149,8 +149,8 @@ def identity_frame(root,sample,worm,frame):
     import cv2
     import numpy as np
     base,config=load_config(root,sample)
-    from analyze_phenotypes import load_sample
-    _,source,ids,get_mask,_=load_sample(sample,apply_guards=False)
+    from tracking_data import load_sample
+    _,source,ids,get_mask,_=load_sample(sample,apply_guards=False,root=root)
     if type(worm) is not int or worm not in ids or type(frame) is not int or not 0<=frame<source['frames']:raise ValueError('复核画面帧号或虫编号无效')
     cap=cv2.VideoCapture(source['video']);cap.set(cv2.CAP_PROP_POS_FRAMES,frame);ok,image=cap.read();cap.release()
     if not ok:raise ValueError('原始帧无法读取')
@@ -177,7 +177,7 @@ def derive_geometry_run(root,sample,config=None):
     from run_storage import fresh_sample,input_identity,copy_tracking_snapshot
     from worm_pipeline import complete,build_stages,validate_config
     old,original=load_config(root,sample)
-    config=copy.deepcopy(config if config is not None else original)
+    config=config if config is not None else original
     def geometry_inputs(c):
         return {k:v for k,v in c.items() if k not in ('head_annotations','head_detection','identity_reviews','previous_sample')}
     if geometry_inputs(config)!=geometry_inputs(original):
@@ -198,7 +198,7 @@ def derive_geometry_run(root,sample,config=None):
     for stage in reusable:
         if not matches(stage,old,old_state.get('stages',{}).get(stage['name'],{})):
             raise ValueError('缓存内容与保存的校验值不同，不能复用；请从原输入新建任务重算')
-    config=copy.deepcopy(checked);config['sample']=fresh_sample(sample,root/'outputs')
+    config=checked;config['sample']=fresh_sample(sample,root/'outputs')
     config['previous_sample']=sample
     base=root/'outputs'/config['sample'];base.mkdir(parents=True)
     copy_tracking_snapshot(old/'sam2-tracking',base/'sam2-tracking')
@@ -238,28 +238,6 @@ def restore_saved_timing(progress,base,sample):
     progress.started=progress.ended=progress.active_started=None
     progress.data.update(history_reopened=True, saved_elapsed_seconds=recorded_number('elapsed_seconds'),
                          saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
-
-
-def clean_video_path(folder, sample):
-    return folder / f'{sample}_annotated_full-frame_clean.mp4'
-
-
-def result_video_files(base, config):
-    from centerline_methods import method_source
-    folder = base / ('phenotypes-' + method_source(config['centerline_method']))
-    original = folder / f'{config["sample"]}_annotated_full-frame.mp4'
-    clean = clean_video_path(folder, config['sample'])
-    video = original
-    if clean.is_file() and (not original.is_file() or clean.stat().st_mtime_ns >= original.stat().st_mtime_ns):
-        video = clean
-    return [('video', '标注视频', video, 'export'),
-            ('source-video', '原始视频（只读）', Path(config['video']), 'metrics')]
-
-
-def saved_videos(base, config):
-    stages = json.loads((base / 'pipeline-state.json').read_text(encoding='utf-8')).get('stages', {})
-    return {key: (label, path) for key, label, path, stage in result_video_files(base, config)
-            if stages.get(stage, {}).get('status') in ('complete', 'reused') and path.is_file()}
 
 
 def chamber_summaries(root, items):
@@ -321,7 +299,7 @@ def reopen(progress,root,sample):
     exported = any(k=='export' for k,_ in completed)
     video = next(path for key, _, path, _ in result_video_files(base,config) if key=='video')
     progress.data['legacy_video'] = (exported and video.is_file() and summary.get('overlay_version') != OVERLAY_VERSION
-                                     and video != clean_video_path(report.parent,sample))
+                                     and video != annotated_video_path(report.parent,sample, clean=True))
     progress.finish(base,config,'export' if exported else 'metrics')
     progress.server.annotation=None
 

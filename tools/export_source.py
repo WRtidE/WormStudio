@@ -9,8 +9,8 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-TOP = ('.gitignore', '.gitattributes', '.editorconfig', 'README.md', 'CHANGELOG.md', 'THIRD_PARTY.md',
-       'CONTRIBUTING.md', 'environment.yml', 'requirements.txt', 'requirements-cuda.txt',
+TOP = ('.gitignore', '.gitattributes', '.editorconfig', 'AGENTS.md', 'README.md', 'CHANGELOG.md', 'THIRD_PARTY.md',
+       'CONTRIBUTING.md', '.python-version', 'pyproject.toml', 'uv.lock', 'environment.yml', 'requirements.txt', 'requirements-cuda.txt',
        'requirements-cpu.txt', 'requirements-macos.txt', 'requirements-sam2.txt', 'studio.py', 'worm_pipeline.py',
        'evaluation.py', 'review_saved_result.py', 'run_tests.py', 'start.bat')
 DOCS = ('INSTALL.md', 'ARCHITECTURE.md', 'USER_GUIDE.md', 'MODELS.md', 'QUALITY_SCHEMA.md',

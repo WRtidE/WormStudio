@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip">下载 Windows 版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
@@ -28,16 +28,18 @@
 
 ## 下载与启动
 
-桌面包已经包含运行环境、识别模型和练习视频。第一次使用，下载与你的电脑对应的**桌面包**即可。
+Windows v1.1.0 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时自动检测显卡、下载并校验运行环境和模型。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.0.3 基础包，约 1.40 GiB](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”。打开解压后的 `WormStudio` 文件夹，双击 `WormStudio.exe`。基础包可直接用 CPU 分析。 |
+| Windows 64 位（x64） | [Windows v1.1.0 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.0/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
+
+Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.03 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。Release 中的 `.tar.gz`、模型和校验清单由程序自动使用，无需逐一手动下载。
 
 ## 用练习视频完成第一次分析
 
-下面以 Windows v1.0.3 为例。随包的 `practice.avi` 只有 5 帧，适合第一次熟悉标注和导出。
+首次准备完成后，可用随包的 `practice.avi` 熟悉标注和导出；练习视频只有 5 帧。
 
 1. **选择视频。** 在左侧文件列表中选择 `practice.avi`，点击 **开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
 2. **选择区域和单位。** 练习视频选择 **完整画面** 和 **像素单位**，点击 **下一步：点选线虫**。分析实验视频时，如果需要以微米报告体长，选择 **标尺标定**，填入画面中标尺的实际长度（μm），再用 **手动选两端** 点出标尺的两个端点。
@@ -72,6 +74,8 @@ v1.0.3 导出的标注视频保留完整画面，逐帧数值显示在播放器�
 
 ## Windows 可选 GPU 加速
 
+v1.1.0 在线版会自动选择兼容的 NVIDIA 显卡。验证失败时可点击 **改用 CPU**；之后也可以在 **设置 → 通用 → 检测 GPU** 安排下次启动准备 GPU 环境。以下离线分包步骤仅适用于旧版 v1.0.3。
+
 打开 **设置 → 通用 → 检测 GPU**。先看检测结果，再决定是否下载组件。
 
 | 检测结果 | 接下来怎么做 |
@@ -89,7 +93,7 @@ Windows v1.0.3 沿用 v1.0.2 的 GPU 组件。
 ## 分析更多视频
 
 - 要**依次分析多个视频**，一次导入多个文件，按顺序为每个视频确认区域、单位和虫体，最后点击 **确认虫体并开始顺序处理**。
-- 同一画面包含多个培养槽时，先勾选 **按培养槽标注** 再开始标注。分别框选各槽并确认虫体，完成后可按槽查看结果。
+- 同一画面包含多个培养槽时，先勾选 **按培养槽标注**，分别框选并确认虫体。使用支持全槽导出的版本时，同一原片的所有槽完成后会自动生成一个 MP4。在批次结果页选中该原片的任一槽，点 **导出标注视频** 即可保存。**导出汇总表** 保存指标 CSV。
 - 要**统计线虫通过通道的次数**，在左侧切换至 **通道计数**，设置通道数、检测线和两侧边界后点击 **开始计数**。结果支持逐帧回看和导出 Excel。
 
 更详细的标注、批处理和复核操作见[完整使用指南](docs/USER_GUIDE.md)。指标的计算条件见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
@@ -99,3 +103,5 @@ Windows v1.0.3 沿用 v1.0.2 的 GPU 组件。
 [桌面版发布页与校验清单](https://github.com/WRtidE/WormStudio/releases) · [更新记录](CHANGELOG.md) · [验证记录](docs/VALIDATION.md)
 
 需要从源码运行或参与开发，可参阅 [Windows 安装与启动](docs/INSTALL.md)、[Mac 开发指南](docs/MACOS.md)、[代码架构](docs/ARCHITECTURE.md)、[开发与测试](docs/DEVELOPMENT.md)和[发布指南](docs/RELEASE.md)。项目自有代码尚未指定统一开源许可证。第三方依赖及模型的来源和许可见[第三方说明](THIRD_PARTY.md)。
+
+源码开发使用 uv 管理项目内的 `.venv`。首次执行 `uv sync --locked --extra cpu --managed-python`（NVIDIA CUDA 用户将 `cpu` 改为 `cuda`），然后按安装指南准备模型。日常使用 `uv run --no-sync studio.py` 或双击 `start.bat` 启动；测试使用 `uv run --no-sync run_tests.py`。

@@ -4,11 +4,12 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 from skimage.graph import route_through_array
 from skimage.morphology import skeletonize
-from endpoint_order import sampled
+from skeleton_geometry import sampled
+from head_temporal import MAX_INTERVAL_S
 from quality_schema import permissions, flag
 from centerline_topology import geometry_quality
 
-VERSION = 'display-centerlines-v4-solid-review'
+VERSION = 'display-centerlines-v5-visible-tips'
 
 
 def dense_points(p):
@@ -143,6 +144,82 @@ def fill_display_gaps(rows, output, get_mask):
             row.update(display_source='temporal_mask_review',display_valid=True,
                        display_inside_fraction=inside_fraction(line,mask),
                        display_reason='current_mask_and_bracketing_poses',display_version=VERSION)
+
+
+def visible_mask_tips(mask, length):
+    """Find free skeleton tips on the main silhouette, away from forks and crop edges."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return np.empty((0, 2))
+    x, y = xs.min(), ys.min()
+    patch = np.pad(mask[y:ys.max()+1, x:xs.max()+1], 1)
+    components, _ = ndimage.label(patch, structure=np.ones((3, 3), bool))
+    areas = np.bincount(components.ravel())[1:]
+    if areas.max() < .75 * areas.sum():
+        return np.empty((0, 2))
+    skeleton = skeletonize(components == areas.argmax() + 1)
+    degree = ndimage.convolve(skeleton.astype(np.uint8), np.ones((3, 3), np.uint8),
+                              mode='constant') - skeleton
+    tips = np.argwhere(skeleton & (degree == 1))
+    forks = np.argwhere(skeleton & (degree > 2))
+    if len(forks):
+        tips = tips[cKDTree(forks).query(tips)[0] >= max(3., .03 * length)]
+    tips = tips[:, ::-1] + [x-1, y-1]
+    margin = max(2., .01 * length)
+    return tips[np.all((tips >= margin) & (tips < np.array(mask.shape[::-1])-margin), axis=1)]
+
+
+def track_visible_tips(rows, display, get_mask, fps):
+    """Save independent display landmarks. A missing body path never becomes a measurement."""
+    anchors = {}
+    for i, row in enumerate(rows):
+        if not all(flag(row, k) for k in ('source_valid', 'mask_valid', 'identity_valid')):
+            continue
+        p = display.get((int(row['worm_id']), i))
+        if (p is None or row.get('display_source') != 'formal'
+                or not flag(row, 'body_sequence_head_known') or flag(row, 'head_anchor_conflict')):
+            continue
+        tips = p[[0, -1]]
+        hidden = [row.get(k+'_display_estimated_end') not in (None, '') for k in ('head', 'tail')]
+        if any(hidden):
+            row['display_tip_source'] = 'body_sequence_visible'
+            for side, xy, missed in zip(('head', 'tail'), tips, hidden):
+                if not missed:
+                    row['display_'+side+'_tip_x_px'], row['display_'+side+'_tip_y_px'] = xy
+        anchors[i] = (tips, np.linalg.norm(np.diff(p, axis=0), axis=1).sum(), hidden)
+
+    for left, right in zip(anchors, list(anchors)[1:]):
+        gap = right - left
+        if gap < 2 or gap > 3 or gap / fps > MAX_INTERVAL_S:
+            continue
+        span = rows[left:right+1]
+        if (any(r.get('identity_segment') != span[0].get('identity_segment')
+                or not all(flag(r, k) for k in ('source_valid', 'mask_valid', 'identity_valid'))
+                or flag(r, 'head_anchor_conflict') for r in span)
+                or any(r.get('head_reason') != 'no_supported_body_path' for r in span[1:-1])):
+            continue
+        start, end = anchors[left][0], anchors[right][0]
+        length = min(anchors[left][1], anchors[right][1])
+        for i in range(left+1, right):
+            row = rows[i]
+            mask = get_mask(int(row['worm_id']), i)
+            tips = visible_mask_tips(mask, length)
+            row['display_tip_source'] = 'bracketed_mask_tips'
+            row['display_tip_reference_frames'] = f'{left},{right}'
+            if not len(tips):
+                continue
+            predicted = start + (end - start) * ((i-left) / gap)
+            distances = np.linalg.norm(predicted[:, None] - tips, axis=2)
+            for j, side in enumerate(('head', 'tail')):
+                if anchors[left][2][j] or anchors[right][2][j]:
+                    continue
+                k = distances[j].argmin()
+                distance = distances[j, k]
+                if (np.linalg.norm(end[j]-start[j]) > .30 * length * gap or distance > .05 * length
+                        or distances[1-j, k] <= distance + .05 * length
+                        or np.count_nonzero(distances[j] <= distance + .03 * length) > 1):
+                    continue
+                row['display_'+side+'_tip_x_px'], row['display_'+side+'_tip_y_px'] = tips[k]
 
 
 def build_display(rows, formal_lines, candidates, get_mask, fallback, allow_fallback=True):

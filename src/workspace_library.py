@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import secrets
 import time
+from collections import defaultdict
+from itertools import chain
 
 VIDEO = {'.mp4', '.avi', '.mov', '.mkv', '.m4v', '.mpg', '.mpeg', '.wmv', '.webm'}
 IMAGE = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff'}
@@ -129,12 +131,13 @@ def folder_name(name):
 
 
 def nodes(state,parent):
-    return sorted((item for item in state.get('folders',[])+state['files'] if not item.get('removed') and item.get('parent')==parent),
+    return sorted((item for item in chain(state['folders'],state['files']) if not item.get('removed') and item.get('parent')==parent),
                   key=lambda item:(item.get('order',0),item['id']))
 
 
 def next_order(state,parent):
-    return max((item.get('order',0) for item in nodes(state,parent)),default=-1)+1
+    return max((item.get('order',0) for item in chain(state['folders'],state['files'])
+                if not item.get('removed') and item.get('parent')==parent),default=-1)+1
 
 
 def check_parent(state,parent):
@@ -162,11 +165,17 @@ def ensure_folder(state,name,parent):
 
 
 def descendants(state,folder_id):
+    children = defaultdict(list)
+    for folder in state['folders']:
+        children[folder.get('parent')].append(folder['id'])
     result={folder_id}
-    while True:
-        extra={f['id'] for f in state['folders'] if f.get('parent') in result}
-        if extra<=result:return result
-        result.update(extra)
+    pending = [folder_id]
+    while pending:
+        for child in children[pending.pop()]:
+            if child not in result:
+                result.add(child)
+                pending.append(child)
+    return result
 
 
 def organize(root,body):

@@ -30,3 +30,11 @@ def pixel_fields(record):
         if '_um' in key and key != 'scale_um_per_px':
             record[key.replace('_um', '_px')] = record.pop(key)
     return record
+
+
+def number(value):
+    try:
+        value = float(value)
+        return value if math.isfinite(value) else None
+    except (TypeError, ValueError):
+        return None

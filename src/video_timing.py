@@ -1,6 +1,29 @@
-"""Verify the supported constant-frame-rate timebase before temporal measurement."""
+"""Validate decoded video metadata and the timebase used for measurement."""
 import cv2
 import numpy as np
+
+
+def verify_encoded(target, source, size, *, progress=None):
+    """Check every exported frame and always close the decoder on failure."""
+    cap = cv2.VideoCapture(str(target))
+    encoded_size = tuple(value + value % 2 for value in size)
+    try:
+        if not cap.isOpened():
+            raise RuntimeError('Cannot open exported video')
+        if (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))) != encoded_size:
+            raise RuntimeError('Exported resolution mismatch')
+        if abs(cap.get(cv2.CAP_PROP_FPS) - source['fps']) > .001:
+            raise RuntimeError('Exported frame rate mismatch')
+        count = 0
+        while cap.read()[0]:
+            count += 1
+            if progress is not None:
+                progress(count, source['frames'])
+        if count != source['frames']:
+            raise RuntimeError('Exported frame count mismatch')
+    finally:
+        cap.release()
+    return encoded_size
 
 
 def verify_timebase(path, count, fps):

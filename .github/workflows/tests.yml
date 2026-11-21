@@ -14,21 +14,22 @@ jobs:
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
-          python-version: '3.11'
+          version: '0.11.2'
+          enable-cache: true
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install -r requirements-cpu.txt
-      - run: python -m pip install -r requirements.txt
-      - run: python tools/check_source.py
+      - run: uv run --no-project --python 3.11.15 tools/check_source.py
+      - run: uv sync --locked --extra cpu --managed-python
+      - run: uv pip check
       - name: Verify source export and its file checksums
         if: runner.os == 'Linux'
-        run: python tools/export_source.py --output "$RUNNER_TEMP/WormStudio-source"
+        run: uv run --no-sync tools/export_source.py --output "$RUNNER_TEMP/WormStudio-source"
       - name: Windows x64 desktop startup from a Unicode path
         if: runner.os == 'Windows'
-        run: python tests/windows_desktop_smoke.py
-      - run: python run_tests.py
+        run: uv run --no-sync tests/windows_desktop_smoke.py
+      - run: uv run --no-sync run_tests.py
       - run: node --test tests/*.js tests/*.cjs
         shell: bash

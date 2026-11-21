@@ -53,7 +53,8 @@ el('gpu').onclick = async () => {
   try {
     const result = await api.checkGpu();
     status.textContent = result.message;
-    el('gpu-install').hidden = !['available', 'prepared'].includes(result.state);
+    el('gpu-install').hidden = !['available', 'prepared', 'online'].includes(result.state);
+    el('gpu-install').textContent = result.state === 'online' ? '下次启动重新准备 GPU' : '启用离线加速包…';
   } catch {
     status.textContent = '检测未完成，请稍后重新检测。';
   } finally {
@@ -63,8 +64,9 @@ el('gpu').onclick = async () => {
 };
 el('gpu-install').onclick = async () => {
   try {
-    await api.openGpu();
-    el('gpu-status').textContent = '已打开离线加速安装窗口。完成启用后重新打开工作台即可使用。';
+    const result = await api.openGpu();
+    el('gpu-status').textContent = result?.online ? '已设置。完成当前任务并退出后，下次启动将自动检测并准备 GPU 组件。'
+      : '已打开离线加速安装窗口。完成启用后重新打开工作台即可使用。';
   } catch {
     el('gpu-status').textContent = '未能打开离线加速安装窗口，请重试。';
   }

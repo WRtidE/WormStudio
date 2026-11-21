@@ -7,7 +7,9 @@ import shutil
 import numpy as np
 from scipy import ndimage as ndi
 from tracking_quality import reference_area, mark_quality
-from analyze_phenotypes import ROOT,load_sample,write_png
+from resource_paths import PROJECT_ROOT as ROOT
+from tracking_data import load_sample
+from image_io import write_png
 
 
 def main():

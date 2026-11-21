@@ -14,6 +14,15 @@ from workspace_sessions import catalog
 
 
 class LibraryTreeTests(unittest.TestCase):
+    def test_descendants_handle_deep_unordered_folders_without_touching_siblings(self):
+        folders = [dict(id=f'f{i}', parent=f'f{i-1}' if i else None) for i in reversed(range(1500))]
+        folders.append(dict(id='separate', parent=None))
+        state = dict(folders=folders, files=[])
+        self.assertEqual(library.descendants(state, 'f0'), {f'f{i}' for i in range(1500)})
+        self.assertEqual(library.descendants(state, 'separate'), {'separate'})
+        folders[-1]['parent'] = 'separate'
+        self.assertEqual(library.descendants(state, 'separate'), {'separate'})
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
 

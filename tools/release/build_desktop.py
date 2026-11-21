@@ -7,7 +7,6 @@ wheels in wheels-{mac,win}. Windows also uses Microsoft's Visual C++ runtime.
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import plistlib
 import shutil

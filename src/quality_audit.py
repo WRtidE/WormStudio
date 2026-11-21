@@ -1,7 +1,7 @@
 """Explain measurement attrition without changing any scientific gate."""
 import csv
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from quality_schema import flag,permissions
 
 VERSION='quality-attrition-v1'
@@ -21,31 +21,48 @@ def evidence(value):
     except (TypeError,ValueError):return {}
 
 def audit(rows):
-    worms={}
-    for worm in sorted({int(r['worm_id']) for r in rows}):
-        group=[r for r in rows if int(r['worm_id'])==worm]
-        geometry=[r for r in group if flag(r,'source_valid') and flag(r,'mask_valid') and flag(r,'pose_valid')]
-        blocked=[r for r in geometry if not flag(r,'identity_valid')]
-        triggers=[]
+    groups = defaultdict(list)
+    for row in rows:
+        groups[int(row['worm_id'])].append(row)
+    worms = {}
+    for worm, group in sorted(groups.items()):
+        counts = Counter()
+        statuses = Counter()
+        blocked_frames = []
+        rejected_frames = []
+        triggers = []
         for row in group:
-            e=evidence(row.get('identity_evidence'));frame=int(row['frame'])
-            if e.get('event_frame')==frame and row.get('identity_status') in ('jump_review','contact_ambiguous'):
-                triggers.append(dict(frame=frame,status=row['identity_status'],evidence=e))
-        worms[str(worm)]=dict(frames=len(group),source_valid=sum(flag(r,'source_valid') for r in group),
-            mask_valid=sum(permissions(r)['area'] for r in group),geometric_pose_valid=len(geometry),
-            formal_posture_valid=sum(permissions(r)['posture'] for r in group),
-            identity_valid=sum(flag(r,'identity_valid') for r in group),
-            identity_auto_reassociated=sum(r.get('identity_link_source')=='auto_reassociated' for r in group),
-            identity_human_confirmed=sum(flag(r,'identity_human_confirmed') for r in group),
-            identity_blocked_geometry=len(blocked),identity_blocked_ranges=intervals(int(r['frame']) for r in blocked),
-            tracklet_pose_valid=sum(flag(r,'tracklet_pose_valid') for r in group),
-            tracklet_additional_pose=sum(flag(r,'tracklet_pose_valid') and not flag(r,'identity_valid') for r in group),
-            tracklet_motion_valid=sum(flag(r,'tracklet_motion_valid') for r in group),
-            formal_posture_rejected_ranges=intervals(int(r['frame']) for r in group if not permissions(r)['posture']),
-            head_confirmed=sum(flag(r,'head_identity_confirmed') for r in group),
-            head_conflict_frames=sum(flag(r,'head_anchor_conflict') for r in group),
-            identity_status_counts=dict(Counter(r.get('identity_status','missing') for r in group)),triggers=triggers)
-    return dict(version=VERSION,meaning='Rule acceptance and gating; not biological accuracy',worms=worms)
+            frame = int(row['frame'])
+            allowed = permissions(row)
+            source_valid = flag(row, 'source_valid')
+            identity_valid = flag(row, 'identity_valid')
+            geometry_valid = source_valid and flag(row, 'mask_valid') and flag(row, 'pose_valid')
+            tracklet_pose = flag(row, 'tracklet_pose_valid')
+            counts['source_valid'] += source_valid
+            counts['mask_valid'] += allowed['area']
+            counts['geometric_pose_valid'] += geometry_valid
+            counts['formal_posture_valid'] += allowed['posture']
+            counts['identity_valid'] += identity_valid
+            counts['identity_auto_reassociated'] += row.get('identity_link_source') == 'auto_reassociated'
+            counts['identity_human_confirmed'] += flag(row, 'identity_human_confirmed')
+            counts['tracklet_pose_valid'] += tracklet_pose
+            counts['tracklet_additional_pose'] += tracklet_pose and not identity_valid
+            counts['tracklet_motion_valid'] += flag(row, 'tracklet_motion_valid')
+            counts['head_confirmed'] += flag(row, 'head_identity_confirmed')
+            counts['head_conflict_frames'] += flag(row, 'head_anchor_conflict')
+            statuses[row.get('identity_status', 'missing')] += 1
+            if geometry_valid and not identity_valid:
+                blocked_frames.append(frame)
+            if not allowed['posture']:
+                rejected_frames.append(frame)
+            event = evidence(row.get('identity_evidence'))
+            if event.get('event_frame') == frame and row.get('identity_status') in ('jump_review', 'contact_ambiguous'):
+                triggers.append(dict(frame=frame, status=row['identity_status'], evidence=event))
+        worms[str(worm)] = dict(frames=len(group), **counts,
+            identity_blocked_geometry=len(blocked_frames), identity_blocked_ranges=intervals(blocked_frames),
+            formal_posture_rejected_ranges=intervals(rejected_frames),
+            identity_status_counts=dict(statuses), triggers=triggers)
+    return dict(version=VERSION, meaning='Rule acceptance and gating; not biological accuracy', worms=worms)
 
 def write_audit(output,rows):
     result=audit(rows)

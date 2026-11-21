@@ -60,11 +60,35 @@ def copy_tracking_snapshot(source, destination):
 
 def fresh_sample(name, outputs):
     stem = re.sub(r'[^\w.-]', '-', name).strip('.-') or 'video'
+    if (outputs / stem).is_dir():
+        # Older revisions could truncate a preceding hex suffix before appending another.
+        stem = re.sub(r'(?:-\d{8}-\d{6}-[0-9a-f]{1,4})+$', '', stem) or 'video'
     stem = stem[:50]
     while True:
         sample = f'{stem}-{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}'
         if not (outputs / sample).exists():
             return sample
+
+
+def video_path(folder, preferred, compact):
+    """Keep normal download names and find compact exports after a workspace move."""
+    normal = folder / preferred
+    short = folder / compact
+    if short.is_file():
+        return short
+    if len(str(normal.absolute()).encode('utf-16-le')) // 2 < 260:
+        return normal
+    try:
+        if normal.is_file():  # Existing export on a long-path-capable filesystem.
+            return normal
+    except OSError:
+        pass
+    return short
+
+
+def annotated_video_path(folder, sample, *, clean=False):
+    suffix = '_clean' if clean else ''
+    return video_path(folder, f'{sample}_annotated_full-frame{suffix}.mp4', f'annotated{suffix}.mp4')
 
 
 def input_identity(config, phenotype, motion_path):
@@ -100,3 +124,21 @@ def preserve_run(config, outputs):
         record['config'] = config
         (target/'annotation.json').write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
     return config
+
+
+def result_video_files(base, config):
+    from centerline_methods import method_source
+    folder = base / ('phenotypes-' + method_source(config['centerline_method']))
+    original = annotated_video_path(folder, config['sample'])
+    clean = annotated_video_path(folder, config['sample'], clean=True)
+    video = original
+    if clean.is_file() and (not original.is_file() or clean.stat().st_mtime_ns >= original.stat().st_mtime_ns):
+        video = clean
+    return [('video', '标注视频', video, 'export'),
+            ('source-video', '原始视频（只读）', Path(config['video']), 'metrics')]
+
+
+def saved_videos(base, config):
+    stages = json.loads((base / 'pipeline-state.json').read_text(encoding='utf-8')).get('stages', {})
+    return {key: (label, path) for key, label, path, stage in result_video_files(base, config)
+            if stages.get(stage, {}).get('status') in ('complete', 'reused') and path.is_file()}

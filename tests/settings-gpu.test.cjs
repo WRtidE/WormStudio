@@ -37,6 +37,11 @@ test('GPU check shows progress and the result inside Settings without launching 
   finish({state:'available', message:'当前使用 CPU'});
   await next;
   assert.equal(install.hidden, false);
+  const online = button.onclick();
+  finish({state:'online', message:'下次启动准备 GPU'});
+  await online;
+  assert.equal(install.hidden,false);
+  assert.equal(install.textContent,'下次启动重新准备 GPU');
   const retry = button.onclick();
   fail(new Error('timeout'));
   await retry;

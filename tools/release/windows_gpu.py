@@ -183,22 +183,32 @@ def prepare(wheels, destination, update):
             if digest.hexdigest() != WHEELS[path.name]:
                 raise ValueError(f'{path.name} 校验失败，请从原始离线包重新复制此文件。')
             archives.append(stack.enter_context(ZipFile(stream)))
-        total = sum(item.file_size for archive in archives for item in archive.infolist())
+        # The desktop runs prebuilt operators; headers and linker archives are
+        # only needed to compile extensions. Keep runtime DLLs and all licenses.
+        members = []
+        for archive in archives:
+            for item in archive.infolist():
+                name = item.filename
+                license_file = name.rsplit('/', 1)[-1].upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))
+                build_file = (name.startswith('torch/include/') or
+                              (name.startswith('torch/lib/') and name.endswith('.lib')))
+                if not build_file or license_file:
+                    members.append((archive, item))
+        total = sum(item.file_size for _, item in members)
         if shutil.disk_usage(destination.parent).free < total + 64 * 1024**2:
             raise OSError(f'软件所在磁盘至少需要 {total / 1024**3 + 0.07:.1f} GiB 可用空间。')
         done = 0
-        for archive in archives:
-            for item in archive.infolist():
-                target = destination / item.filename
-                if item.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(item) as source, target.open('xb') as output:
-                    while block := source.read(CHUNK):
-                        output.write(block)
-                        done += len(block)
-                        update('正在解压加速组件', done, total)
+        for archive, item in members:
+            target = destination / item.filename
+            if item.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(item) as source, target.open('xb') as output:
+                while block := source.read(CHUNK):
+                    output.write(block)
+                    done += len(block)
+                    update('正在解压加速组件', done, total)
 
 
 def install(python, wheels, update):

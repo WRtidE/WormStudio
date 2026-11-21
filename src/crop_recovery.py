@@ -12,18 +12,10 @@ import numpy as np
 from multiworm_quality import frame_geometry
 from pipeline_progress import report_progress
 from tracking_quality import mark_quality
+from tracking_data import RECOVERY_FOLDER
 
 VERSION = 'sam2-crop-replay-v1'
-FOLDER = 'crop-recovery'
 SIDES = ('left', 'top', 'right', 'bottom')
-
-
-def tracking_directory(base, config):
-    raw = base / 'sam2-tracking'
-    recovered = raw / FOLDER
-    if config.get('centerline_method') == 'self_contact' and (recovered / 'summary.json').is_file():
-        return recovered
-    return raw
 
 
 def place(mask, box, canvas):
@@ -107,7 +99,7 @@ def incidents(hits, records):
 
 
 def replay_incident(predictor, cap, expanded, box, original, indices, span, w, ids, get, stage):
-    from analyze_phenotypes import write_png
+    from image_io import write_png
     seed = place(get(w,indices[0]), original, expanded)
     _, _, width, height = cv2.boundingRect(seed.astype(np.uint8))
     ref_area = int(seed.sum())
@@ -148,7 +140,7 @@ def replay_incident(predictor, cap, expanded, box, original, indices, span, w, i
 
 
 def save_masks(dest, raw, meta, config, ids, get, patches, final_box):
-    from analyze_phenotypes import read_image, write_png
+    from image_io import read_image, write_png
     original, count = meta['crop_xyxy'], meta['frames']
     metrics = []
     for f in range(count):
@@ -180,12 +172,15 @@ def save_masks(dest, raw, meta, config, ids, get, patches, final_box):
         writer.writerows(metrics)
 
 
-def run(sample, predictor=None):
-    from analyze_phenotypes import ROOT, load_sample
-    from quality_stage import load_guards, run as guard_stage
-    base = ROOT/'outputs'/sample
+def run(sample, predictor=None, *, root=None):
+    from resource_paths import PROJECT_ROOT as ROOT
+    from tracking_data import load_sample
+    from tracking_data import load_guards
+    from quality_stage import run as guard_stage
+    root = root or ROOT
+    base = root/'outputs'/sample
     config = json.loads((base/'pipeline-config.json').read_text(encoding='utf-8-sig'))
-    raw, meta, ids, get, _ = load_sample(sample, base/'sam2-tracking', apply_guards=False)
+    raw, meta, ids, get, _ = load_sample(sample, base/'sam2-tracking', apply_guards=False, root=root)
     count = meta['frames']
     original = meta['crop_xyxy']
     meta.pop('mask_source', None)
@@ -277,9 +272,9 @@ def run(sample, predictor=None):
         if not patches and all(guards[w][f]['boundary_truncated'] for w in ids for f in unresolved[w]):
             shutil.copyfile(raw/'quality-guards.json',dest/'quality-guards.json')
         else:
-            guard_stage(sample,mask_source=dest, boundary_frames=unresolved)
+            guard_stage(sample,mask_source=dest, boundary_frames=unresolved, root=root)
         # Publish only after every frame and both tables exist. A retry rebuilds from raw masks.
-        target = raw/FOLDER
+        target = raw/RECOVERY_FOLDER
         if target.exists():
             target.rename(stage/'previous')
         try:

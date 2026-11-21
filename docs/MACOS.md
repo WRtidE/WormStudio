@@ -4,34 +4,27 @@
 
 ## 从 GitHub 克隆后开始开发
 
-目标为 Apple 芯片、macOS 14+。先安装原生 Python 3.11 和 Git。克隆仓库，在含 `studio.py` 的根目录打开终端，执行：
+目标为 Apple 芯片、macOS 14+。先安装 uv（0.11.2 或更新版本）和 Git。克隆仓库，在含 `studio.py` 的根目录打开终端，执行：
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -c "import platform; assert platform.machine() == 'arm64', 'Use native ARM64 Python'"
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r tools/macos/pins.txt
-python tools/macos/run_dev.py
+uv sync --locked --extra cpu --managed-python
+uv run --no-sync python -c "import platform; assert platform.machine() == 'arm64', 'Use native ARM64 Python'"
+uv run --no-sync tools/macos/run_dev.py
 ```
 
-此时可以修改、启动和检查界面。要点选分割并完成分析，退出窗口，在同一环境准备 SAM2 和模型（只需一次）：
+uv 已安装固定提交的 SAM2，此时可以修改、启动和检查界面。要点选分割并完成分析，退出窗口，准备模型（只需一次）：
 
 ```bash
-mkdir -p resources
-git clone https://github.com/facebookresearch/sam2.git resources/sam2
-git -C resources/sam2 checkout 2b90b9f5ceec907a1c18123530e92e794ad901a4
-SAM2_BUILD_CUDA=0 python -m pip install --no-build-isolation --no-deps ./resources/sam2
-python tools/download_models.py --model all --output models
-python -m pip check
-WORMSTUDIO_DEVICE=cpu python tools/check_environment.py
-python -c "from tools.create_practice_video import create; create('input_videos/practice')"
-python tools/macos/run_dev.py
+uv run --no-sync tools/download_models.py --model all --output models
+uv pip check
+WORMSTUDIO_DEVICE=cpu uv run --no-sync tools/check_environment.py
+uv run --no-sync python -c "from tools.create_practice_video import create; create('input_videos/practice')"
+uv run --no-sync tools/macos/run_dev.py
 ```
 
 开发入口和 Finder 桌面应用默认自动选择计算设备。在 Apple 芯片 Mac 上，PyTorch 能使用 MPS 时，SAM2 会使用 Apple GPU，否则使用 CPU。进度页会显示本次选择的设备。桌面入口允许个别缺少 MPS 实现的算子回到 CPU；骨架、时序融合、指标和视频导出继续使用原有实现。需要整段使用 CPU 时，在源码目录运行 `WORMSTUDIO_DEVICE=cpu .venv/bin/python tools/macos/run_dev.py`。
 
-用文件导入选择 `input_videos/practice/practice.avi`；选择完整画面和像素单位，在深色虫体内点一下，确认轮廓并开始处理。重复开发时只需激活环境并运行桌面入口，不要重复生成同名练习视频。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
+用文件导入选择 `input_videos/practice/practice.avi`；选择完整画面和像素单位，在深色虫体内点一下，确认轮廓并开始处理。重复开发时直接运行 `uv run --no-sync tools/macos/run_dev.py`，不要重复生成同名练习视频。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
 
 | 要改的部分 | 入口 |
 | --- | --- |
@@ -39,11 +32,11 @@ python tools/macos/run_dev.py
 | 工作台页面和交互 | [web 目录](../web) |
 | 分析流程与子进程 | [worm_pipeline.py](../worm_pipeline.py)、[src 目录](../src) |
 
-运行 `python run_tests.py`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务只检查依赖、原生模块和平台路由，不下载模型权重，不能代替实际视频验收。
+运行 `uv run --no-sync run_tests.py`。前端测试需要 Node：`node --test tests/*.js tests/*.cjs`。上传 GitHub 后也可在 Actions 手动运行 **Mac development smoke test**：该任务从 uv 锁文件安装并检查依赖、原生模块和平台路由，不下载模型权重，不能代替实际视频验收。
 
 ## 为当前项目安装 Finder 启动器
 
-安装 Python 环境后，使用下节下载的 Electron arm64 ZIP 运行 `python tools/macos/build_desktop_app.py .mac-build/electron/electron-v45.3.0.zip`。生成的 `~/Applications/WormStudio.app` 使用当前项目的视频、配置和结果。修改 Electron 主进程后重新运行构建命令，修改网页或 Python 代码后重启应用即可。
+安装 Python 环境后，使用下节下载的 Electron arm64 ZIP 运行 `uv run --no-sync tools/macos/build_desktop_app.py .mac-build/electron/electron-v45.3.0.zip`。生成的 `~/Applications/WormStudio.app` 使用当前项目的视频、配置和结果。修改 Electron 主进程后重新运行构建命令，修改网页或 Python 代码后重启应用即可。
 
 ## 重建 Finder 离线应用
 
@@ -51,10 +44,14 @@ python tools/macos/run_dev.py
 
 ```bash
 mkdir -p .mac-build/wheels .mac-build/electron dist
+uv sync --locked --extra cpu --group release
+# 离线打包器需要源码目录；日常 uv 开发不需要这个副本。
+git clone https://github.com/facebookresearch/sam2.git resources/sam2
+git -C resources/sam2 checkout 2b90b9f5ceec907a1c18123530e92e794ad901a4
 curl -fL --retry 3 'https://github.com/electron/electron/releases/download/v45.3.0/electron-v45.3.0-darwin-arm64.zip' -o .mac-build/electron/electron-v45.3.0.zip
 curl -fL --retry 3 'https://github.com/astral-sh/python-build-standalone/releases/download/20260325/cpython-3.11.15%2B20260325-aarch64-apple-darwin-install_only_stripped.tar.gz' -o .mac-build/python.tar.gz
-python tools/macos/fetch_wheels.py tools/macos/pins.txt .mac-build/wheels
-python tools/macos/package_app.py .mac-build models resources/sam2 input_videos/practice/practice.avi dist/WormStudio-Mac-arm64.zip
+uv run --no-sync tools/macos/fetch_wheels.py tools/macos/pins.txt .mac-build/wheels
+uv run --no-sync tools/macos/package_app.py .mac-build models resources/sam2 input_videos/practice/practice.avi dist/WormStudio-Mac-arm64.zip
 ```
 
 解压后将 `WormStudio.app` 放入应用程序并打开；第一次使用时离线安装组件。关闭后重新打开，检查同一视频、标注和结果仍可访问。试用包尚未签名或公证。打包器不会覆盖已有输出；重新构建时指定新的 ZIP 文件名。

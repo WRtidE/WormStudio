@@ -27,7 +27,7 @@ class TrackingFramesTests(unittest.TestCase):
             for i in range(5):
                 Image.new('RGB', (20, 12), (17*i, 47, 132)).save(directory / f'{i:06d}.jpg')
             expected, _, _ = load_video_frames(tmp, 32, True)
-            with patch('sam2_frames.sys.platform', 'darwin'):
+            with patch('sam2_frames.is_darwin', return_value=True):
                 state = init_tracking_state(Predictor(), directory, 5)
             self.assertEqual((state['warmup_count'], state['num_frames']), (1, 5))
             self.assertEqual((state['video_height'], state['video_width']), (12, 20))
@@ -73,5 +73,5 @@ class TrackingHistoryTests(unittest.TestCase):
                         self.assertLessEqual(len(outputs['non_cond_frame_outputs']), 40)
             return results
 
-        with patch('sam2_frames.sys.platform', 'darwin'):
+        with patch('sam2_frames.is_darwin', return_value=True):
             self.assertEqual(run(True), run(False))

@@ -18,7 +18,7 @@ def arc_midpoint(line):
 
 def observed_pose(mask):
     """Return a measured path only when supported by a continuous visible silhouette."""
-    from analyze_phenotypes import centerline
+    from skeleton_geometry import centerline
     x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
     if min(w, h) < 3:
         return None, 'missing_mask'

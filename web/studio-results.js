@@ -27,6 +27,7 @@ window.StudioResults = (() => {
     ['length_width_ratio','长宽比',''],['speed_bl_s','体长归一化速度','体长/s'],
     ['midbody_abs_curvature_per_um','中段绝对曲率','μm⁻¹'],['speed_um_s','质心速度','μm/s'],['head_angle_deg','头部弯曲角','°']];
   let latest = null, key = '', timeline = null, worm = null, position = 0, pending = null;
+  const chamberClips = new Map(), preparingClips = new Set();
   let controller = null, revision = 0, ranges = [], visible = false, headAnchors = {};
   let identityReport={edges:[]},identityEdge=null,identityTimer=null;
   const controls = ['result-frame','result-frame-number','result-prev','result-next','result-worm','result-issue-filter','result-prev-issue','result-next-issue'];
@@ -104,6 +105,13 @@ window.StudioResults = (() => {
       text('result-head-evidence',notes.join('。')+'。');
     }
     if(row.endpoints_unlinked)text('result-head-explanation','当前帧无法关联端点。灰色圆点表示两端位置，头尾顺序待定。');
+    if(row.display_tips){
+      text('result-head-explanation','H? 表示候选头端，T? 表示候选尾端。仅标出本帧能定位的端点。');
+      const refs=row.display_tip_reference_frames;
+      text('result-head-evidence',refs ? `以第 ${refs.split(',').join('、')} 帧为参照，在本帧轮廓中分别寻找头端和尾端。` : '沿已定向的身体跟踪结果，保留本帧可见的端点。');
+      el('head-a').textContent='确认头端';
+      el('head-b').textContent='纠正头尾';
+    }
     if(row.display_source!=='legacy')el('result-head-explanation').textContent+=` 骨架：${displayLabels[row.display_source]||row.display_source}。`;
     text('head-choice-note',row.head_review_allowed?`${colors[0]} ${labels[0]} / ${colors[1]} ${labels[1]}，按钮颜色与画面对应。请选择实际头端，确认后应用于当前片段。`:'本帧端点或身份不可靠，请切换至清晰、可靠的姿态帧。');
     el('head-choice-note').textContent+=el('result-original').checked?' 当前为原始画面，请先取消“原始画面”查看端点标记。':'';
@@ -165,6 +173,7 @@ window.StudioResults = (() => {
     }
   }
   function artifactUrl(data, key, inline=false) {
+    if(key==='video' && data.chamberJob)return '/artifact?chamber_video='+encodeURIComponent(data.chamberJob)+(inline?'&inline=1':'');
     const query = new URLSearchParams({key, run:data.sample});
     const filename = key==='video' && data.artifacts?.find(item=>item.key===key)?.filename;
     if (filename) query.set('file',filename);
@@ -187,7 +196,7 @@ window.StudioResults = (() => {
       button.disabled = false;
     }
   };
-  el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source(el('result-original').checked);video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
+  el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source();video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
   for(const [id,endpoint] of [['head-a',0],['head-b',1]]) el(id).onclick=async()=>{
     el('head-a').disabled=el('head-b').disabled=true;
     try{const state=await(await fetch('/api/progress')).json();const r=await fetch('/api/confirm-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,worm_id:worm,frame:position,endpoint})});const d=await r.json();if(!r.ok)throw Error(d.error);location.reload();}
@@ -317,7 +326,22 @@ window.StudioResults = (() => {
   el('result-issue-filter').onchange = () => { if (timeline) { issueRanges(); draw(position, true); } };
 
   let detailsStarted=false, fullDetails=false;
+  async function prepareClip(data) {
+    if(preparingClips.has(data.sample))return;
+    preparingClips.add(data.sample);
+    text('result-video-message','正在生成本槽回放…');
+    try {
+      const clip=await window.prepareChamberVideo({group:data.group || '',sample:data.sample,single:true});
+      chamberClips.set(data.sample,clip);
+      if(latest?.sample===data.sample)update(latest);
+    } catch(error) {
+      if(latest?.sample===data.sample)text('result-video-message',error.message+'。重新展开视频可重试。');
+    } finally { preparingClips.delete(data.sample); }
+  }
   function attachVideo(data) {
+    if(el('result-video-details').open && data.phenotypes?.chamber_id!=null && !data.artifacts?.some(item=>item.key==='video')){
+      prepareClip(data);return;
+    }
     if(el('result-video-details').open && data.artifacts?.some(item=>item.key==='video') && !video.hasAttribute('src'))
       video.src=artifactUrl(data,'video',true);
   }
@@ -369,6 +393,7 @@ window.StudioResults = (() => {
     } else {
       video.hidden = true; el('result-video-message').hidden = false;
       text('result-video-message', '本次未生成标注视频。已生成的逐帧指标仍可查看。');
+      if(data.phenotypes?.chamber_id!=null)attachVideo(data);
     }
     fullDetails=el('result-video-details').open || (!data.summaryOnly && el('result-analysis-details').open);
     detailsStarted=fullDetails || el('summary-trends').open;
@@ -417,6 +442,10 @@ window.StudioResults = (() => {
     } finally { clearTimeout(timeout); }
   }
   function update(data) {
+    const clip=chamberClips.get(data.sample);
+    if(clip && !data.artifacts?.some(item=>item.key==='video')){
+      data={...data,chamberJob:clip.job,artifacts:[...(data.artifacts||[]),{key:'video',label:'单槽标注视频',filename:clip.filename}]};
+    }
     latest = data;
     if (data.status !== 'complete') {
       if (key) { key = ''; revision++; controller?.abort(); timeline = null; showEvents(null); video.pause(); }

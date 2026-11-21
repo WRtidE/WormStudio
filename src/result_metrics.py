@@ -2,14 +2,7 @@
 import csv
 import json
 import math
-
-
-def number(value):
-    try:
-        value = float(value)
-        return value if math.isfinite(value) else None
-    except (TypeError, ValueError):
-        return None
+from measurement_units import number
 
 
 def phenotype_results(folder):

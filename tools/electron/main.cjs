@@ -90,7 +90,9 @@ function initUpdates() {
         const [state, message] = JSON.parse(stdout.trim());
         if (typeof message !== 'string') throw Error('无法读取 GPU 检测结果');
         if (!canInstallGpu() && ['available', 'prepared'].includes(state)) {
-          return {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
+          return process.env.WORM_STUDIO_ONLINE === '1'
+            ? {state:'online', message:'当前在线版使用 CPU 环境。可在下次启动时重新检测显卡并准备 GPU 组件，当前任务不会中断。'}
+            : {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
         }
         return {state, message};
       }).finally(() => { gpuCheck = null; });
@@ -98,6 +100,10 @@ function initUpdates() {
     return gpuCheck;
   });
   handle('settings:gpu-open', fromSettings, () => {
+    if (process.env.WORM_STUDIO_ONLINE === '1') {
+      return require('node:fs').promises.rm(path.join(app.getPath('userData'),'components','prefer-cpu'), {force:true})
+        .then(() => ({online:true}));
+    }
     if (!canInstallGpu()) throw Error('离线加速包需要 Windows 桌面版');
     return new Promise((resolve, reject) => {
       const child = spawn(python, ['-I', '-B', gpuHelper], {cwd:workspace, detached:true, windowsHide:true, stdio:'ignore'});
