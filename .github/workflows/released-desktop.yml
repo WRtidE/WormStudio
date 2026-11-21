@@ -10,15 +10,39 @@ on:
 permissions:
   contents: read
 jobs:
+  platforms:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - id: matrix
+        name: Select the desktop packages included in this release
+        shell: bash
+        run: |
+          set -eu
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '[.assets[] | select(.state == "uploaded") | .name]')
+          ASSETS="$assets" python - <<'PY'
+          import json, os
+          assets = set(json.loads(os.environ['ASSETS']))
+          supported = [
+              {'os': 'macos-15', 'asset': 'WormStudio-Mac-arm64.zip'},
+              {'os': 'windows-2022', 'asset': 'WormStudio-Windows-x64.zip'},
+          ]
+          packages = [package for package in supported if package['asset'] in assets]
+          if not packages:
+              raise SystemExit('The release contains no supported desktop packages')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('matrix=' + json.dumps({'include': packages}) + '\n')
+          PY
   packaged-video:
+    needs: platforms
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            asset: WormStudio-Mac-arm64.zip
-          - os: windows-2022
-            asset: WormStudio-Windows-x64.zip
+      matrix: ${{ fromJSON(needs.platforms.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
