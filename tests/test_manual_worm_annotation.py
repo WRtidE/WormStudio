@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
-from app import manual_worm_annotation as manual
+import manual_worm_annotation as manual
 from worm_pipeline import validate_config
 
 
@@ -120,7 +120,7 @@ class ManualAnnotationTests(unittest.TestCase):
         with self.assertRaises(ValueError): annotation.save(body)
 
     def test_retired_method_runs_current_solver_and_preserves_historical_result_path(self):
-        from pose.centerline_methods import method_source
+        from centerline_methods import method_source
         from worm_pipeline import build_stages
         annotation = manual.Annotation(dict(self.settings, centerline_method='tapnext'))
         annotation.save(dict(self.body, centerline_method='tapnext'))
@@ -130,7 +130,7 @@ class ManualAnnotationTests(unittest.TestCase):
         config, info = validate_config(historical)
         stages = build_stages(config, info, self.root/'pipeline-config.json', self.root/'phenotypes.json')
         fit = next(stage for stage in stages if stage['phase'] == 'fit')
-        self.assertEqual(fit['command'][2:4], ['-m', 'pose.extract_body_sequence'])
+        self.assertEqual(Path(fit['command'][2]).name, 'extract_body_sequence.py')
         self.assertIn('centerlines-body-sequence', stages[-1]['command'])
         self.assertEqual(method_source(historical['centerline_method']), 'centerlines-tapnext')
         self.assertEqual(historical['centerline_method'], 'tapnext')
@@ -244,7 +244,7 @@ class ManualAnnotationTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); worker.join()
 
-    @unittest.skipUnless(manual.sys.platform == 'darwin', 'Mac annotation worker')
+    @unittest.skipUnless(manual.is_darwin(), 'Mac annotation worker')
     def test_annotation_worker_is_reused_and_releases_on_frame_change(self):
         annotation = manual.Annotation(self.settings)
         try:

@@ -2,11 +2,53 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+import cv2
 
-from pose.body_sequence import select_body_sequence,loop_transition,persistent_loop_centers
+from body_sequence import select_body_sequence,loop_transition,persistent_loop_centers
+from body_sequence_solver import recover_short_observations, flow_supports_order
+from head_recovery import tracking_indices
 
 
 class BodySequenceTests(unittest.TestCase):
+    def test_short_visible_pose_requires_matching_tips_between_clear_frames(self):
+        def line(x, right):
+            return np.column_stack((np.linspace(x, right, 101), np.full(101, 45.)))
+        anchor = line(25, 125)
+        short = line(31, 119)
+        mask = np.zeros((90, 155), np.uint8)
+        cv2.line(mask, (31, 45), (119, 45), 1, 9)
+        masks = [mask.astype(bool)] * 3
+        clear = dict(name='clear_observation', length_px=100.)
+        for case, point, right, fps, accepted in [
+                ('reverse storage', short[::-1], anchor[::-1], 12, True),
+                ('missing source', None, anchor, 12, False),
+                ('unrelated shape', short+[0, 16], anchor, 12, False),
+                ('missing tip', line(47, 119), anchor, 12, False),
+                ('long interval', short, anchor, 5, False)]:
+            with self.subTest(case=case):
+                frames = [[clear], [], [clear]]
+                recover_short_observations(frames, [anchor, point, right], masks, 120., fps)
+                self.assertEqual(bool(frames[1]), accepted)
+                if accepted:
+                    self.assertEqual(frames[1][0]['name'], 'short_observation')
+                    np.testing.assert_array_equal(frames[1][0]['points'], point)
+
+    def test_single_geometry_vote_needs_image_tracks_at_both_ends(self):
+        indices = tracking_indices()
+        line = np.column_stack((np.linspace(25, 125, 101), np.full(101, 45.)))
+        masks = np.ones((3, 90, 155), bool)
+        gray = masks.astype(np.uint8)
+        for case, reliable, last, wanted in [
+                ('both quarters', (indices <= 15) | (indices >= 85), line, True),
+                ('one quarter', indices >= 77, line, False),
+                ('order disagreement', np.ones(len(indices), bool), line[::-1], False)]:
+            with self.subTest(case=case), patch('motion.lk_step',
+                    side_effect=lambda a,b,p:(p.copy(), reliable.copy(), np.zeros(len(p)))):
+                self.assertEqual(flow_supports_order(gray, masks, 0, 2, line, last, indices), wanted)
+        masks[1] = False
+        with patch('motion.lk_step', side_effect=lambda a,b,p:(p, np.ones(len(p), bool), np.zeros(len(p)))):
+            self.assertFalse(flow_supports_order(gray, masks, 0, 2, line, line, indices))
+
     def test_a_mark_inside_the_sequence_orients_both_earlier_and_later_frames(self):
         base=np.column_stack([np.linspace(20,120,101),np.full(101,70.)])
         frames=[[dict(points=base[::-1],unary=0.)],[dict(points=base[::-1],unary=0.)],
@@ -14,7 +56,7 @@ class BodySequenceTests(unittest.TestCase):
         masks=[np.ones((150,170),bool)]*3
         def missing(a,b,p):
             return p,np.zeros(len(p),bool),np.full(len(p),100.)
-        with patch('pose.body_sequence.lk_step',side_effect=missing):
+        with patch('body_sequence.lk_step',side_effect=missing):
             selected,_=select_body_sequence(frames,[np.zeros((150,170),np.uint8)]*3,masks,5,
                                             anchor=(1,base[0]))
         for state in selected:np.testing.assert_allclose(state['points'],base)
@@ -54,7 +96,7 @@ class BodySequenceTests(unittest.TestCase):
         def flow(a,b,p):
             delta=shifts[int(b[0,0])]-shifts[int(a[0,0])]
             return p+[delta,0],np.ones(len(p),bool),np.zeros(len(p))
-        with patch('pose.body_sequence.lk_step',side_effect=flow):
+        with patch('body_sequence.lk_step',side_effect=flow):
             selected,_=select_body_sequence(frames,images,masks,5)
         for i,s in enumerate(selected):
             np.testing.assert_allclose(s['points'],base+[shifts[i],0])
@@ -66,6 +108,6 @@ class BodySequenceTests(unittest.TestCase):
         masks=[np.ones((150,170),bool)]*3
         def missing(a,b,p):
             return p,np.zeros(len(p),bool),np.full(len(p),100.)
-        with patch('pose.body_sequence.lk_step',side_effect=missing):
+        with patch('body_sequence.lk_step',side_effect=missing):
             selected,_=select_body_sequence(frames,[np.zeros((150,170),np.uint8)]*3,masks,5)
         for state in selected:np.testing.assert_allclose(state['points'],base)

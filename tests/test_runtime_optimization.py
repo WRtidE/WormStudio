@@ -10,10 +10,11 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from measurements.analyze_phenotypes import json_safe, read_image, write_png
-from runtime.body_frame_cache import cached_frames
-from pose.body_sequence_solver import signature, solve
-from runtime.run_storage import copy_tracking_snapshot
+from serialization import json_safe
+from image_io import read_image, write_png
+from body_frame_cache import cached_frames
+from body_sequence_solver import signature, solve
+from run_storage import copy_tracking_snapshot
 from test_current_pipeline import single_worm_fixture
 
 
@@ -21,7 +22,8 @@ class SignatureTests(unittest.TestCase):
     def test_geometry_appearance_and_anchor_dependencies_invalidate_the_cache(self):
         before = signature()
         read = Path.read_bytes
-        for name in ('head_appearance.py', 'head_tail.py', 'analyze_phenotypes.py', 'body_frame_cache.py'):
+        for name in ('head_appearance.py', 'head_tail.py', 'analyze_phenotypes.py', 'body_frame_cache.py',
+                     'skeleton_geometry.py', 'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py'):
             with self.subTest(name=name):
                 def changed(path):
                     return read(path) + (b'\n# changed dependency' if path.name == name else b'')
@@ -68,7 +70,7 @@ class FrameCacheTests(unittest.TestCase):
     def test_cancellation_closes_mappings_and_removes_temporary_files(self):
         with tempfile.TemporaryDirectory() as parent:
             allocate = tempfile.TemporaryFile
-            with patch('runtime.body_frame_cache.TemporaryFile', side_effect=lambda **kw: allocate(dir=parent, **kw)):
+            with patch('body_frame_cache.TemporaryFile', side_effect=lambda **kw: allocate(dir=parent, **kw)):
                 def cancel(current, total):
                     if current == 2:
                         raise RuntimeError('cancelled')
@@ -132,7 +134,7 @@ class TrackingSnapshotTests(unittest.TestCase):
         np.testing.assert_array_equal(read_image(third, True), self.image)
 
     def test_filesystems_without_hardlinks_fall_back_to_independent_copies(self):
-        with patch('runtime.run_storage.os.link', side_effect=OSError('not supported')) as link:
+        with patch('run_storage.os.link', side_effect=OSError('not supported')) as link:
             copy_tracking_snapshot(self.source, self.root/'copy')
         self.assertEqual(link.call_count, 1)
         saved = self.root/'copy/masks/worm-1/000000.png'

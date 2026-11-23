@@ -1,34 +1,46 @@
 # 代码结构
 
-仓库根目录的 `studio.py`、`worm_pipeline.py`、`review_saved_result.py` 和 `evaluation.py` 是应用与命令行入口。Python 入口把 `src/` 放入模块搜索路径，分析阶段和历史视频重导出用 `python -m` 启动对应的包模块。单独运行表型分析仍可用 `python src/analyze_phenotypes.py --sample all`。
+项目按入口、应用模块、前端、算法包、配置与测试分层。`src/`模块保持现有名称，便于已有命令行和缓存流程兼容；本轮不把正在使用的算法改写为一套新框架。
 
-|目录|职责|
+源码运行环境由 `pyproject.toml`、`uv.lock` 与 `.python-version` 管理，安装在项目 `.venv` 中；CPU / CUDA 使用互斥的依赖选项。入口和工作进程使用同一解释器，Windows 启动器在显式本机覆盖之后优先选择 `.venv`。运行依赖的安装与视频、模型和结果目录分离，桌面发行包仍使用独立打包的运行时。
+
+|职责|主要文件|
 |---|---|
-|`src/app/`|本地 HTTP、交互标注、工作区、任务队列、进度、结果导出、评估|
-|`src/tracking/`|SAM2 分割与追踪、掩膜清理与扩框、通道计数适配|
-|`src/pose/`|身体几何、中线、姿态求解|
-|`src/head_tail/`|头尾初始化、端点排序、外观和时序证据|
-|`src/measurements/`|表型计算、逐帧指标、单位和统计汇总|
-|`src/quality/`|追踪质量、身份关联、复核与质量审计|
-|`src/runtime/`|资源定位、运行结果存储、输入缓存与视频时间戳|
-|`src/platforms/`|系统、设备和 Electron 运行时的适配|
-|`src/wormtracker/`|原有通道追踪包及默认 YAML|
-|`tools/electron/`、`web/`|Electron 主进程、工作台前端与标注页面|
-|`tests/`|Python 与前端回归测试|
-
-Python 源码的宿主系统判断集中在 `src/platforms/`。旧的 `electron_desktop` 和 `compute_device` 导入仍可用。
+|Electron 窗口与运行时|`tools/electron/main.cjs`、`src/electron_desktop.py`|
+|应用与批处理入口|`studio.py`、`worm_pipeline.py`|
+|本地HTTP、交互标注、任务调度|`src/manual_worm_annotation.py`、`pipeline_progress.py`、`workspace_sessions.py`|
+|分割与方法适配|`track_configured_video.py`、`extract_body_sequence.py`|
+|共享图像、跟踪记录与序列化|`image_io.py`、`tracking_data.py`、`serialization.py`；计算模块直接使用这些数据接口|
+|共享骨架几何与头尾证据|`skeleton_geometry.py`、`head_evidence.py`；不依赖分析入口或界面控制器|
+|中线几何与时序|`centerline_topology.py`、`body_geometry.py`、`motion.py`、`body_sequence.py`|
+|头尾初始化和关联|`head_initialization.py`、`head_tail.py`、`head_appearance.py`、`head_temporal.py`|
+|身份与质量|`identity_reassociation.py`、`multiworm_quality.py`、`quality_schema.py`、`quality_audit.py`|
+|测量与显示|`analyze_phenotypes.py`、`frame_metrics.py`、`display_centerlines.py`、`result_overlay.py`|
+|资源、缓存与输出|`resource_paths.py`、`run_storage.py`、`cache_integrity.py`|
+|视频解码校验与时间基准|`video_timing.py`；单任务和全槽导出共用校验逻辑，进度回调由调用方提供|
+|网页|`web/studio*.js`、`result-player.js`、HTML/CSS与标注脚本|
+|平台边界|`platforms/`（设备选择、桌面外壳、内存压力与文件发布）；其它模块不得判断宿主系统|
+|合成验证|`tests/`、算法包`tests/`|
 
 数据流：视频与人工输入 → SAM2跟踪 → 几何/时序姿态 → 个体身份与头尾 → 按质量条件生成指标 → 显示骨架与视频。正式测量与仅显示恢复保持分离。
 
+批处理状态快照在一次请求内复用任务摘要，任务配置仍保留独立深拷贝。`quality_audit.py` 按虫体一次分组，并在逐行统计时复用质量权限，保持原有计数、排除区间和证据语义。导出视频的解码器和编码器在成功、校验失败或取消时均释放。
+
 身体序列的灰度帧与掩膜由 `body_frame_cache.py` 统一解码。两者合计不超过 256 MiB 时使用内存数组，更大时使用可由系统回收页面的磁盘映射；不降采样、不跳帧，也不将全序列求解改为独立分段。映射文件采用匿名或关闭即删除的临时文件，工作进程被终止时也由系统释放。当前方法直接使用求解器保存的头尾证据；旧基线的外观特征仅在对应兼容分支中提取。
 
-`body_sequence_solver.signature()` 覆盖图像外观、头端标注归一化、基础中线测量与输入缓存依赖。已保存的旧结果仍可查看。迁移改变了源码签名，继续旧任务时，符合条件的分割缓存仍可复用，姿态阶段及其后续结果会重新计算。
+`body_sequence_solver.signature()` 覆盖图像外观、头端标注归一化、基础中线测量与输入缓存依赖，包括拆出的共享几何、头尾证据、图像、跟踪记录和序列化模块。更新代码后，旧结果保留供查看；继续计算时按签名检查决定重算，不绕过已有的输出内容校验。
+
+大批逐帧 JSON 记录逐条序列化到临时文件，全部成功后再替换目标，避免同时构造整段记录副本和完整 JSON 字符串。视频导出校验一次建立帧与虫体索引，并且每条压缩中线只解压一次。文件树在单次渲染中建立索引，下一次渲染重新读取状态；后台后代查询按父子关系遍历，取排序编号不再排序整个列表。
+
+结果视频选择由 `run_storage.py` 管理，进度模块无需导入会话控制器。掩膜修正由调用方传入标注会话构造函数，避免修正模块反向导入界面入口。任务配置与线程快照仍保留需要的独立副本；输入校验、事务回滚、可选预览隔离和旧结果读取兼容各自保持在对应边界。
 
 复核派生任务通过 `run_storage.copy_tracking_snapshot()` 共享 `sam2-tracking/masks/` 下的 PNG 数据块，其它文件独立复制。所有程序内掩膜改写都通过 `write_png()` 调用 `replace_bytes()` 替换已有文件，使写入只影响当前任务；新的输出文件走普通写入路径。不支持硬链接时退回完整复制。后续新增掩膜写入入口也必须使用该替换函数，不能原地修改共享文件；对原始 PNG 的外部手工编辑不受程序的写入隔离保护。
 
 历史中线方法的实现已移除，旧结果只能以只读方式查看；`centerline_methods.py` 保留其名称映射用来定位历史结果目录。发布不包含历史模型缓存、示例研究视频或开发报告。
 
 Electron 主进程启动本地 Python 服务，并在 Chromium 窗口中载入工作台。页面使用原生 JavaScript 和 Canvas，渲染进程启用沙箱并关闭 Node 集成。Node 运行时随 Electron 一起分发。GPU 模型按任务加载。
+
+在线发行包在 Python 启动前由 `tools/electron/online-setup.cjs` 准备运行组件。`component-download.cjs` 负责 HTTP 续传、长度与哈希校验；本地准备页面通过受限 IPC 交换状态与操作。硬件检测、归档解压和原生运算验证位于 `src/platforms/online.cjs`。清单由 `tools/release/build_online.py` 在构建时生成并内置于首包。模型和环境分别按内容标识保存在用户目录，只有通过验证的临时环境才会启用，软件更新复用兼容组件，旧环境与实验结果继续保留。
 
 布局由 `web/workspace-links.js` 管理，主工作台与标注/进度 iframe 共用一个存储实例。`GET/POST /api/layout` 使用当前会话令牌校验写入，校验有限数值和组件键，原子合并到 `config/layout.local.json`。浏览器缓存只作为启动暂存，服务端已有记录优先，布局不依赖临时端口。窄视口把面板放进可切换的工具区，保留桌面几何。布局重置不触碰标注与分析数据。
 

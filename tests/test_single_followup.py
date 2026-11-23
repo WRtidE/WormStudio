@@ -3,11 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 import numpy as np
-from head_tail.head_tail import detect_head_tail,normalize_anchors
+from head_tail import detect_head_tail
+from head_evidence import normalize_anchors
 from test_head_tail import poses
-from runtime.cache_integrity import snapshot,matches
-from quality.quality_audit import audit
-from quality.quality_schema import VERSION
+from cache_integrity import snapshot,matches
+from quality_audit import audit
+from quality_schema import VERSION
 
 
 class FollowupTests(unittest.TestCase):
@@ -64,6 +65,36 @@ class FollowupTests(unittest.TestCase):
         self.assertEqual(a['geometric_pose_valid'],4);self.assertEqual(a['formal_posture_valid'],1)
         self.assertEqual(a['identity_blocked_geometry'],3);self.assertEqual(a['identity_blocked_ranges'],[[3,5]])
         self.assertEqual([t['frame'] for t in a['triggers']],[3])
+
+    def test_audit_keeps_interleaved_worms_and_legacy_records_separate(self):
+        common = dict(quality_schema_version=VERSION, measurement_mode='pixels', source_valid=True,
+            mask_valid=True, pose_valid=True, identity_valid=False, identity_status='jump_review',
+            identity_evidence={'event_frame': 1}, tracklet_pose_valid=True, tracklet_motion_valid=True)
+        rows = [dict(common, worm_id='7', frame='3'),
+                dict(worm_id='2', frame='0', mask_valid='True', centerline_valid='True'),
+                dict(common, worm_id=7, frame=1),
+                dict(common, worm_id=7, frame=2, identity_valid=True, identity_status='auto_reassociated',
+                     identity_link_source='auto_reassociated', identity_human_confirmed=True,
+                     head_identity_confirmed=True, head_anchor_conflict=True)]
+        before = json.dumps(rows)
+        result = audit(rows)['worms']
+        self.assertEqual(list(result), ['2', '7'])
+        legacy = result['2']
+        self.assertEqual((legacy['source_valid'], legacy['mask_valid'], legacy['formal_posture_valid']), (0, 1, 1))
+        current = result['7']
+        self.assertEqual((current['frames'], current['geometric_pose_valid'], current['formal_posture_valid']), (3, 3, 1))
+        self.assertEqual(current['identity_blocked_geometry'], 2)
+        self.assertEqual(current['identity_blocked_ranges'], [[1, 1], [3, 3]])
+        self.assertEqual(current['formal_posture_rejected_ranges'], [[1, 1], [3, 3]])
+        self.assertEqual(current['tracklet_pose_valid'], 3)
+        self.assertEqual(current['tracklet_additional_pose'], 2)
+        self.assertEqual(current['tracklet_motion_valid'], 3)
+        self.assertEqual(current['identity_auto_reassociated'], 1)
+        self.assertEqual(current['identity_human_confirmed'], 1)
+        self.assertEqual((current['head_confirmed'], current['head_conflict_frames']), (1, 1))
+        self.assertEqual(current['identity_status_counts'], {'jump_review': 2, 'auto_reassociated': 1})
+        self.assertEqual(current['triggers'], [dict(frame=1, status='jump_review', evidence={'event_frame': 1})])
+        self.assertEqual(json.dumps(rows), before)
 
 
 if __name__=='__main__':unittest.main()

@@ -3,7 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 import copy,tempfile,unittest
 import cv2,numpy as np
-from quality.identity_reassociation import reassociate,validate_reviews,ImageEvidence
+from identity_reassociation import reassociate,validate_reviews,ImageEvidence
 
 
 def inputs():
@@ -81,7 +81,7 @@ class AssociationTests(unittest.TestCase):
         validate_reviews(dict(identity_reviews=[noted]),[1],15)
 
     def test_local_reviewer_is_recorded_when_the_form_omits_it(self):
-        from app.workspace_sessions import local_reviewer
+        from workspace_sessions import local_reviewer
         self.assertTrue(local_reviewer().strip())
 
     def test_rejected_parent_does_not_imply_accepted_child(self):
@@ -102,7 +102,7 @@ class AssociationTests(unittest.TestCase):
         self.assertFalse(q[1][11]['identity_valid']);self.assertFalse(q[1][11]['identity_human_confirmed'])
 
     def test_head_confirmation_does_not_cross_adjacent_identity_segments(self):
-        from head_tail.head_tail import detect_head_tail
+        from head_tail import detect_head_tail
         p=np.stack([np.column_stack([np.linspace(10,110,101),np.full(101,40.)]) for _ in range(10)])
         rows=detect_head_tail(p,[True]*10,manual=dict(frame=0,point=p[0,0].tolist()),mode='manual_only',segment_ids=[0]*5+[1]*5)
         self.assertTrue(all(r['head_identity_confirmed'] for r in rows[:5]))
@@ -110,7 +110,7 @@ class AssociationTests(unittest.TestCase):
         self.assertNotEqual(rows[4]['head_segment'],rows[5]['head_segment'])
 
     def test_association_does_not_move_pose_length_rejection_threshold(self):
-        from measurements.analyze_phenotypes import pose_length_reference
+        from analyze_phenotypes import pose_length_reference
         rows=[dict(length_um=100.,centerline_valid=True,identity_original_valid=True,identity_valid=True) for _ in range(4)]
         rows += [dict(length_um=160.,centerline_valid=True,identity_original_valid=False,identity_valid=True) for _ in range(20)]
         self.assertEqual(pose_length_reference(rows),100.)

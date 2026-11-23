@@ -2,18 +2,18 @@
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent/'src'))
-from runtime.resource_paths import ensure_runtime, PROJECT_ROOT
+from resource_paths import ensure_runtime, PROJECT_ROOT
 if __name__=='__main__':ensure_runtime()
 import argparse
 import json
-from platforms.shell import open_view
+from electron_desktop import open_view
 import cv2
-from app.pipeline_progress import PipelineProgress
-from app.manual_worm_annotation import create_server
+from pipeline_progress import PipelineProgress
+from manual_worm_annotation import create_server
 
 
 def main():
-    from pose.centerline_methods import METHODS
+    from centerline_methods import METHODS
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sample',required=True)
     parser.add_argument('--method',choices=sorted(METHODS),default=None)
@@ -28,7 +28,7 @@ def main():
     cap=cv2.VideoCapture(config['video'])
     info=dict(frames=int(cap.get(7)),fps=cap.get(5),ids=[w['id'] for g in config['groups'] for w in g['worms']]);cap.release()
     progress=PipelineProgress()
-    from app.workspace_sessions import restore_saved_timing
+    from workspace_sessions import restore_saved_timing
     restore_saved_timing(progress,base,config['sample'])
     if args.method != saved_method:
         progress.data.update(saved_elapsed_seconds=None,saved_finished_at=None)

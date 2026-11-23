@@ -2,9 +2,9 @@ import unittest
 
 import numpy as np
 
-from measurements.measurement_units import pixel_fields
-from measurements.phenotype_statistics import behavior_statistics, measure_posture, trajectory_statistics
-from measurements.result_metrics import present_report
+from measurement_units import pixel_fields
+from phenotype_statistics import behavior_statistics, measure_posture, trajectory_statistics
+from result_metrics import present_report
 
 
 class PostureStatisticsTests(unittest.TestCase):

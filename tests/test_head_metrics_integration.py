@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import cv2
 import numpy as np
-from measurements import analyze_phenotypes as metrics
+import analyze_phenotypes as metrics
 from test_head_tail import poses
 
 

@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 
-from pose.centerline_correspondence import constrain_trajectory_proposals, curve_links, overlap_link
-from head_tail.head_tail import detect_head_tail
+from centerline_correspondence import constrain_trajectory_proposals, curve_links, overlap_link
+from head_tail import detect_head_tail
 
 
 def sliding_turn():

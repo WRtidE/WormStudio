@@ -15,10 +15,10 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from app import manual_worm_annotation as manual
-from app.live_preview import report_preview
-from app.mask_correction import request_edit
-from app.pipeline_progress import PipelineProgress
+import manual_worm_annotation as manual
+from live_preview import report_preview
+from mask_correction import request_edit
+from pipeline_progress import PipelineProgress
 from worm_pipeline import run_stage, validate_config
 
 
@@ -60,7 +60,7 @@ class MaskCorrectionTests(unittest.TestCase):
 
     def stopped_editor(self):
         self.progress.fail('stopped for edit', cancelled=True)
-        result = request_edit(self.progress, self.root, self.run, 1)
+        result = request_edit(self.progress, self.root, self.run, 1, annotation_factory=manual.Annotation)
         self.assertEqual(result['frame'], 3)
         return self.progress.server.annotation
 
@@ -70,7 +70,7 @@ class MaskCorrectionTests(unittest.TestCase):
                     measurement_mode='pixels',scale_um_per_px=None,centerline_method='body_sequence',head_detection='manual_seed')
 
     def test_waits_for_stop_then_loads_unconfirmed_native_mask_and_retries_idempotently(self):
-        result = request_edit(self.progress, self.root, self.run, 1)
+        result = request_edit(self.progress, self.root, self.run, 1, annotation_factory=manual.Annotation)
         self.assertTrue(result['waiting']); self.assertTrue(self.progress.cancel_requested.is_set())
         self.assertIsNone(self.progress.server.annotation)
         annotation = self.stopped_editor()
@@ -82,7 +82,7 @@ class MaskCorrectionTests(unittest.TestCase):
         data = base64.b64decode(state['previous']['worms'][0]['mask'].split(',')[1])
         np.testing.assert_array_equal(cv2.imdecode(np.frombuffer(data,np.uint8),-1)[:,:,3],self.mask)
         self.assertIn('mask_correction',annotation.identity)
-        again=request_edit(self.progress,self.root,self.run,1)
+        again=request_edit(self.progress,self.root,self.run,1, annotation_factory=manual.Annotation)
         self.assertEqual(again['annotation_url'],'/'); self.assertIs(self.progress.server.annotation,annotation)
 
     def test_save_adds_anchor_keeps_other_groups_and_previous_anchors_without_overwrites(self):
@@ -122,13 +122,13 @@ class MaskCorrectionTests(unittest.TestCase):
 
     def test_stale_or_invalid_requests_do_not_stop_the_worker(self):
         for run,sequence in [('other',1),(self.run,0),(self.run,2),(self.run,True),(self.run,'../x')]:
-            with self.assertRaises(ValueError):request_edit(self.progress,self.root,run,sequence)
+            with self.assertRaises(ValueError):request_edit(self.progress,self.root,run,sequence, annotation_factory=manual.Annotation)
             self.assertFalse(self.progress.cancel_requested.is_set())
         self.progress.data['read_only']=True
-        with self.assertRaises(ValueError):request_edit(self.progress,self.root,self.run,1)
+        with self.assertRaises(ValueError):request_edit(self.progress,self.root,self.run,1, annotation_factory=manual.Annotation)
         self.progress.data['read_only']=False
         self.mask_path.unlink()
-        with self.assertRaisesRegex(ValueError,'没有已保存'):request_edit(self.progress,self.root,self.run,1)
+        with self.assertRaisesRegex(ValueError,'没有已保存'):request_edit(self.progress,self.root,self.run,1, annotation_factory=manual.Annotation)
         self.assertFalse(self.progress.cancel_requested.is_set())
 
     def test_http_auth_and_locked_frame(self):
@@ -158,10 +158,10 @@ class MaskCorrectionTests(unittest.TestCase):
             deadline=time.monotonic()+8
             while not marker.exists() and time.monotonic()<deadline:time.sleep(.03)
             self.assertTrue(marker.exists())
-            self.assertTrue(request_edit(self.progress,self.root,self.run,1)['waiting'])
+            self.assertTrue(request_edit(self.progress,self.root,self.run,1, annotation_factory=manual.Annotation)['waiting'])
             thread.join(8);self.assertFalse(thread.is_alive())
             self.assertEqual(self.progress.snapshot()['status'],'cancelled')
-            self.assertEqual(request_edit(self.progress,self.root,self.run,1)['annotation_url'],'/')
+            self.assertEqual(request_edit(self.progress,self.root,self.run,1, annotation_factory=manual.Annotation)['annotation_url'],'/')
         finally:
             self.progress.cancel_requested.set();thread.join(8)
 

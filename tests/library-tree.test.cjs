@@ -42,3 +42,15 @@ test('keyboard folder navigation works in a filtered tree and during search',asy
  f.state.query='worm';f.tree.render();f.rows().get('root').onkeydown(key('ArrowLeft'));assert.equal(f.rows().has('a'),false);
  f.rows().get('root').onkeydown(key('ArrowRight'));assert.equal(f.rows().has('a'),true);
 });
+
+test('tree rebuilds paths and order after in-place rename, move, and removal',()=>{
+ const f=fixture('all');
+ f.state.folders[1].name='已复核';f.tree.render();
+ assert.equal(f.rows().get('a').title,'数据 / 已复核 / worm.mp4 · 右键管理，拖动排序');
+ f.state.files[0].parent=null;f.state.files[0].order=0;f.tree.render();
+ assert.equal(f.rows().get('a').title,'worm.mp4 · 右键管理，拖动排序');
+ f.state.query='已复核';f.tree.render();
+ assert.equal(f.rows().has('a'),false);assert.equal(f.rows().has('b'),true);
+ f.state.files.splice(1,1);f.state.query='';f.tree.render();
+ assert.equal(f.rows().has('b'),false);assert.equal(f.rows().has('a'),true);
+});

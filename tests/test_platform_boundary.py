@@ -29,8 +29,7 @@ class PlatformBoundaryTests(unittest.TestCase):
         self.assertEqual(offenders, [], '平台判断必须收进 src/platforms：\n' + '\n'.join(offenders))
 
     def test_platforms_package_does_not_import_application_modules(self):
-        local = {p.stem for p in SRC.glob('*.py')}
-        local.update(p.parent.name for p in SRC.glob('*/__init__.py') if p.parent != PLATFORMS)
+        local = {p.stem for p in python_files(SRC) if not p.is_relative_to(PLATFORMS)}
         offenders = []
         for path in python_files(PLATFORMS):
             tree = ast.parse(path.read_text(encoding='utf-8'))

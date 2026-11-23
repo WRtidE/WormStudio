@@ -54,7 +54,7 @@ def build(output, models):
         if not path.is_file() or digest(path) != item['sha256']:
             raise ValueError('模型缺失或校验失败：'+str(path))
     sys.path.insert(0, str(ROOT/'src'))
-    from platforms.shell import runtime_dir
+    from electron_desktop import runtime_dir
     desktop_runtime = runtime_dir()
     from export_source import source_files
     files = source_files()

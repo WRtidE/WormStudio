@@ -19,6 +19,12 @@
   }
   function error(value) {
     const message=text(value);
+    if (/^export 失败/.test(message)) {
+      const dest=message.match(/FileNotFoundError:[^\n]*?'([A-Za-z]:[^'\n]+\.mp4)'/);
+      const longPath=/WinError 206/.test(message) || (dest && dest[1].replace(/\\\\/g,'\\').length>=260);
+      return (longPath?'标注视频的保存路径过长。':'标注视频导出失败。')+
+        '已保存跟踪和测量结果。可从历史任务选择「继续此任务」，重试视频导出。';
+    }
     return /Traceback|CalledProcessError|Command\s*\[|File ".+", line/.test(message)
       ? '处理未完成，请检查视频文件、可用内存和结果目录权限。详细记录已保存在本次任务目录。' : message;
   }

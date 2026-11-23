@@ -1,0 +1,172 @@
+"""Quality-gated, frame-indexed presentation of saved measurements."""
+import csv
+import math
+import json
+from pathlib import Path
+
+from measurement_units import number
+from quality_schema import flag, permissions, describe
+
+
+def present_frame(row):
+    """The same gates are used before writing measurements and drawing video."""
+    allowed=permissions(row);quality=describe(row)
+    posture=allowed['posture'];mask=allowed['area'];head=allowed['head']
+    confirmed = head and flag(row, 'head_identity_confirmed')
+    method=row.get('head_detection_status',row.get('head_status',''))
+    candidate=posture and (method in ('unconfirmed_twardis_motion_candidate','unconfirmed_taper_candidate','unconfirmed_relative_motion_candidate','unconfirmed_appearance_candidate','unconfirmed_temporal_candidate','candidate') or (head and not confirmed))
+    if (row.get('head_reason') in ('two_sided_contact_orientation', 'loop_review_temporal_endpoint') and flag(row,'identity_valid')
+            and row.get('display_source')=='diagnostic_candidate'):
+        candidate=True
+    if (row.get('head_reason') in ('tracked_endpoint_order', 'appearance_temporal_reference') and row.get('endpoint_order_block') not in (None,'') and flag(row, 'mask_valid')
+            and flag(row, 'identity_valid') and flag(row, 'display_valid')):
+        candidate = True
+    def value(key, valid):
+        return number(row.get(key)) if valid else None
+    result = dict(
+        worm_id=int(row['worm_id']), mask_valid=mask, posture_valid=posture,
+        quality=quality,quality_schema_version=quality['version'],
+        identity_valid=flag(row,'identity_valid'),identity_status=row.get('identity_status','legacy_unassessed'),
+        identity_note=('旧结果：身份与标定未按新规则评估' if quality['legacy'] else
+            '身份待复核；面积仅作匿名轮廓参考' if not flag(row,'identity_valid') else
+            '独立复核后连续' if row.get('identity_status')=='reviewed_continuous' else '初始标注后暂定连续'),
+        quality_reason=row.get('quality_reason', ''),
+        head_anchor_conflict=flag(row,'head_anchor_conflict'),head_reason=row.get('head_reason',''),
+        length_um=value('length_um', posture), area_um2=value('area_um2', mask),
+        volume_um3=value('volume_estimate_um3', allowed['volume']),
+        mean_width_um=value('mean_width_um', posture), speed_um_s=value('speed_um_s', allowed['motion']),
+        length_width_ratio=value('length_width_ratio', posture), speed_bl_s=value('speed_bl_s', allowed['motion']),
+        body_extension=value('body_extension', posture),
+        head_angle_deg=value('head_candidate_angle_smoothed_deg', head),
+        head_status='人工已确认 · 当前可靠片段' if confirmed else '自动候选 · 可选复核' if candidate else '无法自动判断',
+        head_candidate=candidate,head_method=method,
+        head_evidence_score=number(row.get('head_evidence_score')),
+        head_shape_votes=number(row.get('head_shape_votes')),head_motion_votes=number(row.get('head_motion_votes')),
+        head_appearance_votes=number(row.get('head_appearance_votes')),head_appearance_reference_frames=number(row.get('head_appearance_reference_frames')),
+        head_appearance_reference=row.get('head_appearance_reference','none'),
+        head_temporal_block=number(row.get('head_temporal_block')),head_temporal_seed_frame=number(row.get('head_temporal_seed_frame')),
+        head_temporal_conflict=flag(row,'head_temporal_conflict'),head_temporal_changed=flag(row,'head_temporal_changed'),
+        head_local_reason=row.get('head_local_reason',''),
+        head_segment=number(row.get('head_segment')),
+        endpoint_order_block=number(row.get('endpoint_order_block')),
+        endpoints_unlinked=('endpoint_order_block' in row and row['endpoint_order_block'] in ('',None)),
+        head_review_allowed=posture and row.get('centerline_topology','simple')=='simple' and not flag(row,'endpoint_a_inferred') and not flag(row,'endpoint_b_inferred'),
+        endpoint_labels=['H','T'] if confirmed else ['H?','T?'] if candidate else ['A','B'],
+        head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown')
+    if row.get('body_sequence_version'):
+        result['head_section_status']=row.get('head_section_status','')
+        result['head_display_estimated_end']=number(row.get('head_display_estimated_end'))
+        result['tail_display_estimated_end']=number(row.get('tail_display_estimated_end'))
+        result['body_center_x_source_px']=value('body_center_x_source_px',posture)
+        result['body_center_y_source_px']=value('body_center_y_source_px',posture)
+        if result['head_section_status']=='body_sequence_estimate':result['head_status']='多帧身体跟踪 · 隐藏端点位置估计'
+    if (row.get('display_tip_source') and flag(row, 'source_valid') and flag(row, 'mask_valid')
+            and result['identity_valid'] and not result['head_anchor_conflict']):
+        tips = {}
+        for side in ('head', 'tail'):
+            xy = [number(row.get('display_'+side+'_tip_'+axis+'_px')) for axis in ('x','y')]
+            if None not in xy:
+                tips[side] = xy
+        result['display_tips'] = tips
+        result['display_tip_reference_frames'] = row.get('display_tip_reference_frames', '')
+        result['head_status'] = ('头尾均有候选位置' if len(tips) == 2 else '跟踪到头端 · 尾端暂不可见'
+                                 if 'head' in tips else '跟踪到尾端 · 头端暂不可见' if 'tail' in tips
+                                 else '头尾暂时无法定位')
+        result['head_review_allowed'] = False
+    result['self_contact_state'] = row.get('self_contact_state')
+    refs = row.get('head_trajectory_frames')
+    if isinstance(refs, str):
+        refs = json.loads(refs) if refs else []
+    result['head_trajectory_frames'] = refs or []
+    result['measurement_mode'] = row.get('measurement_mode','physical')
+    from measurement_units import metric_key
+    curvature_key = metric_key('midbody_abs_curvature_per_um', row)
+    result[curvature_key] = value(curvature_key, posture)
+    if row.get('contact_bridge'):
+        result['contact_bridge']=json.loads(row['contact_bridge'])
+    result.update(display_valid=flag(row,'display_valid'),display_source=row.get('display_source','legacy'),
+        display_inside_fraction=number(row.get('display_inside_fraction')),display_reason=row.get('display_reason',''))
+    try:
+        bbox=json.loads(row.get('mask_bbox_crop_xyxy') or 'null')
+        result['mask_bbox_crop_xyxy']=bbox if mask and isinstance(bbox,list) and len(bbox)==4 and all(isinstance(v,(int,float)) and math.isfinite(v) for v in bbox) and bbox[2]>bbox[0] and bbox[3]>bbox[1] else None
+    except (ValueError,TypeError):result['mask_bbox_crop_xyxy']=None
+    result['identity_link_id']=row.get('identity_link_id') or None
+    result['identity_link_source']=row.get('identity_link_source') or None
+    result['identity_human_confirmed']=flag(row,'identity_human_confirmed')
+    if row.get('identity_status')=='auto_reassociated':result['identity_note']='源图多帧匹配后自动关联；关联依据可查看，支持片段复核与撤销。'
+    result['tracklet_id']=row.get('tracklet_id') or None
+    result['tracklet_status']=row.get('tracklet_status','not_assessed')
+    result['tracklet_pose_valid']=flag(row,'tracklet_pose_valid')
+    result['tracklet_motion_valid']=flag(row,'tracklet_motion_valid')
+    for name,gate in [('length_px','tracklet_pose_valid'),('mean_width_px','tracklet_pose_valid'),('speed_px_s','tracklet_motion_valid')]:
+        result['tracklet_'+name]=value('tracklet_'+name,flag(row,gate))
+    if not result['identity_valid'] and result['tracklet_status']=='stable_anonymous':
+        result['identity_note']='后续稳定片段可作匿名局部分析；与跳变前个体的关联尚未确认。'
+    if result['measurement_mode'] == 'pixels':
+        for field, source, gate in [('length_px','length_px',posture),('area_px2','area_px2',mask),
+                ('volume_px3','volume_estimate_px3',allowed['volume']),('mean_width_px','mean_width_px',posture),
+                ('speed_px_s','speed_px_s',allowed['motion'])]:
+            result[field] = value(source,gate)
+    return result
+
+
+def recorded_events(folder, worm_ids, frame_count):
+    events = []
+    for filename in ('behavior_events.csv', 'bend_events.csv'):
+        path = folder / filename
+        if not path.is_file():
+            continue
+        with path.open(encoding='utf-8-sig', newline='') as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    worm = int(row['worm_id'])
+                    if filename == 'bend_events.csv':
+                        kind = 'bend'
+                        start = end = int(row['frame'])
+                    else:
+                        kind = row['event']
+                        if kind not in ('pause', 'reversal'):
+                            continue
+                        start, end = int(row['start_frame']), int(row['end_frame'])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if worm in worm_ids and 0 <= start <= end < frame_count:
+                    events.append(dict(worm_id=worm, kind=kind, start=start, end=end))
+    return sorted(events, key=lambda e: (e['start'], e['worm_id'], e['kind']))
+
+
+def load_frame_metrics(path, fps, count, trend_only=False):
+    if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0:
+        raise ValueError('结果缺少有效帧率')
+    if not isinstance(count, int) or count <= 0:
+        raise ValueError('结果缺少有效帧数')
+    frames = [[] for _ in range(count)]
+    raw_rows=[]
+    seen, ids = set(), set()
+    with path.open(encoding='utf-8-sig', newline='') as handle:
+        for row in csv.DictReader(handle):
+            frame, worm = int(row['frame']), int(row['worm_id'])
+            if not 0 <= frame < count or (frame, worm) in seen:
+                raise ValueError('逐帧指标存在越界或重复记录')
+            seen.add((frame, worm)); ids.add(worm)
+            if trend_only:
+                allowed = permissions(row)
+                unit = 'px' if row.get('measurement_mode') == 'pixels' else 'um'
+                data = {'worm_id': worm}
+                for field, gate in [(f'length_{unit}', 'posture'), (f'mean_width_{unit}', 'posture'),
+                                    (f'speed_{unit}_s', 'motion')]:
+                    data[field] = number(row.get(field)) if allowed[gate] else None
+            else:
+                data = present_frame(row)
+                raw_rows.append(row)
+            frames[frame].append(data)
+    if not ids or len(seen) != count * len(ids):
+        raise ValueError('逐帧指标不完整；请重新运行指标阶段')
+    for rows in frames:
+        rows.sort(key=lambda r: r['worm_id'])
+    result = dict(fps=fps, frame_count=count, worm_ids=sorted(ids), frames=frames)
+    if not trend_only:
+        from quality_audit import audit
+        result['quality_audit'] = audit(raw_rows)
+        result['events'] = recorded_events(Path(path).parent, ids, count)
+    return result

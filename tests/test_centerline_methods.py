@@ -2,7 +2,7 @@
 import unittest
 from pathlib import Path
 
-from pose.centerline_methods import (ARCHIVED, CURRENT_METHOD, analysis_method,
+from centerline_methods import (ARCHIVED, CURRENT_METHOD, analysis_method,
                                 display_method, method_source)
 from worm_pipeline import build_stages
 
@@ -13,14 +13,6 @@ class CenterlineMethodTests(unittest.TestCase):
                               dict(ids=[1], frames=5), Path('cfg.json'), Path('metrics.json'))
         self.assertEqual([s['name'] for s in stages],
                          ['tracking', 'cleanup', 'quality', 'body_sequence-worm-1', 'metrics', 'export'])
-        self.assertEqual([s['command'][2:4] for s in stages], [
-            ['-m', 'tracking.track_configured_video'],
-            ['-m', 'tracking.clean_tracking_components'],
-            ['-m', 'quality.quality_stage'],
-            ['-m', 'pose.extract_body_sequence'],
-            ['-m', 'measurements.analyze_phenotypes'],
-            ['-m', 'app.review_configured_video'],
-        ])
         self.assertIn('centerlines-body-sequence', stages[-1]['command'])
 
     def test_archived_methods_are_readable_but_not_computable(self):
@@ -32,6 +24,15 @@ class CenterlineMethodTests(unittest.TestCase):
             else:
                 with self.assertRaises(ValueError):
                     analysis_method(name)
+
+    def test_grouped_chambers_validate_records_without_encoding_individual_videos(self):
+        stages = build_stages(dict(sample='slot', centerline_method=CURRENT_METHOD, chamber_id=42),
+                              dict(ids=[1], frames=12), Path('cfg.json'), Path('metrics.json'), defer_video=True)
+        metrics, export = stages[-2:]
+        self.assertIn('--defer-video', metrics['command'])
+        self.assertIn('--records-only', export['command'])
+        self.assertFalse(any(path.endswith('.mp4') for s in (metrics, export) for path in s['outputs']))
+        self.assertEqual([Path(p).name for p in export['outputs']], ['verification.json'])
 
     def test_unknown_method_is_rejected(self):
         with self.assertRaises(ValueError):

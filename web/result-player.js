@@ -4,7 +4,7 @@ window.ResultPlayer=(()=>{
   const player=canvas.closest('.result-player'), fullscreenButton=el('result-fullscreen');
   const ctx=canvas.getContext('2d'),math=window.ResultViewport;
   let transform=null,focus=false,box=null,visible=false,pointers=new Map(),vw=0,vh=0;
-  let frameInfo=null,original=false,crop=null,frameCount=0,fps=12,callback=null;
+  let frameInfo=null,crop=null,frameCount=0,fps=12,callback=null;
   const dimensions=()=>[video.videoWidth,video.videoHeight];
   function bounds(){
     const b=frameInfo?.mask_bbox_crop_xyxy;
@@ -117,7 +117,7 @@ window.ResultPlayer=(()=>{
       const previous=box;frameInfo=row;
       if(focus){
         const next=bounds();
-        if(JSON.stringify(next)!==JSON.stringify(previous)){
+        if(next===null?previous!==null:previous===null||next.some((value,index)=>value!==previous[index])){
           if(transform&&previous&&next){
             const oldFit=math.fit(...dimensions(),vw,vh,previous),newFit=math.fit(...dimensions(),vw,vh,next);
             const relative=transform.s/oldFit.s,dx=transform.x-(vw/2-(previous[0]+previous[2])/2*transform.s),dy=transform.y-(vh/2-(previous[1]+previous[3])/2*transform.s);
@@ -127,8 +127,8 @@ window.ResultPlayer=(()=>{
       }
       paint();
     },
-    source(value){original=value;transform=null;},
-    reset(){video.pause();focus=false;box=null;frameInfo=null;transform=null;original=false;pointers.clear();fit();},
+    source(){transform=null;},
+    reset(){video.pause();focus=false;box=null;frameInfo=null;transform=null;pointers.clear();fit();},
     setVisible(value){
       visible=value;
       if(value) resize();

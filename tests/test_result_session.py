@@ -11,9 +11,9 @@ import urllib.request
 
 import cv2
 import numpy as np
-from app import manual_worm_annotation as manual
-from app.pipeline_progress import PipelineProgress, summarize_quality
-from runtime.run_storage import preserve_run, input_identity
+import manual_worm_annotation as manual
+from pipeline_progress import PipelineProgress, summarize_quality
+from run_storage import preserve_run, input_identity
 from worm_pipeline import compatible_identity
 
 
@@ -56,9 +56,32 @@ class ResultSessionTests(unittest.TestCase):
                 urllib.request.urlopen(urllib.request.Request(self.url+route,headers=headers))
             self.assertEqual(error.exception.code, status)
 
+    def test_long_revision_uses_the_same_short_video_for_export_and_playback(self):
+        from centerline_methods import method_source
+        from run_storage import annotated_video_path, fresh_sample
+        from run_storage import result_video_files, annotated_video_path
+        from worm_pipeline import build_stages
+        sample = '222324-槽1-20261120-153720-0b55-20261120-160055-088-20261120-160719-64d0'
+        outputs = self.root/('a'*32)/'outputs'
+        base = outputs/sample
+        folder = base/('phenotypes-'+method_source('body_sequence'))
+        folder.mkdir(parents=True)
+        revised = fresh_sample(sample, outputs)
+        self.assertRegex(revised, r'^222324-槽1-\d{8}-\d{6}-[a-f0-9]{4}$')
+        config = dict(sample=sample, centerline_method='body_sequence', video=str(self.video))
+        with patch('worm_pipeline.ROOT',outputs.parent):
+            stages = build_stages(config,dict(ids=[1],frames=6),base/'cfg.json',base/'metrics.json')
+        expected = folder/'annotated.mp4'
+        self.assertEqual(Path(stages[-1]['outputs'][0]),expected)
+        self.assertEqual(result_video_files(base,config)[0][2],expected)
+        self.assertEqual(annotated_video_path(folder,sample, clean=True),folder/'annotated_clean.mp4')
+        # A short-named result must still be found if the workspace gets moved.
+        (self.root/'annotated.mp4').touch()
+        self.assertEqual(annotated_video_path(self.root,sample),self.root/'annotated.mp4')
+
     def test_completed_chamber_streams_its_own_video_while_another_run_is_active(self):
-        from app.batch_queue import BatchQueue
-        from app.workspace_sessions import result_video_files
+        from batch_queue import BatchQueue
+        from run_storage import result_video_files
         sample = 'first-chamber'
         config = dict(sample=sample, video=str(self.video), centerline_method='body_sequence')
         base = self.root/'outputs'/sample
@@ -82,6 +105,91 @@ class ResultSessionTests(unittest.TestCase):
                 urllib.request.urlopen(url+suffix)
             self.assertEqual(error.exception.code, status)
         self.assertEqual(self.progress.data['sample'], 'next')
+
+    def test_chamber_export_groups_by_source_handles_overlap_and_requires_explicit_partial(self):
+        import time
+        from batch_queue import BatchQueue
+        from chamber_videos import members_for_video
+        batch = BatchQueue(self.root/'batch.json')
+        self.progress.batch = batch
+        boxes = {22: (0, 0, 96, 78), 23: (32, 0, 128, 78)}
+        for slot, box in boxes.items():
+            sample = f'slot-{slot}'
+            config = dict(sample=sample, video=str(self.video), centerline_method='body_sequence',
+                          chamber_id=slot, crop_xyxy=box)
+            batch.add(config)
+            base = self.root/'outputs'/sample
+            tracking = base/'sam2-tracking'
+            masks = tracking/'masks/worm-1'
+            masks.mkdir(parents=True)
+            (base/'pipeline-config.json').write_text(json.dumps(config))
+            (base/'pipeline-state.json').write_text('{}')
+            (tracking/'summary.json').write_text(json.dumps(dict(video=str(self.video), frames=6, fps=12,
+                                                               worm_ids=[1], crop_xyxy=box)))
+            (tracking/'tracking-quality.csv').write_text('frame,worm_id,low_confidence\n')
+            folder = base/'phenotypes-centerlines-body-sequence'
+            folder.mkdir()
+            (folder/'summary.json').write_text(json.dumps(dict(crop_xyxy=box)))
+            x = 55 if slot == 22 else 67
+            mask = np.zeros((78,96),np.uint8)
+            mask[28:45,x-17:x+17] = 255
+            points = np.array([[x-13,36],[x+12,36]], dtype=float)
+            lines = {}
+            with (folder/'per_frame_metrics.csv').open('w', newline='') as handle:
+                w = csv.writer(handle)
+                w.writerow(['frame','worm_id','mask_valid','centerline_valid','identity_valid'])
+                for frame in range(6):
+                    valid = not (slot == 22 and frame == 4)
+                    w.writerow([frame,1,True,valid,True])
+                    if valid: lines[f'w1_f{frame}'] = points
+                    cv2.imencode('.png',mask)[1].tofile(str(masks/f'{frame:06d}.png'))
+            np.savez(folder/'centerlines.npz', **lines)
+        batch.add(dict(sample='same-name',video=str(self.root/'other'/self.video.name),chamber_id=22))
+        batch.start()
+        group = batch.snapshot()['group_id']
+        batch.take(); batch.finish('complete')
+        batch.take(); batch.finish('failed')
+        batch.take(); batch.finish('failed')
+        request = dict(group=group, sample='slot-22')
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            self.post('/api/chamber-video',request,token=False)
+        self.assertEqual(denied.exception.code,403)
+        with self.assertRaises(urllib.error.HTTPError) as partial:
+            self.post('/api/chamber-video',request)
+        self.assertEqual(partial.exception.code,400)
+        with self.post('/api/chamber-video',dict(request,missing=[23])) as response:
+            partial_job=json.load(response)['job']
+        batch.retry(batch.items[1]['id'], start=True, group=group)
+        batch.take(); batch.finish('complete')
+        with self.post('/api/chamber-video',request) as response:
+            job=json.load(response)['job']
+        with self.post('/api/chamber-video',dict(request,sample='slot-23')) as response:
+            self.assertEqual(job,json.load(response)['job'])
+        self.assertNotEqual(job,partial_job)
+        for key in [partial_job,job]:
+            for _ in range(150):
+                with urllib.request.urlopen(self.url+'/api/chamber-video?job='+key) as response:
+                    state=json.load(response)
+                if state['status'] != 'running': break
+                time.sleep(.1)
+            self.assertEqual(state['status'],'complete',state)
+        with urllib.request.urlopen(self.url+'/artifact?chamber_video='+job) as response:
+            output=self.root/'export.mp4'
+            output.write_bytes(response.read())
+        cap=cv2.VideoCapture(str(output))
+        try:
+            self.assertEqual((int(cap.get(3)),int(cap.get(4)),cap.get(5),int(cap.get(7))), (128,80,12,6))
+            for frame in range(6):
+                ok,pixels=cap.read()
+                self.assertTrue(ok)
+                for x in [55,99]:
+                    # Slot 22 is inside slot 23's ROI and must survive its draw.
+                    self.assertGreater(int(pixels[28,x,1]),135)
+                    self.assertEqual(int(pixels[36,x,0])>150,frame!=4 or x==99)
+        finally:
+            cap.release()
+        ready,_=members_for_video(batch.group_items(group),'slot-22',single=True)
+        self.assertEqual([i['chamber_id'] for i in ready],[22])
 
     def test_next_video_validates_before_reset_and_refresh_keeps_annotation(self):
         self.progress.fail('example failure')
@@ -121,7 +229,7 @@ class ResultSessionTests(unittest.TestCase):
         self.assertTrue(self.progress.closed.is_set())
 
     def test_cancel_preparation_keeps_draft_and_releases_annotation(self):
-        from app.workspace_sessions import save_draft,get_draft
+        from workspace_sessions import save_draft,get_draft
         self.progress.data.update(status='ready')
         with self.post('/api/new-video',{'video_path':str(self.video)}): pass
         self.progress.wait()
@@ -153,7 +261,7 @@ class ResultSessionTests(unittest.TestCase):
         self.assertIsNone(row['mean_speed_um_s'])
 
     def test_reopened_result_uses_saved_duration_without_changing_history(self):
-        from app.workspace_sessions import reopen
+        from workspace_sessions import reopen
         base=self.root/'outputs'/'saved';folder=base/'phenotypes-centerlines-body-sequence'
         folder.mkdir(parents=True)
         (folder/'summary.json').write_text(json.dumps({'worms':[{'frames':6}], 'fps':12}),encoding='utf-8')
@@ -171,7 +279,7 @@ class ResultSessionTests(unittest.TestCase):
                 record.write_text(json.dumps(saved),encoding='utf-8');before=record.read_bytes()
                 self.progress.started=1  # An unrelated previous session must not leak into history.
                 self.progress.data['device']='old GPU'
-                with patch('app.workspace_sessions.load_config',return_value=(base,config)):
+                with patch('workspace_sessions.load_config',return_value=(base,config)):
                     reopen(self.progress,self.root,'saved')
                 result=self.progress.snapshot()
                 self.assertTrue(result['history_reopened'])
@@ -181,7 +289,7 @@ class ResultSessionTests(unittest.TestCase):
                 self.assertEqual(record.read_bytes(),before)
                 self.assertEqual(result['device'],'saved GPU' if expected else '')
         record.unlink()
-        with patch('app.workspace_sessions.load_config',return_value=(base,config)):
+        with patch('workspace_sessions.load_config',return_value=(base,config)):
             reopen(self.progress,self.root,'saved')
         self.assertIsNone(self.progress.snapshot()['elapsed_seconds'])
         self.progress.configure(config,dict(frames=6,ids=[1]),[],base)

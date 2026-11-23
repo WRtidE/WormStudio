@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from head_tail.head_temporal import stabilize, geometry_link
+from head_temporal import stabilize, geometry_link
 
 
 class TemporalHeadTests(unittest.TestCase):

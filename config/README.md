@@ -4,7 +4,7 @@
 
 以下是本机文件，不提交Git：
 
-- `python_path.txt`：可选，固定解释器路径；不提供时使用当前Python。
+- `python_path.txt`：可选，固定解释器路径；不提供时 Python 入口使用当前解释器，Windows `start.bat` 优先使用项目 `.venv`。迁移 uv 后检查此文件是否仍指向旧环境。
 - `target_videos.json`：可选，常用视频列表。复制 `target_videos.example.json` 并填写自己的视频。
 - `evaluation_dataset.json`：可选，评测数据目录。复制对应示例，先通过 `evaluation.py` 建立真实数据任务。
 

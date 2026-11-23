@@ -10,6 +10,27 @@ const bytes = Buffer.from('offline installer');
 const asset = {name:'WormStudio-Mac-arm64.zip', browser_download_url:'https://example.org/app.zip',
   size:bytes.length, digest:'sha256:'+createHash('sha256').update(bytes).digest('hex')};
 const release = {tag_name:'v1.10.0', body:'更新说明', assets:[asset]};
+
+test('restart installation requires a verified ZIP and serializes install requests', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'worm-install-'));
+  t.after(() => fs.rmSync(dir, {recursive:true,force:true}));
+  let finish, calls = 0;
+  const updates = new Updates({directory:dir, downloads:dir, platform:'win32', arch:'x64', notify(){},
+    installer:async record => { calls++; assert.equal(record.archive, 'verified.zip'); await new Promise(resolve => { finish = resolve; }); }});
+  updates.cache.release = {...asset, name:'WormStudio-Windows-x64.zip', version:'1.10.0'};
+  updates.downloaded = 'verified.zip';
+  updates.transfer = {status:'done'};
+  assert.equal(updates.state().canInstall, true);
+  const running = updates.install();
+  assert.equal(updates.state().installing, true);
+  await updates.install();
+  assert.equal(calls, 1);
+  finish(); await running;
+  updates.cache.release.digest = null;
+  assert.equal(updates.state().canInstall, false);
+  await updates.install();
+  assert.equal(calls, 1);
+});
 test('selects the highest stable newer installer for this OS and architecture', () => {
   const list = [release, {...release, tag_name:'v1.9.0'}, {...release, tag_name:'v2.0.0', prerelease:true},
     {...release, tag_name:'v2.1.0', assets:[{...asset, name:'source.zip'}]}];

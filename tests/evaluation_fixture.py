@@ -2,7 +2,7 @@
 from pathlib import Path
 import cv2
 import numpy as np
-from app.evaluation_dataset import VERSION, build_tasks, digest, freeze_split, sha256, write_new
+from evaluation_dataset import VERSION, build_tasks, digest, freeze_split, sha256, write_new
 
 
 def make_dataset(root):

@@ -3,19 +3,19 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
-from runtime.resource_paths import ensure_runtime
+from resource_paths import ensure_runtime
 
 
 def main(open_browser=True):
     if open_browser:
-        from platforms.shell import launch
+        from electron_desktop import launch
         return launch()
-    from app.manual_worm_annotation import create_server
-    from app.pipeline_progress import PipelineProgress
+    from manual_worm_annotation import create_server
+    from pipeline_progress import PipelineProgress
     from worm_pipeline import _main, video_config
 
     progress = PipelineProgress()
-    from app.batch_queue import BatchQueue
+    from batch_queue import BatchQueue
     progress.batch = BatchQueue(Path(__file__).resolve().parent / 'config/batch.local.json')
     progress.data.update(status='ready', detail='选择一个视频，开始新的分析')
     server = create_server(progress=progress)
@@ -37,7 +37,20 @@ def main(open_browser=True):
                 with progress.lock:
                     progress.batch.finish(progress.data['status'], progress.data.get('error'),
                                           cancelled=progress.cancel_requested.is_set(),
-                                          result_sample=progress.data.get('sample'))
+                                          result_sample=progress.data.get('sample'),
+                                          previous_sample=(progress.config or {}).get('previous_sample'))
+                    sample = progress.data.get('sample')
+                    group = progress.batch.group_for_result(sample)
+                    members = progress.batch.group_items(group) if group else []
+                # A video may finish before the rest of a multi-video batch.
+                if any(i['sample'] == sample and i['status'] == 'complete' and i.get('chamber_id') for i in members):
+                    from chamber_videos import members_for_video
+                    try:
+                        ready, missing = members_for_video(members, sample, partial=True)
+                        if not missing:
+                            server.chamber_videos.start(group, ready, full=True)
+                    except (OSError, ValueError) as exc:
+                        print(f'全槽视频暂未生成，可在结果页重试：{exc}', flush=True)
     finally:
         progress.close()
 

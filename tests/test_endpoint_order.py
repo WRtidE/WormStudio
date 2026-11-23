@@ -2,7 +2,8 @@ import unittest
 
 import numpy as np
 
-from head_tail.endpoint_order import fast_turn_link, hairpin_link, order_endpoints, sampled
+from endpoint_order import fast_turn_link, hairpin_link, order_endpoints
+from skeleton_geometry import sampled
 
 
 class EndpointOrderTests(unittest.TestCase):

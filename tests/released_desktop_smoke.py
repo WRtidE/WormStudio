@@ -7,8 +7,9 @@ import platform
 import shutil
 import subprocess
 import sys
+import uuid
 
-def run(folder):
+def run(folder, backend='cpu', component_directory=None):
     folder = folder.resolve()
     mac = sys.platform == 'darwin'
     expected = os.environ['TAG'].removeprefix('v')
@@ -22,6 +23,11 @@ def run(folder):
         py = res/'python/bin/python3.11'
         electron = res/'electron/Electron.app/Contents/MacOS/Electron'
         code = res/'app'
+        if (res/'analysis/online-manifest.json').is_file():
+            res = res/'analysis'
+            py = res/'python/bin/python3.11'
+            electron = app/'MacOS'/info['CFBundleExecutable']
+            code = res/'code'
     else:
         assert os.name == 'nt'
         app = folder/'WormStudio'
@@ -30,14 +36,28 @@ def run(folder):
         electron = app/'WormStudio.exe'
         code = res/'code'
         assert json.loads((app/'resources/app/package.json').read_text())['version'] == expected
-    work = folder/'smoke-workspace'
+    checkpoint = res/'models/sam2_hiera_large.pt'
+    samroot = res/'sam2'
+    online = res/'online-manifest.json'
+    if online.is_file():
+        tool = Path(__file__).resolve().parents[1]/'tools/release/prepare_online.cjs'
+        arguments = ['node',str(tool),str(online),str(component_directory or folder/'components')]
+        if backend == 'cpu':
+            arguments.append('cpu')
+        prepared = json.loads(subprocess.check_output(arguments,text=True))
+        assert prepared['backend'] == backend
+        runtime = Path(prepared['runtime'])
+        py = runtime/('python/bin/python3.11' if mac else 'python/python.exe')
+        checkpoint = Path(prepared['model'])
+        samroot = runtime/'sam2'
+    work = folder/('smoke-workspace-'+uuid.uuid4().hex[:8])
     shutil.copytree(code, work)
     assert json.loads((work/'tools/electron/package.json').read_text())['version'] == expected
-    env = dict(os.environ, WORM_STUDIO_PYTHON=str(py), WORMSTUDIO_SAM2_CHECKPOINT=str(res/'models/sam2_hiera_large.pt'),
-               WORM_STUDIO_RESOURCES=str(res), WORMSTUDIO_DEVICE='cpu', PYTHONNOUSERSITE='1', MPLBACKEND='Agg')
+    env = dict(os.environ, WORM_STUDIO_PYTHON=str(py), WORMSTUDIO_SAM2_CHECKPOINT=str(checkpoint),
+               WORM_STUDIO_RESOURCES=str(runtime if online.is_file() else res), WORMSTUDIO_DEVICE=backend, PYTHONNOUSERSITE='1', MPLBACKEND='Agg')
     subprocess.run([str(electron),'-p','process.versions.electron'],env={**env,'ELECTRON_RUN_AS_NODE':'1'},check=True,timeout=90)
-    paths=[str(res/'sam2')]
-    if mac:
+    paths=[str(samroot)]
+    if mac and not online.is_file():
         site=folder/'offline-packages'
         subprocess.run([str(py),'-I','-m','pip','--isolated','--disable-pip-version-check','install','--no-index','--no-cache-dir','--no-compile',
             '--only-binary=:all:','--require-hashes','--ignore-installed','--find-links',str(res/'wheels'),'--target',str(site),'-r',str(res/'requirements.lock')],check=True)

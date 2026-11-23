@@ -28,16 +28,14 @@
 
 ## 下载与启动
 
-Windows v1.1.1 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时自动检测显卡、下载并校验运行环境和模型。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
+Windows v1.1.1 采用在线安装：先下载约 **161 MB** 的桌面包，首次打开时准备 CPU 运行环境和模型，GPU 加速可在设置中按需安装。支持暂停续传，后续更新复用兼容组件；不需要安装 Python 或配置 CUDA。Mac 继续使用 v1.0.3 离线包。
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
 | Windows 64 位（x64） | [Windows v1.1.1 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.1/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
-Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。
-
-GPU 组件优先从上海交大 PyTorch 镜像下载，失败时依次切换阿里镜像和官方源，并保留断点。基础环境、CPU 组件和模型仍从 GitHub 下载；组件由程序自动准备，无需逐一手动下载。
+Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。GPU 组件优先从国内镜像下载，失败时自动切换备用源。运行组件和模型由程序自动下载，无需逐一手动选择附件。
 
 ## 用练习视频完成第一次分析
 
@@ -95,7 +93,7 @@ Windows v1.0.3 沿用 v1.0.2 的 GPU 组件。
 ## 分析更多视频
 
 - 要**依次分析多个视频**，一次导入多个文件，按顺序为每个视频确认区域、单位和虫体，最后点击 **确认虫体并开始顺序处理**。
-- 同一画面包含多个培养槽时，先勾选 **按培养槽标注** 再开始标注。分别框选各槽并确认虫体，完成后可按槽查看结果。
+- 同一画面包含多个培养槽时，先勾选 **按培养槽标注**，分别框选并确认虫体。使用支持全槽导出的版本时，同一原片的所有槽完成后会自动生成一个 MP4。在批次结果页选中该原片的任一槽，点 **导出标注视频** 即可保存。**导出汇总表** 保存指标 CSV。
 - 要**统计线虫通过通道的次数**，在左侧切换至 **通道计数**，设置通道数、检测线和两侧边界后点击 **开始计数**。结果支持逐帧回看和导出 Excel。
 
 更详细的标注、批处理和复核操作见[完整使用指南](docs/USER_GUIDE.md)。指标的计算条件见[质量与测量规则](docs/QUALITY_SCHEMA.md)。
@@ -105,3 +103,5 @@ Windows v1.0.3 沿用 v1.0.2 的 GPU 组件。
 [桌面版发布页与校验清单](https://github.com/WRtidE/WormStudio/releases) · [更新记录](CHANGELOG.md) · [验证记录](docs/VALIDATION.md)
 
 需要从源码运行或参与开发，可参阅 [Windows 安装与启动](docs/INSTALL.md)、[Mac 开发指南](docs/MACOS.md)、[代码架构](docs/ARCHITECTURE.md)、[开发与测试](docs/DEVELOPMENT.md)和[发布指南](docs/RELEASE.md)。项目自有代码尚未指定统一开源许可证。第三方依赖及模型的来源和许可见[第三方说明](THIRD_PARTY.md)。
+
+源码开发使用 uv 管理项目内的 `.venv`。首次执行 `uv sync --locked --extra cpu --managed-python`（NVIDIA CUDA 用户将 `cpu` 改为 `cuda`），然后按安装指南准备模型。日常使用 `uv run --no-sync studio.py` 或双击 `start.bat` 启动；测试使用 `uv run --no-sync run_tests.py`。

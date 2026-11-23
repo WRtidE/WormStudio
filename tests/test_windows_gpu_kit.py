@@ -49,6 +49,45 @@ class OfflineGpuTests(unittest.TestCase):
                 with gpu.wheel_directory(output, self.root, lambda *_: None):
                     self.fail('Accepted a corrupt download')
 
+    def test_runtime_install_omits_build_materials_and_counts_only_retained_bytes(self):
+        kept = {
+            'torch/lib/torch_cuda.dll': b'cuda runtime',
+            'torch/lib/torch_cpu.dll': b'cpu runtime',
+            'torch/_C.pyd': b'python extension',
+            'torch/include/third_party/LICENSE': b'third-party license',
+            'torch-2.7.0.dist-info/METADATA': b'package metadata',
+        }
+        dropped = {
+            'torch/lib/dnnl.lib': b'linker archive' * 1024,
+            'torch/include/torch/extension.h': b'build header',
+        }
+        with ZipFile(self.wheel, 'a') as archive:
+            for name, contents in {**kept, **dropped}.items():
+                archive.writestr(name, contents)
+        self.digest = hashlib.sha256(self.wheel.read_bytes()).hexdigest()
+        retained = len(b'verified') + sum(map(len, kept.values()))
+        # Enough room for runtime files plus the existing safety margin, but
+        # not for build materials. Progress must use that same runtime total.
+        usage = gpu.shutil.disk_usage(self.root)._replace(free=retained + 64 * 1024**2)
+        events = []
+        with patch.object(gpu.shutil, 'disk_usage', return_value=usage):
+            self.prepare(lambda *args: events.append(args))
+        for name, contents in kept.items():
+            self.assertEqual((self.stage / name).read_bytes(), contents)
+        for name in dropped:
+            self.assertFalse((self.stage / name).exists())
+        self.assertEqual(events[-1], ('正在解压加速组件', retained, retained))
+
+    def test_wheel_member_paths_cannot_escape_or_relocate_the_runtime(self):
+        for name in ('../outside.py', '/absolute.py', '..\\outside.py', 'torch.data/data/file'):
+            with self.subTest(name=name):
+                with ZipFile(self.wheel, 'w') as archive:
+                    archive.writestr(name, b'invalid layout')
+                self.digest = hashlib.sha256(self.wheel.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, 'Unexpected wheel layout'):
+                    self.prepare()
+                self.assertEqual(list(self.stage.iterdir()), [])
+
     def test_unpacks_verified_bytes_and_reports_both_stages(self):
         events = []
         self.prepare(lambda *args: events.append(args))

@@ -8,10 +8,10 @@ from unittest.mock import patch
 import urllib.request
 import urllib.error
 
-from app import workspace_library as library
-from app.workspace_sessions import get_draft, save_draft
-from app import manual_worm_annotation as manual
-from app.pipeline_progress import PipelineProgress
+import workspace_library as library
+from workspace_sessions import get_draft, save_draft
+import manual_worm_annotation as manual
+from pipeline_progress import PipelineProgress
 
 
 class WorkspacePersistenceTests(unittest.TestCase):
@@ -58,7 +58,7 @@ class WorkspacePersistenceTests(unittest.TestCase):
         self.assertEqual(index.read_text(),'{broken')
 
     def test_remove_history_only_hides_the_selected_row_after_refresh(self):
-        from app.workspace_sessions import catalog, remove_history_entry
+        from workspace_sessions import catalog, remove_history_entry
         video = self.root/'sample.mp4'
         video.write_bytes(b'video')
         for sample in ('first', 'second'):

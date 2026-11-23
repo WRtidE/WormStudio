@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from head_tail.head_tail import detect_head_tail
+from head_tail import detect_head_tail
 
 
 class InitializationTest(unittest.TestCase):

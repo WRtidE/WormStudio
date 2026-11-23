@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from platforms.device import selected_device, inference_context, device_label
+from compute_device import selected_device, inference_context, device_label
 
 
 def tool(name):

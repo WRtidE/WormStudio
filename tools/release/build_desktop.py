@@ -7,7 +7,6 @@ wheels in wheels-{mac,win}. Windows also uses Microsoft's Visual C++ runtime.
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -54,7 +53,7 @@ def verify(file, expected):
 
 def build(system, source, cache, sam, weights, example, stage):
     sys.path.insert(0, str(source/'src'))
-    from platforms.shell import verified_archive
+    from electron_desktop import verified_archive
     archive = cache/f'electron-{system}.zip'
     mac = system == 'mac'
     verified_archive(archive, 'darwin-arm64' if mac else 'win32-x64')
@@ -81,6 +80,8 @@ def build(system, source, cache, sam, weights, example, stage):
         with zipfile.ZipFile(archive) as runtime:
             runtime.extractall(app)
         (app/'electron.exe').rename(app/'WormStudio.exe')
+        from platforms.executable_icon import set_executable_icon
+        set_executable_icon(app/'WormStudio.exe', source/'tools/electron/WormStudio.ico')
         resources = app/'resources'
     entry = resources/'app'
     entry.mkdir()

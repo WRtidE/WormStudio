@@ -1,5 +1,5 @@
 import unittest
-from quality.tracking_quality import mark_quality, reference_area
+from tracking_quality import mark_quality, reference_area
 
 
 class TrackingQualityTests(unittest.TestCase):

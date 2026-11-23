@@ -1,68 +1,63 @@
 # 安装
 
-Windows 源码版采用 x64 Python 3.11，支持 CPU 或 NVIDIA CUDA。解压到当前用户可写的目录，在含有 `start.bat` 的仓库根目录打开 PowerShell。以下安装过程需要网络和 Git。
+源码开发使用 **uv + 项目内 `.venv`**。安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)（0.11.2 或更新版本）和 Git，在含有 `pyproject.toml` 的仓库根目录打开终端。首次安装需要网络；uv 根据 `.python-version` 准备 Python 3.11.15，无需先激活 Conda。
 
-## 1. Python环境
+支持的源码环境为 Windows x64、Linux x64 和 Apple 芯片 macOS。Mac 的开发、桌面打包与实机验证说明见 [Mac 开发指南](MACOS.md)。
 
-```powershell
-conda env create -f environment.yml
-conda activate WormStudio
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements-cuda.txt
-python -m pip install -r requirements.txt
-```
+## 1. 安装项目环境
 
-使用标准 Python 的用户可以直接建立项目内的虚拟环境。以下为 CPU 安装命令，CUDA 用户将 `requirements-cpu.txt` 替换为 `requirements-cuda.txt`。
+Windows NVIDIA CUDA 12.8 环境：
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
-.\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+uv sync --locked --extra cuda --managed-python
 ```
 
-后续步骤中的 `python` 均指该环境的解释器。使用项目内虚拟环境时，可以直接将每条命令中的 `python` 写为 `.\.venv\Scripts\python.exe`。运行包版本保留本机回归所用版本；它不是全平台、带哈希的完整依赖锁。PyTorch 2.7.0 / torchvision 0.22.0 / CUDA 12.8 的组合来源于[官方历史版本表](https://pytorch.org/get-started/previous-versions/)。不同驱动环境需使用相互匹配的官方包并重新验证。
-
-仅运行CPU测试时，用 `requirements-cpu.txt` 替代 CUDA 文件。CPU 与 GPU 的真实模型推理需分别验证。
-
-## 2. SAM2源码
+需要减小下载体积时，可选择同版 PyTorch 的 CUDA 12.6 构建：
 
 ```powershell
-git clone https://github.com/facebookresearch/sam2.git resources/sam2
-git -C resources/sam2 checkout 2b90b9f5ceec907a1c18123530e92e794ad901a4
-$env:SAM2_BUILD_CUDA = '0'
-python -m pip install --no-build-isolation --no-deps -r requirements-sam2.txt
-Remove-Item Env:SAM2_BUILD_CUDA
+uv sync --locked --extra cuda126 --managed-python
 ```
 
-固定提交与[已使用的官方SAM2源码](https://github.com/facebookresearch/sam2/tree/2b90b9f5ceec907a1c18123530e92e794ad901a4)一致。`SAM2_BUILD_CUDA=0`跳过可选扩展编译，主模型仍通过GPU运行；部分扩展后处理不可用。这里使用 SAM2 Hiera 权重，不混用 SAM2.1 权重。
+Windows CPython 3.11 的官方 torch wheel：CUDA 12.8 为约 3.11 GiB，CUDA 12.6 为约 2.58 GiB，少约 541 MiB（17%）；这是 torch 下载包的差异，不是整个环境的磁盘节省量。两者都是 PyTorch 2.7.0 / torchvision 0.22.0。CUDA 12.6 对显卡的支持范围与 12.8 不完全相同，新显卡及实际模型推理应单独验证。此选项已解析进锁文件，实机验证范围见 [验证记录](VALIDATION.md)。
 
-## 3. 权重
+Windows / Linux CPU 环境，以及 Apple 芯片 Mac：
 
 ```powershell
-python tools/download_models.py --model all --output models
+uv sync --locked --extra cpu --managed-python
 ```
 
-下载器从记录的官方地址下载 SAM2 Large，并核对 SHA-256。已有文件哈希不符时拒绝覆盖。当前方法只需要 SAM2 Large 与仓库内源码。
+`cpu`、`cuda`、`cuda126` 三种选项互斥，不使用 `--all-extras`。Mac 使用 `cpu` 选项安装 PyPI 的原生 PyTorch，这并不关闭 MPS；需要强制 CPU 时设置 `WORMSTUDIO_DEVICE=cpu`。CUDA 包仍需要兼容的 NVIDIA 驱动，模型推理需单独验证。
 
-模型来源和可选 Tiny / WormTracer 配置见 [模型说明](MODELS.md)。
+`pyproject.toml` 是源码开发依赖的维护入口，`uv.lock` 记录各平台与 CPU/CUDA 分支的完整解析版本及下载摘要。安装使用 `--locked`，配置与锁文件不一致时会报错。PyTorch 继续使用 2.7.0 / torchvision 0.22.0；CPU 和 CUDA 包分别来自官方专用索引，其它依赖使用 PyPI。配置方式参考 [uv 的 PyTorch 集成说明](https://docs.astral.sh/uv/guides/integration/pytorch/)。
 
-## 4. 检查和启动
+SAM2 会从固定提交 `2b90b9f5ceec907a1c18123530e92e794ad901a4` 自动构建并安装，无需手动克隆或 editable 安装。构建使用所选环境的 PyTorch，配置中的 `SAM2_BUILD_CUDA=0` 跳过可选 CUDA 扩展；主模型仍可使用 GPU，部分扩展后处理不可用。项目使用 SAM2 Hiera 权重，不混用 SAM2.1 权重。
+
+## 2. 下载权重
 
 ```powershell
-python -m pip check
-python tools/check_environment.py
-python studio.py
+uv run --no-sync tools/download_models.py --model all --output models
 ```
 
-工作台在 Electron 窗口中打开，从界面导入视频。Windows、macOS 和 Linux 的源码入口均为 `python studio.py`。首次启动会按当前系统和架构下载并校验固定版本的 Electron，缓存到项目的 `.electron-runtime`。离线部署可以预先带上对应的缓存，或用 `WORM_STUDIO_ELECTRON` 指定已安装的 Electron 可执行文件。`python worm_pipeline.py --help` 查看批处理参数。仅检查代码依赖使用 `python tools/check_environment.py --code-only`。
+下载器从记录的官方地址下载 SAM2 Large，并核对 SHA-256。已有文件哈希不符时拒绝覆盖。模型来源和可选配置见 [模型说明](MODELS.md)。仅运行源码测试不需要下载权重。
 
-## 本机配置
+## 3. 检查和启动
 
-Windows 已有一套可运行的 Python、Electron 和模型时，可将相应环境变量写在 `config/runtime.local.cmd` 中。`start.bat` 在本次启动时读取它。该文件只在本机使用，源码 ZIP 会排除它。
+```powershell
+uv pip check
+uv run --no-sync tools/check_environment.py
+uv run --no-sync studio.py
+```
 
-默认使用当前 `sys.executable`。如需双击启动固定环境，可设置 `WORM_STUDIO_PYTHON`，或创建忽略提交的 `config/python_path.txt`，文件中仅写解释器绝对路径。Windows 双击启动的查找顺序为环境变量、非空本机文件、已激活的 venv 或 Conda 环境、项目内的 `.venv\Scripts\python.exe`，最后是 PATH 中的 Python。配置文件使用 UTF-8（可带 BOM），路径无需引号。旧工作区配置继续兼容。
+先完成上面的同步，再使用 `uv run --no-sync` 保持已选择的 CPU/CUDA 环境。需要更新依赖时重新执行相应的 `uv sync --locked --extra cpu`、`--extra cuda` 或 `--extra cuda126`。直接执行没有选项的 `uv run` / `uv sync` 不会记住上次的 extra，可能改变 PyTorch 安装来源。
 
-资源优先使用项目 `models/` 和 `resources/`。高级覆盖变量：`WORM_STUDIO_RESOURCES`、`WORMSTUDIO_SAM2_CHECKPOINT`。参考 [模型说明](MODELS.md)。
+Windows 也可直接双击 `start.bat`。首次打开工作台会下载并校验当前系统对应的固定 Electron 版本，缓存到 `.electron-runtime`。离线部署可预先准备该缓存，或用 `WORM_STUDIO_ELECTRON` 指定已安装的 Electron。批处理入口为 `uv run --no-sync worm_pipeline.py --help`；仅检查代码依赖使用 `uv run --no-sync tools/check_environment.py --code-only`。测试命令见 [开发与验证](DEVELOPMENT.md)。
 
-本轮做了已有环境的干净源码迁移回归；没有声称在全新电脑完成依赖下载、GPU安装和全流程推理。远程CI结果以上传后的实际运行状态为准。
+## 本机配置与旧环境
+
+`uv run` 使用项目 `.venv`，不需要 `conda activate`。现有 Conda 环境可以保留作回退；`environment.yml` 和 `requirements*.txt` 仅用于旧安装方式、既有离线打包流程，不再作为源码开发的依赖维护入口。
+
+如果以前创建过 `config/runtime.local.cmd`、`config/python_path.txt`，或设置过 `WORM_STUDIO_PYTHON`，需要检查其中是否仍指定旧解释器；显式配置继续具有最高优先级。移除旧覆盖或将其改为项目 `.venv` 的解释器后，新的运行环境才会生效。这些文件只用于本机，不提交或导出。
+
+Windows 双击启动的查找顺序为：`WORM_STUDIO_PYTHON`、非空 `config/python_path.txt`、项目 `.venv\Scripts\python.exe`、已激活的 venv / Conda、PATH 中的 Python。配置文件使用 UTF-8（可带 BOM），路径无需引号。直接运行 Python 入口时默认使用当前解释器，并遵循同样的显式本机覆盖。
+
+资源优先使用项目 `models/` 和 `resources/`。高级覆盖变量为 `WORM_STUDIO_RESOURCES`、`WORMSTUDIO_SAM2_CHECKPOINT`。代码、视频、模型和历史结果仍分别存放；同步环境只管理 `.venv` 中的依赖。

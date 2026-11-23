@@ -12,7 +12,6 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
   const all=()=>{const s=getState();return [...s.folders.map(f=>({...f,isFolder:true})),...s.files];};
   const children=parent=>all().filter(n=>(n.parent||null)===parent).sort((a,b)=>(a.order??1e12)-(b.order??1e12)||a.name.localeCompare(b.name,'zh-CN'));
   const node=id=>all().find(n=>n.id===id);
-  const path=n=>{const names=[n.name], seen=new Set([n.id]);while(n.parent){n=node(n.parent);if(!n||seen.has(n.id))break;seen.add(n.id);names.unshift(n.name);}return names.join(' / ');};
   const button=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;return b;};
   function selectOnly(id){
     picked=new Set(id?[id]:[]);anchor=activeId=id;
@@ -126,6 +125,17 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
     }
     renderPending=false;
     const s=getState(), focused=document.activeElement?.closest('[data-node]')?.dataset.node;
+    // Build a fresh index for this render; state can be mutated between renders.
+    const byId=new Map(), byParent=new Map();
+    for(const n of [...s.folders.map(f=>({...f,isFolder:true})),...s.files]){
+      byId.set(n.id,n);
+      const parent=n.parent||null;
+      if(!byParent.has(parent))byParent.set(parent,[]);
+      byParent.get(parent).push(n);
+    }
+    for(const siblings of byParent.values())siblings.sort((a,b)=>(a.order??1e12)-(b.order??1e12)||a.name.localeCompare(b.name,'zh-CN'));
+    const node=id=>byId.get(id),children=parent=>byParent.get(parent)||[];
+    const path=n=>{const names=[n.name],seen=new Set([n.id]);while(n.parent){n=node(n.parent);if(!n||seen.has(n.id))break;seen.add(n.id);names.unshift(n.name);}return names.join(' / ');};
     if(s.selectedId!==activeId)selectOnly(s.selectedId);
     if(destination&&!s.folders.some(f=>f.id===destination))destination=null;
     const query=s.query.trim().toLowerCase(),matches=f=>(s.filter==='all'||(s.filter==='video'?f.kind==='video':f.kind!=='video'))&&(!query||path(f).toLowerCase().includes(query));

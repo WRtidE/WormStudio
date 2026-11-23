@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
-from pose.display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve
-from quality.quality_schema import VERSION
+from display_centerlines import build_display,fill_display_gaps,inside_fraction,supported_curve,track_visible_tips
+from quality_schema import VERSION
 
 class DisplayTests(unittest.TestCase):
     def row(self,frame=0):
@@ -52,5 +52,65 @@ class DisplayTests(unittest.TestCase):
         self.assertIsNone(supported_curve(fold,mask))
         straight=np.column_stack([np.linspace(10,110,101),np.full(101,50.)])
         self.assertIsNotNone(supported_curve(straight,mask,100.))
+
+    def test_independent_tip_can_survive_without_a_display_line(self):
+        from frame_metrics import present_frame
+        from result_overlay import draw_worm
+        from unittest.mock import patch
+        mask = np.zeros((80,160), bool)
+        mask[40,30:101] = True
+        mask[40,129:132] = True  # Disconnected speck at the hidden tip.
+        p = np.array([[30.,40.],[130.,40.]])
+        for reverse, side in ((False,'head'), (True,'tail')):
+            with self.subTest(side=side):
+                rows = [dict(self.row(i), identity_valid=True, identity_segment=1, display_source='formal',
+                             body_sequence_head_known=True) for i in range(3)]
+                rows[1].update(display_source='unavailable', body_sequence_head_known=False,
+                               head_reason='no_supported_body_path')
+                line = p[::-1] if reverse else p
+                track_visible_tips(rows, {(1,0):line, (1,2):line}, lambda w,i:mask, 12)
+                frame = present_frame(rows[1])
+                self.assertEqual(frame['display_tips'], {side:[30.,40.]})
+                self.assertFalse(frame['head_confirmed'])
+                self.assertFalse(frame['posture_valid'])
+                with patch('result_overlay.cv2.putText') as put:
+                    draw_worm(np.zeros((*mask.shape,3), np.uint8), mask, None, rows[1])
+                self.assertEqual([call.args[1] for call in put.call_args_list if call.args[1] in
+                                  ('H?', 'T?', 'A', 'B')], ['H?' if side == 'head' else 'T?'])
+
+    def test_ambiguous_or_interrupted_tip_tracks_are_not_assigned(self):
+        from frame_metrics import present_frame
+        mask = np.zeros((80,160), bool)
+        mask[40,30:131] = True
+        p = np.array([[30.,40.],[130.,40.]])
+        for change in ('swap','identity','conflict','time','hidden'):
+            with self.subTest(change=change):
+                rows = [dict(self.row(i), identity_valid=True, identity_segment=1, display_source='formal',
+                             body_sequence_head_known=True) for i in range(3)]
+                rows[1].update(display_source='unavailable', body_sequence_head_known=False,
+                               head_reason='no_supported_body_path')
+                if change == 'identity': rows[1]['identity_segment'] = 2
+                if change == 'conflict': rows[2]['head_anchor_conflict'] = True
+                if change == 'hidden': rows[0]['head_display_estimated_end'] = 0
+                track_visible_tips(rows, {(1,0):p, (1,2):p[::-1] if change=='swap' else p},
+                                   lambda w,i:mask, 5 if change=='time' else 12)
+                self.assertEqual(present_frame(rows[1]).get('display_tips', {}),
+                                 {'tail':[130.,40.]} if change=='hidden' else {})
+                if change == 'hidden':
+                    self.assertEqual(present_frame(rows[0])['display_tips'], {'tail':[130.,40.]})
+
+    def test_two_missing_poses_keep_only_the_tips_visible_in_each_frame(self):
+        from frame_metrics import present_frame
+        rows = [dict(self.row(i), identity_valid=True, identity_segment=1,
+                     body_sequence_head_known=i in (0,3), display_source='formal' if i in (0,3) else 'unavailable',
+                     head_reason='initial_mark' if i in (0,3) else 'no_supported_body_path') for i in range(4)]
+        first = np.zeros((80,160), bool)
+        first[40,30:116] = True
+        second = np.zeros_like(first)
+        second[40,42:131] = True
+        p = np.array([[30.,40.],[130.,40.]])
+        track_visible_tips(rows, {(1,0):p, (1,3):p}, lambda w,i:first if i==1 else second, 12)
+        self.assertEqual(present_frame(rows[1])['display_tips'], {'head':[30.,40.]})
+        self.assertEqual(present_frame(rows[2])['display_tips'], {'tail':[130.,40.]})
 
 if __name__=='__main__':unittest.main()

@@ -74,11 +74,11 @@ def main():
     with smoke_directory() as tmp:
         workspace = tmp / '线虫 Windows'
         subprocess.run([sys.executable, repo / 'tools/export_source.py', '--output', workspace], check=True)
-        subprocess.run([sys.executable, '-m', 'venv', '--without-pip', '--system-site-packages',
-                        workspace / '.venv'], check=True)
         env = dict(os.environ, CI='1', WORMSTUDIO_DEVICE='cpu')
         for key in ('VIRTUAL_ENV', 'CONDA_PREFIX', 'WORM_STUDIO_PYTHON', 'WORM_STUDIO_ELECTRON'):
             env.pop(key, None)
+        subprocess.run(['uv', 'sync', '--locked', '--extra', 'cpu', '--managed-python',
+                        '--project', str(workspace)], env=env, check=True)
         batch = [os.environ['ComSpec'], '/d', '/c', 'start.bat']
         subprocess.run([*batch, '--help'], cwd=workspace, env=env, check=True, timeout=120)
         (workspace / 'config/python_path.txt').write_text(

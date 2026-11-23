@@ -17,7 +17,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from export_source import ROOT, source_files
 sys.path.insert(0, str(ROOT/'src'))
-from platforms.shell import VERSION, verified_archive
+from electron_desktop import VERSION, verified_archive
 
 APP = 'WormStudio.app/Contents/'
 RES = APP + 'Resources/'

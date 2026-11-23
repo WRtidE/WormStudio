@@ -9,9 +9,9 @@ import urllib.error
 
 import cv2
 import numpy as np
-from app import manual_worm_annotation as manual
-from app.batch_queue import BatchQueue
-from app.pipeline_progress import PipelineProgress
+import manual_worm_annotation as manual
+from batch_queue import BatchQueue
+from pipeline_progress import PipelineProgress
 
 
 class BatchTests(unittest.TestCase):
@@ -75,6 +75,19 @@ class BatchTests(unittest.TestCase):
         restored.finish('complete')
         self.assertEqual(restored.take()['scale_um_per_px'], 6)
 
+    def test_queue_and_worker_keep_independent_nested_configuration(self):
+        config = dict(sample='one', video='one.mp4', groups=[dict(worms=[dict(points=[[10, 20]])])])
+        self.queue.add(config)
+        config['groups'][0]['worms'][0]['points'][0][0] = 99
+        self.queue.start()
+        worker = self.queue.take()
+        self.assertEqual(worker['groups'][0]['worms'][0]['points'], [[10, 20]])
+        worker['groups'][0]['worms'][0]['points'].append([30, 40])
+        self.assertEqual(self.queue.items[0]['config']['groups'][0]['worms'][0]['points'], [[10, 20]])
+        restored = BatchQueue(self.queue.path)
+        self.assertNotIn('_resume_saved', restored.items[0]['config'])
+        self.assertEqual(restored.items[0]['config']['groups'][0]['worms'][0]['points'], [[10, 20]])
+
     def test_running_queue_rejects_mutations_and_retry_is_explicit(self):
         self.add('one'); self.queue.start(); self.queue.take()
         identifier = self.queue.items[0]['id']
@@ -105,6 +118,20 @@ class BatchTests(unittest.TestCase):
     def test_legacy_queue_does_not_guess_a_result_group(self):
         self.add('old');self.queue.items[0]['status']='complete';self.queue.persist()
         self.assertEqual(BatchQueue(self.queue.path).snapshot()['result_items'],[])
+
+    def test_chamber_correction_replaces_only_its_selected_version(self):
+        for n in (22,23):
+            self.queue.add(dict(sample=f'ch{n}',video='same.mp4',chamber_id=n))
+        self.queue.start()
+        for _ in range(2):
+            self.queue.take()
+            self.queue.finish('complete')
+        group = self.queue.group_for_result('ch23')
+        self.queue.finish('complete', result_sample='ch23-reviewed', previous_sample='ch23')
+        self.queue.finish('complete', result_sample='other-branch', previous_sample='ch23')
+        restored = BatchQueue(self.queue.path)
+        self.assertEqual(restored.group_for_result('ch23-reviewed'),group)
+        self.assertEqual([i['sample'] for i in restored.group_items(group)], ['ch22','ch23-reviewed'])
 
     def test_start_failure_does_not_change_the_active_result_group(self):
         self.add('one')

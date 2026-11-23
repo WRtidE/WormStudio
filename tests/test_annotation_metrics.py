@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from measurements.annotation_metrics import measure_annotation, measure_mask
+from annotation_metrics import measure_annotation, measure_mask
 
 
 class AnnotationMetricTests(unittest.TestCase):

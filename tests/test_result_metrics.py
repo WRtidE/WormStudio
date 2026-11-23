@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from measurements.result_metrics import phenotype_results
+from result_metrics import phenotype_results
 
 
 class PhenotypeResultTests(unittest.TestCase):

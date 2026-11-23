@@ -53,8 +53,10 @@ async function saveVerifiedFile(temp, destination) {
 }
 
 class Updates {
-  constructor({directory, downloads, fetch, notify, feed = github, platform = process.platform, arch = process.arch}) {
+  constructor({directory, downloads, fetch, notify, feed = github, platform = process.platform, arch = process.arch, installer = null}) {
     Object.assign(this, {downloads, fetch, notify, feed, platform, arch});
+    this.installer = installer;
+    this.installing = false;
     this.file = path.join(directory, 'software-updates.json');
     this.cache = {auto: true, checked: 0, attempted: 0, release: null};
     try {
@@ -71,7 +73,8 @@ class Updates {
   state() {
     const {auto, checked, release} = this.cache;
     return {current, auto, checked, checking: this.checking, error: this.error,
-      release: release && {version: release.version, notes: release.notes}, transfer: this.transfer};
+      release: release && {version: release.version, notes: release.notes}, transfer: this.transfer,
+      installing:this.installing, canInstall:Boolean(this.installer && release?.name.endsWith('.zip') && /^sha256:[a-f0-9]{64}$/.test(release.digest || ''))};
   }
   save() {
     const tmp = this.file + '.' + randomUUID();
@@ -91,7 +94,7 @@ class Updates {
     if (this.cache.auto && Date.now() - (this.cache.attempted || 0) >= day) return this.check();
   }
   async check() {
-    if (this.checking || this.transfer?.status === 'loading') return;
+    if (this.installing || this.checking || this.transfer?.status === 'loading') return;
     this.checking = true;
     this.error = '';
     this.notify();
@@ -113,9 +116,18 @@ class Updates {
       this.notify();
     }
   }
+  async install() {
+    if (this.installing || this.checking || this.transfer?.status !== 'done' || !this.state().canInstall) return;
+    this.installing = true;
+    this.error = '';
+    this.notify();
+    try { await this.installer({archive:this.downloaded, ...this.cache.release}); }
+    catch (error) { this.error = '更新未完成：'+error.message; }
+    finally { this.installing = false; this.notify(); }
+  }
   async download() {
     const release = this.cache.release;
-    if (!release || this.checking || this.transfer?.status === 'loading') return;
+    if (this.installing || !release || this.checking || this.transfer?.status === 'loading') return;
     this.transfer = {status:'loading', percent:null};
     this.notify();
     const temp = path.join(this.downloads, '.WormStudio-' + randomUUID() + '.part');

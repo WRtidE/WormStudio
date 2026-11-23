@@ -2,6 +2,7 @@
 const {app, BrowserWindow, Menu, dialog, shell, ipcMain, net} = require('electron');
 const {pathToFileURL} = require('node:url');
 const {Updates} = require('./updates.cjs');
+const appUpdate = require('../../src/platforms/app_update.cjs');
 const {execFile, spawn} = require('node:child_process');
 const execFileAsync = require('node:util').promisify(execFile);
 const {createWriteStream, mkdirSync} = require('node:fs');
@@ -27,7 +28,7 @@ if (process.platform === 'win32') {
 const logPath = path.join(workspace, 'logs', 'electron.log');
 let win, backend, origin, closing = false, closePending = false;
 
-let settingsWindow, updates;
+let settingsWindow, updates, pendingUpdate;
 const settingsPage = path.join(__dirname, 'settings.html');
 
 function openSettings() {
@@ -56,7 +57,11 @@ function initUpdates() {
   };
   updates = new Updates({directory:app.getPath('userData'), downloads:app.getPath('downloads'),
     fetch:(url, options) => net.fetch(url, {...options, credentials:'omit'}), notify,
-    feed:process.env.WORM_STUDIO_UPDATE_FEED || require('./package.json').updateFeed});
+    feed:process.env.WORM_STUDIO_UPDATE_FEED || require('./package.json').updateFeed,
+    installer:!viewer && appUpdate.supported(process.execPath, process.resourcesPath) ? async release => {
+      const apply = await appUpdate.prepare({...release, executable:process.execPath, directory:app.getPath('userData')});
+      await closeWindow(apply);
+    } : null});
   function handle(channel, permitted, callback) {
     ipcMain.handle(channel, (event, ...args) => {
       if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !permitted(event)) throw Error('无效的设置请求');
@@ -71,6 +76,7 @@ function initUpdates() {
   handle('updates:check', fromSettings, () => updates.check());
   handle('updates:auto', fromSettings, value => updates.setAuto(value));
   handle('updates:download', fromSettings, () => updates.download());
+  handle('updates:install', fromSettings, () => updates.install());
   handle('updates:reveal', fromSettings, () => { if (updates.downloaded) shell.showItemInFolder(updates.downloaded); });
   handle('updates:workspace', fromSettings, () => shell.openPath(workspace));
   const gpuHelper = path.join(workspace, 'tools', 'release', 'windows_gpu.py');
@@ -78,11 +84,18 @@ function initUpdates() {
   const bundledPython = path.join(process.resourcesPath, 'analysis', 'python', 'python.exe');
   const canInstallGpu = () => gpuSupported() && path.resolve(python).toLowerCase() === bundledPython.toLowerCase();
   const gpuAbort = new AbortController();
-  let gpuCheck;
+  let gpuCheck, gpuInstallation, gpuPrepared = false, stoppingGpu = false;
+  app.on('before-quit', event => {
+    if (!gpuInstallation || stoppingGpu) return;
+    event.preventDefault();
+    stoppingGpu = true;
+    void gpuInstallation.then(controller => controller.setup.stop()).catch(() => {}).finally(() => app.quit());
+  });
   app.once('will-quit', () => gpuAbort.abort());
   handle('settings:gpu-available', fromSettings, gpuSupported);
   handle('settings:gpu-check', fromSettings, () => {
     if (!gpuSupported()) throw Error('当前平台无法执行 NVIDIA 检测');
+    if (gpuPrepared) return {state:'restart', message:'GPU 加速组件已就绪。完成当前任务后重启 WormStudio，即可使用显卡加速。'};
     if (!gpuCheck) {
       gpuCheck = execFileAsync(python, ['-B', '-X', 'utf8', gpuHelper, '--status-json'], {
         cwd:workspace, windowsHide:true, timeout:90000, signal:gpuAbort.signal,
@@ -90,7 +103,9 @@ function initUpdates() {
         const [state, message] = JSON.parse(stdout.trim());
         if (typeof message !== 'string') throw Error('无法读取 GPU 检测结果');
         if (!canInstallGpu() && ['available', 'prepared'].includes(state)) {
-          return {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
+          return process.env.WORM_STUDIO_ONLINE === '1'
+            ? {state:'online', message:'当前使用 CPU。可按需下载 GPU 加速组件，安装期间仍可使用工作台，完成后重启生效。'}
+            : {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
         }
         return {state, message};
       }).finally(() => { gpuCheck = null; });
@@ -98,6 +113,26 @@ function initUpdates() {
     return gpuCheck;
   });
   handle('settings:gpu-open', fromSettings, () => {
+    if (process.env.WORM_STUDIO_ONLINE === '1') {
+      if (!gpuInstallation) {
+        const {showSetup} = require('./setup-window.cjs');
+        gpuInstallation = showSetup({electron:require('electron'), gpu:true,
+          platform:require('../../src/platforms/online.cjs'),
+          manifest:require(path.join(process.resourcesPath, 'analysis/online-manifest.json')),
+          directory:path.join(app.getPath('userData'), 'components'),
+          onReady:async (result, window) => {
+            gpuPrepared = result.backend === 'cuda';
+            if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:gpu-ready', result.backend);
+            window.close();
+          }}).then(controller => {
+            controller.window.once('closed', () => {
+              void controller.setup.stop().finally(() => { gpuInstallation = null; });
+            });
+            return controller;
+          }).catch(error => { gpuInstallation = null; throw error; });
+      }
+      return gpuInstallation.then(({window}) => { if (!window.isDestroyed()) window.focus(); return {online:true}; });
+    }
     if (!canInstallGpu()) throw Error('离线加速包需要 Windows 桌面版');
     return new Promise((resolve, reject) => {
       const child = spawn(python, ['-I', '-B', gpuHelper], {cwd:workspace, detached:true, windowsHide:true, stdio:'ignore'});
@@ -119,13 +154,13 @@ function signalBackend(signal) {
   }
 }
 
-async function closeWindow() {
+async function closeWindow(applyUpdate = null) {
   if (closePending) return;
   closePending = true;
   try {
     const choice = await dialog.showMessageBox(win, {
-      type: 'question', message: '退出 WormStudio？', detail: '退出会停止当前正在运行的分析。',
-      buttons: ['继续使用', '退出'], defaultId: 0, cancelId: 0
+      type: 'question', message: applyUpdate ? '重启并更新 WormStudio？' : '退出 WormStudio？', detail: '退出会停止当前正在运行的分析。',
+      buttons: ['继续使用', applyUpdate ? '重启并更新' : '退出'], defaultId: 0, cancelId: 0
     });
     if (choice.response !== 1) return;
     if (origin && !win.webContents.isCrashed()) {
@@ -140,6 +175,7 @@ async function closeWindow() {
       }
     }
     // Let Chromium run the page's remaining beforeunload checks.
+    pendingUpdate = applyUpdate;
     closing = true;
     win.close();
   } finally {
@@ -178,9 +214,14 @@ function launch() {
       buttons: ['留下', '离开'], defaultId: 0, cancelId: 0
     });
     if (answer === 1) event.preventDefault();
-    else closing = false;
+    else { closing = false; pendingUpdate = null; }
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => {
+    win = null;
+    if (pendingUpdate) void pendingUpdate().catch(error => {
+      dialog.showErrorBox('无法启动更新', error.message+'；原版本未更改。');
+    }).finally(() => { pendingUpdate = null; app.quit(); });
+  });
   initUpdates();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {label: 'WormStudio', submenu: [{label:'设置…', accelerator:'CmdOrCtrl+,', click:openSettings}, {type:'separator'}, {role: 'hide'}, {role: 'quit', label: '退出 WormStudio'}]},
@@ -233,7 +274,7 @@ function launch() {
 
 if (viewer || app.requestSingleInstanceLock()) {
   app.on('second-instance', () => { if (win) { win.restore(); win.focus(); } });
-  app.on('window-all-closed', () => { closing = true; app.quit(); });
+  app.on('window-all-closed', () => { closing = true; if (!pendingUpdate) app.quit(); });
   // A pipeline stage and its encoders belong to the same process group.
   let stopped = false;
   app.on('will-quit', event => {
