@@ -107,6 +107,8 @@ const renderPhenotypes=(()=>{
   const duration=numeric(current.fps)&&current.fps>0&&numeric(worm.frames)?` · ${number(worm.frames/current.fps,2)} 秒`:'';
   el('phenotype-context').textContent=`${current.video_name||'整段视频'}${duration}${current.chamber_id!=null?' · 培养槽 '+current.chamber_id:''} · 线虫 ${number(worm.worm_id,0)}`;
   if(numeric(worm.valid_frames)&&numeric(worm.frames))el('phenotype-context').textContent+=' · 有效姿态 '+number(worm.valid_frames,0)+' / '+number(worm.frames,0)+' 帧';
+  if(current.measurement_mode==='pixels')el('phenotype-context').textContent+=' · 像素单位';
+  else if(numeric(current.scale_um_per_px))el('phenotype-context').textContent+=' · '+number(current.scale_um_per_px,5)+' μm/px'+(current.calibration_source?'（'+current.calibration_source+'）':'');
   el('phenotype-context').title=`共 ${number(worm.frames,0)} 帧；有效姿态 ${number(worm.valid_frames,0)} 帧；有效掩膜 ${number(worm.mask_valid_frames,0)} 帧`;
   el('summary-core').replaceChildren();for(const metric of SummaryMetrics.core(worm)){const card=add(el('summary-core'),'article','summary-core-card','');metricButton(card,metric,worm);const value=add(card,'div','summary-core-value','');metricValue(value,metric,worm);}
   const common=['median_area_um2','median_length_width_ratio','path_length_um','moving_duration_s','stationary_duration_s'];

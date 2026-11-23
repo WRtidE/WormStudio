@@ -38,6 +38,7 @@ def present_frame(row):
         length_width_ratio=value('length_width_ratio', posture), speed_bl_s=value('speed_bl_s', allowed['motion']),
         body_extension=value('body_extension', posture),
         head_angle_deg=value('head_candidate_angle_smoothed_deg', head),
+        head_angle_method=row.get('head_angle_method',''),
         head_status='人工已确认 · 当前可靠片段' if confirmed else '自动候选 · 可选复核' if candidate else '无法自动判断',
         head_candidate=candidate,head_method=method,
         head_evidence_score=number(row.get('head_evidence_score')),
@@ -52,8 +53,11 @@ def present_frame(row):
         endpoints_unlinked=('endpoint_order_block' in row and row['endpoint_order_block'] in ('',None)),
         head_review_allowed=posture and row.get('centerline_topology','simple')=='simple' and not flag(row,'endpoint_a_inferred') and not flag(row,'endpoint_b_inferred'),
         endpoint_labels=['H','T'] if confirmed else ['H?','T?'] if candidate else ['A','B'],
-        head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown')
+        head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown',
+        circling_candidate=flag(row,'circling_candidate') if allowed['motion'] and row.get('circling_candidate') not in (None,'') else None)
     if row.get('body_sequence_version'):
+        if confirmed and method == 'recovered_from_user_point':
+            result['head_status'] = '多帧自动找回 · 沿用原头端标记'
         result['head_section_status']=row.get('head_section_status','')
         result['head_display_estimated_end']=number(row.get('head_display_estimated_end'))
         result['tail_display_estimated_end']=number(row.get('tail_display_estimated_end'))
@@ -169,4 +173,6 @@ def load_frame_metrics(path, fps, count, trend_only=False):
         from quality_audit import audit
         result['quality_audit'] = audit(raw_rows)
         result['events'] = recorded_events(Path(path).parent, ids, count)
+        from review_intervals import build_intervals
+        result['review_plan'] = build_intervals(raw_rows)
     return result

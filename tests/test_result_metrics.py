@@ -62,6 +62,23 @@ class PhenotypeResultTests(unittest.TestCase):
         self.assertEqual(result['movement'][0]['ratio'],.4)
         self.assertEqual(result['movement'][2]['count'],0)
 
+    def test_new_cycle_metrics_and_circle_coverage_are_independent(self):
+        from result_metrics import present_report
+        row=dict(worm_id=1,frames=121,valid_frames=0,circling_observed_frames=92,circling_candidate_frames=60,
+                 head_status='unconfirmed_A_B_endpoints',head_cycle_amplitude_deg=45,head_cycle_frequency_hz=1,
+                 movement_state_counts={'moving_posture_uncertain':121})
+        report=dict(quality_schema_version='wormstudio-quality-v2')
+        worm=present_report(report,[row])['worms'][0]
+        metrics={m['key']:m for m in worm['metrics']}
+        self.assertIsNone(metrics['head_cycle_amplitude_deg']['value'])
+        self.assertIsNone(metrics['head_cycle_frequency_hz']['value'])
+        self.assertEqual([m['count'] for m in worm['movement']],[None,None,60])
+        self.assertEqual(metrics['circling_candidate_frames']['valid_frames'],92)
+        row.update(circling_observed_frames=0,circling_candidate_frames=0)
+        worm=present_report(report,[row])['worms'][0]
+        self.assertIsNone(worm['movement'][2]['count'])
+        self.assertIsNone(next(m['value'] for m in worm['metrics'] if m['key']=='circling_candidate_frames'))
+
     def test_csv_fallback_nan_and_candidate_labels(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)

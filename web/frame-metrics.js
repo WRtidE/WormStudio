@@ -2,7 +2,7 @@
 const renderFrameMetrics = (() => {
   const el = id => document.getElementById(id), video = el('result-video');
   let timeline = null, sample = '', selected = null, position = -1, request = 0, pending = null;
-  const states = {stationary:'静止',forward:'向前',backward:'向后',forward_candidate:'向前候选',backward_candidate:'向后候选',lateral_or_turning:'侧移 / 转向',circling_candidate:'转圈候选',moving_posture_uncertain:'运动中，姿态不可靠',moving_head_unconfirmed:'运动中，头尾未确认',unknown:'未知 / 需复核'};
+  const states = {stationary:'静止',trunk_stationary:'躯干静止',forward:'向前',backward:'向后',forward_candidate:'向前候选',backward_candidate:'向后候选',lateral_or_turning:'侧移 / 转向',circling_candidate:'转圈候选',moving_posture_uncertain:'运动中，姿态不可靠',moving_head_unconfirmed:'运动中，头尾未确认',unknown:'未知 / 需复核'};
   const reasons = {crossing_without_two_reliable_anchors:'缺少自交前后的可靠姿态',ambiguous_branch_pairing:'自交走向无法唯一确定',unresolved_self_contact_or_missing_tips:'自接触或端点不可见，无法恢复',centerline_missing:'无可靠中线',centerline_geometry_review:'中线几何需复核',length_outlier:'体长异常',centerline_temporal_jump:'中线发生不连续跳变',tracking_contact_or_area_outlier:'掩膜接触或面积异常'};
   Object.assign(reasons,{identity_unverified:'接触或跳变后，个体身份尚未独立确认',inter_worm_contact:'虫间接触',invalid_decoded_source_frame:'源帧已排除',fragmented_mask:'掩膜碎裂',image_boundary_truncation:'虫体越过画面边界',centroid_jump:'质心异常跳变',missing_mask:'缺少掩膜',sam2_tracking_quality:'跟踪质量未通过',physical_scale_not_supplied:'已选择像素单位，不输出物理尺寸', scale_not_verified:'尺度估计尚未确认'});
   const dimensions={source:'源帧',mask:'掩膜',pose:'姿态',identity:'个体身份',head:'头尾',scale:'尺度'};
@@ -22,7 +22,7 @@ const renderFrameMetrics = (() => {
     if (!row) { el('frame-quality').textContent = '此帧缺少记录，请重新运行指标阶段。'; return; }
     const good = row.mask_valid && row.posture_valid && row.identity_valid && !row.quality?.legacy;
     el('frame-quality').classList.toggle('needs-review', !good);
-    el('frame-quality').textContent = `${good?'通过当前质量筛选':'需复核：部分指标不可用'} · ${row.identity_note} · ${row.head_status} · ${states[row.movement_state] || row.movement_state}${!good && row.quality_reason?' · '+row.quality_reason.split(';').map(r=>reasons[r]||r).join('；'):''}`;
+    el('frame-quality').textContent = `${good?'通过当前质量筛选':'需复核：部分指标不可用'} · ${row.identity_note} · ${row.head_status} · ${states[row.movement_state] || row.movement_state}${row.circling_candidate?' · 转圈候选':''}${!good && row.quality_reason?' · '+row.quality_reason.split(';').map(r=>reasons[r]||r).join('；'):''}`;
     el('quality-dimensions').replaceChildren();
     for(const [key,label] of Object.entries(dimensions)){
       const q=row.quality?.dimensions[key];if(!q)continue;

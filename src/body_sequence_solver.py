@@ -11,11 +11,12 @@ from body_sequence import select_body_sequence, BodySequenceBreak, persistent_lo
 from framewise_pose import observed_pose
 from centerline_topology import topology_candidates, hidden_tip_candidates
 from body_geometry import local_field, candidate_score
-from head_recovery import end_contrast, appearance_vote, pose_parity
-from head_appearance import sample_profile
+from head_recovery import appearance_vote, pose_parity, tracking_indices
+from marked_end_recovery import fingerprint, recover_marked_end
 from head_evidence import normalize_anchors
+from short_turns import recover_flanked_candidates
 
-VERSION = 'sam2-body-sequence-v1'
+VERSION = 'sam2-body-sequence-v5-bracketed-turn'
 MIN_LENGTH_FRACTION = .85
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
@@ -24,7 +25,8 @@ SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_
                    'centerline_topology.py', 'framewise_pose.py', 'body_geometry.py',
                    'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
                    'analyze_phenotypes.py', 'body_frame_cache.py', 'skeleton_geometry.py',
-                   'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py')
+                   'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py',
+                   'review_intervals.py', 'marked_end_recovery.py', 'terminal_overlap.py', 'short_turns.py')
 
 
 def signature():
@@ -150,12 +152,6 @@ def recover_short_observations(frames, observed, masks, reference, fps):
                 frames[i].append(candidate)
 
 
-def fingerprint(gray,mask,line):
-    radius=map_coordinates(distance_transform_edt(mask),line.T[::-1],order=1,mode='constant')
-    profile=sample_profile(gray,line,radius)
-    return np.stack([end_contrast(radius,True),end_contrast(profile)])
-
-
 def taper_seed(mask,line):
     """Optional shape-only initialization; never claim anatomical confirmation."""
     radii=map_coordinates(distance_transform_edt(mask),line.T[::-1],order=1,mode='constant')
@@ -172,9 +168,10 @@ def flow_supports_order(gray, masks, start, stop, earlier, later, indices):
     from motion import lk_step
     points = earlier[indices].copy()
     supported = np.ones(len(points), dtype=bool)
-    for frame in range(start, stop):
-        points, reliable, _ = lk_step(gray[frame], gray[frame+1], points)
-        inside = map_coordinates(masks[frame+1].astype(np.uint8), points.T[::-1], order=0, mode='constant')
+    step = 1 if stop > start else -1
+    for frame in range(start, stop, step):
+        points, reliable, _ = lk_step(gray[frame], gray[frame+step], points)
+        inside = map_coordinates(masks[frame+step].astype(np.uint8), points.T[::-1], order=0, mode='constant')
         supported &= reliable & (inside > 0)
         if np.count_nonzero(supported) < 3:
             return False
@@ -187,13 +184,53 @@ def flow_supports_order(gray, masks, start, stop, earlier, later, indices):
             and matches[indices <= 25].any() and matches[indices >= 75].any())
 
 
-def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None):
+def recover_native_observations(frames, observed, masks, gray, reference, fps, excluded, point_count):
+    """Retry short missing paths at native resolution, verified from both sides.
+
+    Only the current silhouette supplies recovered geometry. Neighbours and
+    optical flow verify it; they never interpolate a replacement measurement.
+    Each missing frame is attempted once. Existing candidates remain untouched.
+    """
+    anchors = [i for i,c in enumerate(frames) if c and c[0]['name'] == 'clear_observation']
+    indices = tracking_indices(point_count)
+    attempts = []
+    for left, right in zip(anchors, anchors[1:]):
+        if right-left < 2 or (right-left)/fps > .25 or any(i in excluded for i in range(left, right+1)):
+            continue
+        for i in range(left+1, right):
+            if frames[i]:
+                continue
+            attempt = dict(frame=i, anchors=[left,right], accepted=False, reason='native_pose_missing')
+            attempts.append(attempt)
+            p, reason = observed_pose(masks[i], max_size=None)
+            if p is None:
+                attempt['reason'] = reason
+                continue
+            choices, _ = candidates_for(masks[i], reference, p)
+            candidate = next((c for c in choices if c['name']=='clear_observation'), None)
+            if candidate is None:
+                attempt['reason'] = 'native_geometry_rejected'
+                continue
+            for anchor in (left,right):
+                flip = pose_parity(observed[anchor],p,indices)
+                if flip is None or not flow_supports_order(gray,masks,anchor,i,observed[anchor],
+                        p[::-1] if flip else p,indices):
+                    attempt['reason'] = 'two_sided_image_support_insufficient'
+                    break
+            else:
+                candidate.update(name='native_observation_recovery',recovery_anchors=[left,right])
+                frames[i] = [candidate]
+                observed[i] = p
+                attempt.update(accepted=True,reason='native_geometry_and_two_sided_flow')
+    return attempts
+
+
+def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None,guards=None):
     """Return 101-point geometry, per-frame endpoint evidence and sequence audit.
 
     Manual points are crop-local. Explicitly excluded source frames break both
     motion paths and recovery evidence. A missing candidate stays missing.
     """
-    from head_recovery import tracking_indices
     tracking_indices(point_count)
     n=len(masks)
     if n!=len(gray) or not np.isfinite(fps) or fps<=0:raise ValueError('Invalid body-sequence input')
@@ -213,6 +250,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
         frames.append(cs);radii.append(radius)
         if progress:progress(i+1,n,'生成完整虫体与交叉支路候选',.15+.4*(i+1)/max(n,1))
     recover_short_observations(frames, observed, masks, reference, fps)
+    recovery = recover_native_observations(frames,observed,masks,gray,reference,fps,excluded,point_count)
     marks=[dict(a) for a in normalize_anchors(manual,n)]
     for a in marks:a['human']=True
     if not marks and auto_seed:
@@ -234,11 +272,27 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
             chosen=[dict(points=frames[lo][0]['points'].copy(),candidate=0,reverse=False)]
             evidence=dict(links=[],total_cost=None)
             if local:
-                p=chosen[0]['points'];d=np.linalg.norm(p[[0,-1]]-local[0]['point'],axis=1)
-                if d.min()>.2*reference:linked=False
-                elif d[1]<d[0]:chosen[0].update(points=p[::-1],reverse=True)
+                p=chosen[0]['points']
+                distances=np.linalg.norm(p[[0,-1]]-np.array([a['point'] for a in local])[:,None,:],axis=2)
+                sides=distances.argmin(axis=1)
+                if ((distances.min(axis=1)>.2*reference).any() or (np.ptp(distances,axis=1)<.05*reference).any()
+                        or (sides!=sides[0]).any()):
+                    linked=False;conflict=True
+                elif sides[0]:chosen[0].update(points=p[::-1],reverse=True)
         else:
             try:
+                if len(local)>1:
+                    # Check marks against an independently oriented body path.
+                    # A contradictory mark must not manufacture an endpoint swap.
+                    unmarked,_=select_body_sequence(frames[lo:hi+1],gray[lo:hi+1],masks[lo:hi+1],radius,
+                        point_count=point_count,pillar_centers=pillars)
+                    votes=[]
+                    for a in local:
+                        p=unmarked[a['frame']-lo]['points']
+                        d=np.linalg.norm(p[[0,-1]]-a['point'],axis=1)
+                        votes.append(int(d.argmin()) if d.min()<=.2*reference and abs(d[0]-d[1])>=.05*reference else None)
+                    if None in votes or len(set(votes))!=1:
+                        raise ValueError('Conflicting head marks on a continuous body path')
                 chosen,evidence=select_body_sequence(frames[lo:hi+1],gray[lo:hi+1],masks[lo:hi+1],radius,
                     point_count=point_count,pillar_centers=pillars,
                     anchors=[(a['frame']-lo,a['point']) for a in local])
@@ -262,15 +316,18 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                 manual_lineage=bool(linked and any(a['human'] for a in local)),anchor_conflict=conflict,
                 anchor_frames=[a['frame'] for a in local],head_observed=bool(obs[0]),tail_observed=bool(obs[1]),
                 candidate=c['name'],length_px=c['length_px'],inside=c['inside_fraction'],iou=c['reconstruction_iou'],
-                candidate_count=len(frames[i]),component=[lo,hi])
+                candidate_count=len(frames[i]),component=[lo,hi],recovery_anchors=c.get('recovery_anchors',[]))
         windows.append(dict(start=lo,end=hi,head_linked_to_seed=linked,
             pillar_centers_crop_xy=[p.tolist() for p in pillars],**evidence))
         if progress:progress(hi+1,n,'结合前后帧选择中线和绕柱顺序',.55+.4*(hi+1)/max(n,1))
+    for window in windows:
+        if 'rejected_at' in window and facts[window['rejected_at']]:
+            facts[window['rejected_at']]['correspondence_break_before']=True
+    head_links = recover_marked_end(output,facts,masks,gray,fps,marks,excluded,guards)
     components=sorted({tuple(f['component']) for f in facts if f and not f['head_known'] and not f['anchor_conflict']})
     for lo,hi in components:
-        prior=[i for i in range(max(0,lo-int(np.ceil(.5*fps))),lo) if facts[i] and facts[i]['head_known']]
-        if not prior:continue
-        previous=prior[-1]
+        previous=next((i for i in range(lo-1,max(-1,lo-int(np.ceil(.5*fps))-1),-1) if facts[i]),None)
+        if previous is None or not facts[previous]['head_known']:continue
         if any(i in excluded for i in range(previous,lo+1)):continue
         indices = tracking_indices(point_count)
         votes=[pose_parity(output[previous],output[i],indices) for i in range(lo,min(hi+1,lo+3))]
@@ -311,8 +368,11 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                     facts[i]['head_observed'],facts[i]['tail_observed']=facts[i]['tail_observed'],facts[i]['head_observed']
                 facts[i].update(head_known=True,head_source='multi_frame_appearance_candidate',manual_lineage=False,
                     appearance_support=len(useful),appearance_score=float(abs(useful.mean())))
+    candidate_links=[] if seed is None else recover_flanked_candidates(
+        output,facts,fps,seed,excluded,guards,lambda i:fingerprint(gray[i],masks[i],output[i]))
     return output,facts,dict(version=VERSION,reference_length_px=reference,tracking_point_count=point_count,
-                            anchors=marks,windows=windows)
+                            anchors=marks,windows=windows,recovery=recovery,head_reacquisition=head_links,
+                            flanked_candidates=candidate_links)
 
 
 def head_results(quality):
@@ -324,12 +384,19 @@ def head_results(quality):
         observed=bool(known and f['head_observed'] and f['tail_observed'])
         confirmed=bool(observed and f.get('manual_lineage'))
         results.append(dict(head_endpoint=0 if known else None,
-            head_status='confirmed_by_user_point' if confirmed else 'unconfirmed_temporal_candidate' if known else 'unconfirmed_A_B_endpoints',
+            head_status=('recovered_from_user_point' if f['head_source']=='recovered_marked_end' else 'confirmed_by_user_point')
+                        if confirmed else 'unconfirmed_temporal_candidate' if known else 'unconfirmed_A_B_endpoints',
             head_identity_confirmed=confirmed,head_evidence_score=None,
             head_reason=f['head_source'] if f else 'no_supported_body_path',head_segment=f['component'][0] if known else -1,
             head_anchor_count=len(f.get('anchor_frames',[])) if f else 0,
             head_anchor_conflict=bool(f and f.get('anchor_conflict')),head_shape_votes=0,head_motion_votes=0,
+            head_link_boundary=f.get('head_link_boundary',[]) if f else [],
+            head_appearance_votes=f.get('head_appearance_support',f.get('appearance_support',0)) if f else 0,
             head_input_flipped=False,body_sequence_head_known=known,body_sequence_version=VERSION,
+            body_sequence_segment=f['component'][0] if f else -1,
+            body_sequence_break_before=bool(f and f.get('correspondence_break_before')),
+            body_recovery_source=f['candidate'] if f and f.get('recovery_anchors') else '',
+            body_recovery_anchors=f.get('recovery_anchors',[]) if f else [],
             head_recovery_points=13,head_section_status='body_sequence_estimate' if known and not observed else '',
             head_display_estimated_end=0 if known and not f['head_observed'] else None,
             tail_display_estimated_end=1 if known and not f['tail_observed'] else None))

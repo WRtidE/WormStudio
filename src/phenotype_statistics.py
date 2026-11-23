@@ -7,7 +7,7 @@ import numpy as np
 from quality_schema import flag, permissions
 
 
-VERSION = 'wormstudio-phenotypes-v4'
+VERSION = 'wormstudio-phenotypes-v6'
 
 
 def measure_posture(row, points, scale):
@@ -73,7 +73,7 @@ def behavior_statistics(rows, times, trajectory_runs):
     stops = reversals = 0
     events = []
     states = [row['movement_state'] for row in rows]
-    direction_states = {'forward', 'backward', 'stationary', 'lateral_or_turning', 'circling_candidate'}
+    direction_states = {'forward', 'backward', 'stationary', 'trunk_stationary', 'lateral_or_turning', 'circling_candidate'}
     for domain in observation:
         keys = []
         for row, state in zip(rows, states):
@@ -93,7 +93,7 @@ def behavior_statistics(rows, times, trajectory_runs):
                 observation[domain] += float(times[end] - times[start])
                 def label(i):
                     if domain == 'activity':
-                        return 'stationary' if states[i] == 'stationary' else 'moving'
+                        return 'stationary' if states[i] in ('stationary','trunk_stationary') else 'moving'
                     return states[i]
                 previous = None
                 for state, bout in groupby(indices, key=label):

@@ -22,6 +22,7 @@ from scipy.signal import find_peaks, savgol_filter
 from centerline_topology import geometry_quality
 from result_overlay import OVERLAY_VERSION, draw_worm
 from head_tail import detect_head_tail, CANDIDATE_STATUSES, VERSION as HEAD_TAIL_VERSION
+from head_bend_geometry import local_angle, supported_angles, turn
 from image_io import write_png
 from serialization import json_safe, write_json_records
 from skeleton_geometry import centerline, frustum_volume
@@ -44,43 +45,81 @@ def finite_stat(values, statistic=np.median):
 def signed_angle(points):
     # Head-outward tangent (0-10%) relative to the neck-outward tangent (10-30%).
     a=points[0]-points[10]; b=points[10]-points[30]
-    return float(np.degrees(np.arctan2(b[0]*a[1]-b[1]*a[0],np.dot(b,a))))
+    return turn(a,b)
 
 
-def runs(valid):
+def runs(valid,segments=None):
     indices=np.flatnonzero(valid)
-    return np.split(indices,np.where(np.diff(indices)>1)[0]+1) if len(indices) else []
+    if not len(indices):return []
+    cut=np.diff(indices)>1
+    if segments is not None:cut |= segments[indices[1:]]!=segments[indices[:-1]]
+    return np.split(indices,np.flatnonzero(cut)+1)
 
 
-def smooth_valid(values,valid,window):
+def smooth_valid(values,valid,window,*,angles=False,segments=None):
     result=np.full_like(values,np.nan,dtype=float)
-    for idx in runs(valid):
+    for idx in runs(valid,segments):
         w=min(window,len(idx) if len(idx)%2 else len(idx)-1)
-        result[idx]=savgol_filter(values[idx],w,2,axis=0) if w>=5 else values[idx]
+        part=values[idx]
+        if angles:part=np.degrees(np.unwrap(np.radians(part)))
+        smoothed=savgol_filter(part,w,2,axis=0) if w>=5 else part
+        result[idx]=(smoothed+180)%360-180 if angles else smoothed
     return result
 
 
-def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None):
+def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None,*,segments=None):
     if timestamps is None:timestamps=np.arange(len(valid))/fps
-    events=[]; cycles=0
-    segments = runs(valid)
-    for idx in segments:
+    events=[]; cycles=0; duration=0.
+    distance=max(1,int(round(min_interval*fps)))
+    for idx in runs(valid,segments):
         if len(idx)<3:continue
-        signal=angles[idx]
-        distance=max(1,int(round(min_interval*fps)))
-        positive=find_peaks(signal,height=threshold,prominence=threshold/2,distance=distance)[0]
-        negative=find_peaks(-signal,height=threshold,prominence=threshold/2,distance=distance)[0]
-        candidates=sorted([(int(i),1) for i in positive]+[(int(i),-1) for i in negative])
+        duration+=timestamps[idx[-1]]-timestamps[idx[0]]
+        signal=np.degrees(np.unwrap(np.radians(angles[idx])))
+        signal-=np.median(signal)
+        candidates=[]
+        for sign in (1,-1):
+            side=sign*signal
+            peaks=find_peaks(side,prominence=threshold/2,distance=distance)[0]
+            for i in peaks:
+                left,peak,right=side[i-1:i+2]
+                curvature=left+right-2*peak
+                # Estimate the peak height between samples, keeping its observed frame and time.
+                height=peak-(right-left)**2/(8*curvature) if curvature<0 else peak
+                if height>=threshold:
+                    candidates.append((int(i),sign,float(height)))
         selected=[]
-        for i,sign in candidates:
-            if selected and selected[-1][1]==sign:
-                if abs(signal[i])>abs(signal[selected[-1][0]]):selected[-1]=(i,sign)
-            else:selected.append((i,sign))
-        cycles+=max(0,len(selected)-1)//2
-        events.extend(dict(frame=int(idx[i]),time_s=float(timestamps[idx[i]]),direction=sign,
-                           angle_deg=float(signal[i])) for i,sign in selected)
-    duration=sum(timestamps[idx[-1]]-timestamps[idx[0]] for idx in segments)
+        for i,sign,height in sorted(candidates):
+            if selected and selected[-1][1]==sign and np.min(sign*signal[selected[-1][0]:i+1])>threshold/4:
+                if height>selected[-1][2]:selected[-1]=(i,sign,height)
+            else:selected.append((i,sign,height))
+        alternating=[]
+        for i,sign,height in selected:
+            if alternating and alternating[-1][1]==sign:alternating.clear()
+            alternating.append((i,sign,height))
+            event=dict(frame=int(idx[i]),time_s=float(timestamps[idx[i]]),direction=sign,
+                       angle_deg=float(angles[idx[i]]),excursion_deg=sign*height)
+            if len(alternating)==3:
+                # Two peak-to-trough half-swings between consecutive same-side peaks.
+                first,middle,last=(v for _,_,v in alternating)
+                event['cycle_amplitude_deg']=(first+2*middle+last)/4
+                event['cycle_period_s']=float(timestamps[idx[i]]-timestamps[idx[alternating[0][0]]])
+                cycles+=1
+                alternating=alternating[-1:]
+            events.append(event)
     return events,cycles,duration
+
+
+def trajectory_kinematics(points,times,segments,window,rows):
+    smoothed=np.full_like(points,np.nan)
+    velocity=np.full_like(points,np.nan)
+    for idx in segments:
+        part=points[idx]
+        smoothed[idx]=part if np.all(part==part[0]) else smooth_valid(part,np.ones(len(idx),bool),window)
+        if len(idx)>=2:
+            velocity[idx]=np.gradient(smoothed[idx],times[idx],axis=0)
+        if rows[idx[0]].get('identity_link_source') in ('auto_reassociated','human_same'):
+            velocity[idx[0]]=np.nan
+    return smoothed,velocity
 
 
 def calibration(sample,summary,config):
@@ -128,6 +167,23 @@ def is_circle_path(path,body_length,fps,config,timestamps=None):
     return (rotation>=config['circling_angle_deg'] and closure<=config['circling_closure_bl']
             and step.sum()>body_length*.5 and compactness>=config['circling_min_compactness']
             and coherence>=config['circling_min_direction_coherence'])
+
+
+def circle_evidence(path,times,segments,body_length,fps,config):
+    observed=np.zeros(len(path),bool)
+    candidate=np.zeros(len(path),bool)
+    if not np.isfinite(body_length) or body_length<=0:return observed,candidate
+    for idx in segments:
+        t=times[idx]
+        for factor in (1,2):
+            seconds=factor*config['circling_window_s']
+            starts=np.searchsorted(t,t-seconds+1e-9,side='right')-1
+            for end in np.flatnonzero(starts>=0):
+                sub=idx[starts[end]:end+1]
+                if len(sub)<3:continue
+                observed[sub]=True
+                if is_circle_path(path[sub],body_length,fps,config,times[sub]):candidate[sub]=True
+    return observed,candidate
 
 
 def pose_length_reference(rows):
@@ -280,6 +336,14 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                 row['endpoint_a_angle_deg']=signed_angle(p)
                 if row.get('contact_bridge'):
                     row['mean_width_um']=np.nan  # Overlapping silhouettes inflate the distance-transform width.
+                if method=='body_sequence':
+                    if row.get('endpoint_a_inferred') or row.get('endpoint_b_inferred'):
+                        row['length_estimate_um']=row['length_um']
+                        row['length_um']=np.nan
+                        row['length_measurement_status']='hidden_endpoint_estimate'
+                    if row.get('centerline_topology')!='simple':
+                        row['mean_width_um']=np.nan
+                        row['width_measurement_status']='contact_width_unresolved'
                 row['volume_valid']=not reasons and row.get('centerline_topology','simple')=='simple'
                 if method == 'self_contact' and (qa.get('local_hairpin') or qa['centerline_inside_fraction'] < .97):
                     row['volume_valid'] = False
@@ -300,7 +364,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         lengths=np.array([r['length_um'] for r in rows]);median_length=pose_length_reference(rows)
         # Detect incomplete/merged masks even if the tracker never returned empty.
         for i in range(n):
-            if method != 'self_contact' and valid[i] and np.isfinite(median_length) and not (.65*median_length<=lengths[i]<=1.35*median_length):
+            if (method != 'self_contact' and valid[i] and np.isfinite(lengths[i]) and np.isfinite(median_length)
+                    and not (.65*median_length<=lengths[i]<=1.35*median_length)):
                 valid[i]=False;rows[i]['quality_reason']+=';length_outlier';rows[i]['valid_for_summary']=False;rows[i]['centerline_valid']=False
                 rows[i]['volume_valid']=False;rows[i]['volume_estimate_um3']=np.nan
         # Individual metrics need both local geometry and continuous identity.
@@ -363,7 +428,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             display_lines[key] = visible[key][::-1].copy() if reverse else visible[key]
         for i,(row,head) in enumerate(zip(rows,heads)):
             row.update(head)
-            row['head_metrics_valid']=bool(valid[i] and head['head_endpoint'] is not None and head['head_identity_confirmed'])
+            row['head_metrics_valid']=bool(valid[i] and head['head_endpoint'] is not None and head['head_identity_confirmed']
+                                           and not head.get('head_anchor_conflict'))
             row['head_candidate_angle_deg']=np.nan
             for key in ('head_x_crop_px','head_y_crop_px','tail_x_crop_px','tail_y_crop_px','heading_x','heading_y'): row[key]=np.nan
             p=lines.get((worm,i))
@@ -402,59 +468,74 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         mask_valid=np.array([permissions(r)['motion'] for r in rows])
         window=max(5,int(round(config['speed_smoothing_s']*fps))|1)
         segments=np.array([r['identity_segment'] for r in rows])
-        trajectory_runs=[idx for segment in np.unique(segments) for idx in runs(mask_valid & (segments==segment))]
-        smoothed=np.full_like(centers,np.nan)
-        for idx in trajectory_runs:
-            segment_centers = centers[idx]
-            if np.all(segment_centers == segment_centers[0]):
-                # Filtering constant coordinates can create a tiny artificial path.
-                smoothed[idx] = segment_centers
-            else:
-                smoothed[idx] = smooth_valid(segment_centers, np.ones(len(idx), bool), window)
-        velocity=np.full_like(smoothed,np.nan)
-        for idx in trajectory_runs:
-            if len(idx)>=2:velocity[idx]=np.gradient(smoothed[idx],times[idx],axis=0)
-            if rows[idx[0]].get('identity_link_source') in ('auto_reassociated','human_same'):
-                velocity[idx[0]]=np.nan
+        if method=='body_sequence':
+            breaks=np.array([r['body_sequence_break_before'] for r in rows])
+            segments=np.cumsum(np.r_[True,np.diff(segments)!=0] | breaks)
+        trajectory_runs=runs(mask_valid,segments)
+        smoothed,velocity=trajectory_kinematics(centers,times,trajectory_runs,window,rows)
+        trunk=np.full_like(centers,np.nan)
+        for i,row in enumerate(rows):
+            if valid[i] and row.get('centerline_topology','simple')=='simple' and not row.get('contact_bridge'):
+                ranges=json.loads(row['uncertain_point_ranges']) if row.get('uncertain_point_ranges') else []
+                if any(lo<=70 and hi>=30 for lo,hi in ranges):continue
+                trunk[i]=lines[(worm,i)][30:71].mean(axis=0)*scale
+        head_segments=np.array([row['head_segment'] for row in rows])
+        head_blocks=np.cumsum(np.r_[True,(segments[1:]!=segments[:-1]) | (head_segments[1:]!=head_segments[:-1])])
+        trunk_runs=runs(mask_valid & np.isfinite(trunk[:,0]),head_blocks)
+        _,trunk_velocity=trajectory_kinematics(trunk,times,trunk_runs,window,rows)
+        trunk_speeds=np.linalg.norm(trunk_velocity,axis=1)
         speeds=np.linalg.norm(velocity,axis=1);bl_s=speeds/median_length
         angles=np.array([r['head_candidate_angle_deg'] for r in rows])
-        angle_valid=valid&np.isfinite(angles)
-        angle_smooth=np.full(n,np.nan);events=[];cycles=0;duration=0.
-        # Never smooth or count a bend across a break in endpoint identity.
-        for segment in sorted({r['head_segment'] for r in rows if r['head_metrics_valid']}):
-            accepted=angle_valid & np.array([r['head_segment']==segment for r in rows])
-            sm=smooth_valid(angles,accepted,5);angle_smooth[accepted]=sm[accepted]
-            ev,cy,du=bend_events(sm,accepted,fps,config['head_angle_threshold_deg'],config['minimum_bend_interval_s'],times)
-            events.extend(ev);cycles+=cy;duration+=du
+        allowed_head=valid & np.array([permissions(r)['head'] for r in rows])
+        angles[~allowed_head]=np.nan
+        if method=='body_sequence' and len(ids)==1:
+            evidence=np.full((n,4),np.nan)
+            for i in np.flatnonzero(np.isfinite(angles)):
+                row=rows[i]
+                ranges=json.loads(row['uncertain_point_ranges']) if row.get('uncertain_point_ranges') else []
+                if (row.get('endpoint_a_inferred') or row.get('centerline_topology','simple')!='simple'
+                        or row.get('contact_bridge') or any(lo<=30 and hi>=0 for lo,hi in ranges)):
+                    angles[i]=np.nan
+                    continue
+                geometry=local_angle(lines[(worm,i)],get_mask(worm,i))
+                if geometry is not None:evidence[i]=geometry
+            angles,angle_methods=supported_angles(angles,evidence,head_blocks,times)
+            for row,angle,angle_method,block in zip(rows,angles,angle_methods,head_blocks):
+                row['head_candidate_angle_deg']=float(angle)
+                row['head_angle_method']=angle_method
+                row['head_angle_block']=int(block)
+        angle_valid=np.isfinite(angles)
+        angle_smooth=smooth_valid(angles,angle_valid,5,angles=True,segments=head_blocks)
+        events,cycles,duration=bend_events(angles,angle_valid,fps,config['head_angle_threshold_deg'],
+                                           config['minimum_bend_interval_s'],times,segments=head_blocks)
         all_events.extend(dict(sample=sample,worm_id=worm,head_status=rows[e['frame']]['head_status'],**e) for e in events)
-        circle=np.zeros(n,bool);circle_window=max(3,round(config['circling_window_s']*fps))
-        for idx in trajectory_runs:
-            for j in range(circle_window,len(idx)+1):
-                sub=idx[j-circle_window:j]
-                if is_circle_path(smoothed[sub],median_length,fps,config,times[sub]):
-                    circle[sub]=True
+        circle_observed,circle=circle_evidence(smoothed,times,trajectory_runs,median_length,fps,config)
         for i,row in enumerate(rows):
             row['speed_um_s']=float(speeds[i]);row['speed_bl_s']=float(bl_s[i])
             row['centroid_smoothed_x_um']=float(smoothed[i,0]);row['centroid_smoothed_y_um']=float(smoothed[i,1])
             row['head_candidate_angle_smoothed_deg']=float(angle_smooth[i])
+            row['circling_candidate']=bool(circle[i]) if circle_observed[i] else None
             if not mask_valid[i] or not np.isfinite(speeds[i]) or not np.isfinite(bl_s[i]):state='unknown'
             elif bl_s[i]<config['stationary_speed_bl_s']:state='stationary'
-            elif circle[i]:state='circling_candidate'
-            elif not valid[i]:state='moving_posture_uncertain'
+            elif not valid[i] or not np.isfinite(trunk_speeds[i]):state='moving_posture_uncertain'
+            elif trunk_speeds[i]<config['stationary_speed_bl_s']*median_length:state='trunk_stationary'
             elif not row['head_metrics_valid']:state='moving_head_unconfirmed'
             else:
-                projection=float(np.dot(velocity[i],[row['heading_x'],row['heading_y']])/max(speeds[i],1e-9))
-                state='forward_candidate' if projection>.5 else 'backward_candidate' if projection<-.5 else 'lateral_or_turning'
-                if row['head_identity_confirmed']:state=state.replace('_candidate','')
+                projection=float(np.dot(trunk_velocity[i],[row['heading_x'],row['heading_y']])/max(trunk_speeds[i],1e-9))
+                state='forward' if projection>.5 else 'backward' if projection<-.5 else 'lateral_or_turning'
             row['movement_state']=state
         good=smoothed[mask_valid];spread=float(np.linalg.norm(np.ptp(good,axis=0))/median_length) if len(good) else np.nan
         if len(trajectory_runs)>1:spread=np.nan
         mean_speed=finite_stat(bl_s,np.mean)
+        states={row['movement_state'] for row in rows}
+        stationary_observation=states.issubset({'stationary','trunk_stationary'})
         if not np.isfinite(mean_speed) or not np.isfinite(spread):activity='unknown_insufficient_valid_data'
         elif mean_speed>=config['active_speed_bl_s'] and spread>=config['active_range_bl']:activity='A'
-        elif mean_speed<config['stationary_speed_bl_s'] and spread<config['localized_range_bl']:
-            activity='stationary_head_unconfirmed' if head_status=='unconfirmed_A_B_endpoints' else 'C' if events else 'stationary_without_detected_head_bends'
-        else:activity='B'
+        elif stationary_observation and spread<config['localized_range_bl']:
+            activity='stationary_head_unconfirmed' if not duration else 'C' if events else 'stationary_without_detected_head_bends'
+        elif mean_speed<config['active_speed_bl_s'] and spread<config['active_range_bl']:activity='B'
+        else:activity='mixed_speed_range'
+        cycle_seconds=sum(e['cycle_period_s'] for e in events if 'cycle_period_s' in e)
         all_summaries.append(dict(sample=sample,worm_id=worm,frames=n,valid_frames=int(valid.sum()),
             quality_schema_version=QUALITY_VERSION,mask_valid_frames=sum(r['mask_valid'] for r in rows),
             identity_valid_frames=sum(r['identity_valid'] for r in rows),trajectory_valid_frames=int(mask_valid.sum()),
@@ -463,6 +544,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             excluded_frames=np.flatnonzero(~valid).tolist(),head_status=head_status,head_taper_ratio=initial_width_ratio,
             head_detection_method=HEAD_TAIL_VERSION,head_known_frames=known_frames,
             head_confirmed_frames=confirmed_frames,head_candidate_frames=candidate_frames,
+            head_recovered_from_mark_frames=sum(r['head_detection_status']=='recovered_from_user_point' for r in rows),
             head_unknown_frames=n-known_frames,head_manual_requested=bool(manual),
             head_evidence_score=finite_stat([r['head_evidence_score'] for r in rows if r['head_metrics_valid']]),
             head_reason_counts={reason:sum(r['head_reason']==reason for r in rows) for reason in sorted({r['head_reason'] for r in rows})},
@@ -479,12 +561,19 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             speed_valid_frames=int(np.isfinite(speeds).sum()),
             head_angle_valid_frames=int(np.isfinite(angle_smooth).sum()),
             explored_bbox_diagonal_bl=spread,observed_valid_duration_s=duration,
-            directional_bend_count=len(events) if angle_valid.any() else None,directional_bends_per_min=len(events)*60/duration if duration else None,
-            observed_complete_cycles=cycles if angle_valid.any() else None,
+            directional_bend_count=len(events) if duration else None,directional_bends_per_min=len(events)*60/duration if duration else None,
+            observed_complete_cycles=cycles if duration else None,
+            head_complete_cycles_duration_s=cycle_seconds if duration else None,
+            head_cycle_frequency_hz=cycles/cycle_seconds if cycles else None,
+            head_cycle_amplitude_deg=finite_stat([e['cycle_amplitude_deg'] for e in events if 'cycle_amplitude_deg' in e]),
             head_candidate_amplitude_deg=float(np.nanpercentile(np.abs(angle_smooth),95)) if angle_valid.any() else None,
             head_candidate_half_excursion_deg=float(np.subtract(*np.nanpercentile(angle_smooth,[95,5]))/2) if angle_valid.any() else None,
             activity_class_provisional=activity,
-            movement_state_counts={state:sum(r['movement_state']==state for r in rows) for state in sorted({r['movement_state'] for r in rows})}))
+            circling_observed_frames=int(circle_observed.sum()),circling_candidate_frames=int(circle.sum()) if circle_observed.any() else None,
+            movement_state_counts={state:sum(r['movement_state']==state for r in rows) for state in sorted(states)}))
+        if method=='body_sequence' and len(ids)==1:
+            all_summaries[-1].update(head_angle_section_fit_frames=int(np.sum(angle_methods=='section_fit')),
+                                     head_angle_review_frames=int(np.sum(angle_methods=='review_geometry')))
         for field, summary_key, count_key in (
                 ('mean_width_um', 'median_width_um', 'width_valid_frames'),
                 ('length_width_ratio', 'median_length_width_ratio', 'ratio_valid_frames'),
@@ -523,7 +612,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                          ('quality.json',(dict(frame=r['frame'],worm_id=r['worm_id'],**describe(r)) for r in all_rows))]:
         write_json_records(output/name, payload)
     with (output/'bend_events.csv').open('w',newline='',encoding='utf-8-sig') as f:
-        fields=['sample','worm_id','head_status','frame','time_s','direction','angle_deg']
+        fields=['sample','worm_id','head_status','frame','time_s','direction','angle_deg','excursion_deg','cycle_amplitude_deg','cycle_period_s']
         w=csv.DictWriter(f,fieldnames=fields);w.writeheader();w.writerows(all_events)
     report=dict(sample=sample,crop_xyxy=source['crop_xyxy'],mask_source=str(data),centerline_method=method,centerline_source=wormtracer_source if method!='skeleton' else 'skeleton',fps=fps,scale_um_per_px=None if source.get('measurement_mode')=='pixels' else scale,calibration=scale_info,
                 measurement_mode=source.get('measurement_mode','physical'), metric_definition_version=METRIC_VERSION,
@@ -618,6 +707,8 @@ def write_report(output,report,rows):
         for worm in report['worms']:
             writer.writerows(dict(worm_id=worm['worm_id'], unit=unit, **part) for part in worm['trajectory_segments'])
     scale_text='仅像素单位；未提供物理标定。' if pixel_mode(report) else f"像素比例：{report['scale_um_per_px']:.6f} μm/px。"
+    if not pixel_mode(report) and report.get('calibration',{}).get('source'):
+        scale_text+=f" 标定来源：{report['calibration']['source']}。"
     from result_metrics import present_report
     text = [f"# {report['sample']} 表型分析", '', scale_text]
     for worm in present_report(report, report['worms'])['worms']:
@@ -631,10 +722,15 @@ def write_report(output,report,rows):
                      metric['unit'], '—' if frames is None else f'{frames:g}',
                      '—' if seconds is None else f'{seconds:.3f}']
             text.append('|' + '|'.join(cells) + '|')
-    text += ['', '头摆只统计人工确认且连续可靠的片段；缺失不是零。单向弯曲记一次，频率分母为有效连续观察秒数。',
-             '头部角度采用中线0–10%与10–30%方向夹角；幅度为绝对角度P95，另报分位半跨度。阈值为工程口径，尚需独立人工事件验证。',
+        for movement in worm['movement']:
+            count=movement['count']
+            text.append(f"\n{movement['label']}：{'—' if count is None else f'{count:g} 帧'}。{movement['note']}")
+        text.append(f"\n活动分类（研究规则）：{worm['activity']['label']}。")
+    text += ['', '头摆只统计头端已确认的连续片段。角度相对片段中性位超过阈值计一次，回正后同侧再次摆动可另计。频率分母为可检测的连续观察秒数。',
+             '头颈弯曲角采用中线 0–10% 与 10–30% 两段方向的夹角。周期摆幅取连续同侧峰之间两段峰谷半差的平均，再按完整周期取中位数。另报弯曲角绝对值 P95。',
+             '单虫身体序列在头颈局部近直且前后帧支持时，采用当帧轮廓截面中点拟合方向。持续的几何冲突进入区间复核，受影响的头角留空。',
              '体积采用圆形截面分段圆台估算，不是实测三维体积。速度位于图像坐标系，未校正载物台漂移。',
-             'A/B/C与转圈为待验证研究规则；本轮不作为正式表型结论。',
+             '前后方向使用已确认头端和躯干中段的平移。转圈单独统计，采用基础与双倍时长两个连续轨迹窗口。A/B/C 与转圈为待验证研究规则。',
              '运动与方向时长在各自的连续有效窗口内按相邻帧时间中点分配。停顿次数只计可见起点；事件表中的 left_censored / right_censored 表示该端被窗口截断。倒退事件需同一头尾片段内从前进直接切换为后退。',
              '', '[停顿与倒退事件](behavior_events.csv) · [分段净位移](trajectory_segments.csv)',
              '', '[逐帧数据](per_frame_metrics.csv) · [单虫汇总](worm_summary.csv) · [摆动事件](bend_events.csv) · [质量](quality.json)',

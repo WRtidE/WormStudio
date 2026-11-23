@@ -66,6 +66,8 @@ def audit(rows):
 
 def write_audit(output,rows):
     result=audit(rows)
+    from review_intervals import build_intervals
+    (output/'review-intervals.json').write_text(json.dumps(build_intervals(rows),ensure_ascii=False,indent=2),encoding='utf-8')
     (output/'quality-audit.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
     with (output/'quality-gates.csv').open('w',encoding='utf-8-sig',newline='') as handle:
         writer=csv.DictWriter(handle,fieldnames=['frame','worm_id','source_valid','mask_valid','pose_valid',

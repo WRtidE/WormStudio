@@ -133,6 +133,53 @@ class SingleDeliveryTests(unittest.TestCase):
         self.assertTrue(all(not 400<=e['frame']<600 for e in events))
         self.assertAlmostEqual(duration,7.98)
 
+    def test_same_side_returns_fixed_offset_and_near_threshold_bends(self):
+        t=np.arange(721)/12
+        pulses=np.zeros(121)
+        for i in range(10):
+            pulses[12*i+2:12*i+9]=45*np.sin(np.linspace(0,np.pi,7))**2
+        cases=[(pulses,10,0),(35+45*np.sin(2*np.pi*t),120,59),
+               (21*np.sin(2*np.pi*1.7*t),204,101),(np.full(121,35.),0,0)]
+        for angles,count,complete in cases:
+            with self.subTest(count=count):
+                events,cycles,_=metrics.bend_events(angles,np.ones(len(angles),bool),12,20,.15)
+                self.assertEqual((len(events),cycles),(count,complete))
+                if count==120:
+                    amplitudes=[e['cycle_amplitude_deg'] for e in events if 'cycle_amplitude_deg' in e]
+                    self.assertTrue(np.allclose(amplitudes,45))
+                    self.assertAlmostEqual(sum(e.get('cycle_period_s',0) for e in events),59.)
+
+    def test_angle_wrap_and_missing_frames_do_not_create_bends_or_cycles(self):
+        angles=np.array([178,179,-179,-178,179]*3)
+        valid=np.ones(len(angles),bool)
+        self.assertGreater(np.abs(metrics.smooth_valid(angles,valid,5,angles=True)).min(),175)
+        self.assertFalse(metrics.bend_events(angles,valid,12,20,.15)[0])
+        angles=45*np.sin(2*np.pi*np.arange(19)/12)
+        valid=np.ones(19,bool);valid[7:9]=False
+        events,cycles,duration=metrics.bend_events(angles,valid,12,20,.15)
+        self.assertEqual(cycles,0)
+        self.assertTrue(all('cycle_period_s' not in e for e in events))
+        self.assertAlmostEqual(duration,15/12)
+        angles=45*np.sin(2*np.pi*np.arange(25)/12)
+        blocks=np.arange(25)//8
+        events,cycles,duration=metrics.bend_events(angles,np.ones(25,bool),12,20,.15,segments=blocks)
+        self.assertEqual(cycles,0)
+        self.assertAlmostEqual(duration,21/12)
+
+    def test_circles_use_elapsed_time_and_cannot_cross_a_gap(self):
+        config=json.loads((metrics.ROOT/'config/phenotype_config.json').read_text(encoding='utf8'))
+        t=np.arange(121)/12
+        for period in (5,10):
+            a=2*np.pi*t/period
+            path=65*np.column_stack((np.cos(a),np.sin(a)))
+            observed,candidate=metrics.circle_evidence(path,t,[np.arange(121)],200,12,config)
+            self.assertTrue(observed.all() and candidate.all())
+            observed,candidate=metrics.circle_evidence(path,t,[np.arange(60),np.arange(61,121)],200,12,config)
+            self.assertFalse(observed.any() or candidate.any())
+        observed,candidate=metrics.circle_evidence(np.zeros((121,2)),t,[np.arange(121)],200,12,config)
+        self.assertTrue(observed.all())
+        self.assertFalse(candidate.any())
+
     def test_draft_survives_new_sample_but_not_different_frame(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(manual,'ROOT',Path(directory)):
             video=Path(directory)/'video.mp4'

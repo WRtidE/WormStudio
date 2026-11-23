@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+from image_io import write_png
 import analyze_phenotypes as metrics
 import extract_body_sequence as body_sequence
 import manual_worm_annotation as manual
@@ -92,6 +93,7 @@ class CurrentPipelineTests(unittest.TestCase):
         self.run_pipeline(sample)
         folder = self.root / 'outputs' / sample / f'phenotypes-{SOURCE}'
         before = (folder / 'per_frame_metrics.json').read_bytes()
+        before_tasks=json.loads((folder/'review-intervals.json').read_text(encoding='utf-8'))
         with patch.object(metrics, 'ROOT', self.root), patch.object(body_sequence, 'ROOT', self.root), \
                 patch.object(worm_pipeline, 'ROOT', self.root):
             revised = confirm_head(self.root, sample, 1, 0, 1)
@@ -100,6 +102,9 @@ class CurrentPipelineTests(unittest.TestCase):
             body_sequence.run(revised['sample'], 1)
             reviewed = self.analyze(revised['sample'])
         self.assertGreater(reviewed['worms'][0]['head_confirmed_frames'], 0)
+        after_folder=self.root/'outputs'/revised['sample']/f'phenotypes-{SOURCE}'
+        after_tasks=json.loads((after_folder/'review-intervals.json').read_text(encoding='utf-8'))
+        self.assertLess(after_tasks['head_confirmation_intervals'],before_tasks['head_confirmation_intervals'])
         self.assertNotEqual((folder / 'per_frame_metrics.json').read_bytes(),
                             (self.root / 'outputs' / revised['sample'] / f'phenotypes-{SOURCE}' /
                              'per_frame_metrics.json').read_bytes())
@@ -138,6 +143,50 @@ class CurrentPipelineTests(unittest.TestCase):
         self.assertEqual(report['quality_schema_version'], VERSION)
         self.assertEqual(len(rows), self.source['frames'])
         self.assertTrue(all(row['quality_schema_version'] == VERSION for row in rows))
+
+    def test_hidden_endpoint_length_stays_an_estimate_and_contact_width_is_missing(self):
+        sample=self.config['sample'];base=self.root/'outputs'/sample
+        self.config['source_invalid_frames']=[]
+        (base/'pipeline-config.json').write_text(json.dumps(self.config),encoding='utf-8')
+        writer=cv2.VideoWriter(self.source['video'],cv2.VideoWriter_fourcc(*'mp4v'),self.source['fps'],(640,360))
+        for frame in range(self.source['frames']):
+            mask=np.zeros((360,640),np.uint8)
+            if frame==5:
+                cv2.circle(mask,(250,180),50,1,13);cv2.line(mask,(80,180),(200,180),1,13)
+            else:
+                cv2.line(mask,(40,180),(430,180),1,13)
+            write_png(base/'sam2-tracking'/'masks'/'worm-1'/f'{frame:06d}.png',mask*255)
+            image=np.repeat(np.where(mask,60,220).astype('uint8')[:,:,None],3,axis=2)
+            writer.write(image)
+        writer.release()
+        self.run_pipeline(sample)
+        records=json.loads((base/f'phenotypes-{SOURCE}'/'per_frame_metrics.json').read_text(encoding='utf-8'))
+        hidden=records[5]
+        self.assertTrue(hidden['endpoint_a_inferred'] or hidden['endpoint_b_inferred'])
+        self.assertGreater(hidden['length_estimate_um'],0)
+        for field in ('length_um','mean_width_um','volume_estimate_um3'):
+            self.assertIsNone(hidden[field])
+        self.assertTrue(hidden['display_valid'])
+        self.assertNotIn('length_outlier',hidden['quality_reason'])
+
+    def test_unsupported_body_jump_does_not_create_a_speed_spike(self):
+        sample=self.config['sample'];base=self.root/'outputs'/sample
+        self.config['source_invalid_frames']=[]
+        (base/'pipeline-config.json').write_text(json.dumps(self.config),encoding='utf-8')
+        writer=cv2.VideoWriter(self.source['video'],cv2.VideoWriter_fourcc(*'mp4v'),self.source['fps'],(640,360))
+        for frame in range(self.source['frames']):
+            mask=np.zeros((360,640),np.uint8)
+            shift=0 if frame<5 else 260
+            cv2.line(mask,(40+shift,180),(240+shift,180),1,13)
+            write_png(base/'sam2-tracking'/'masks'/'worm-1'/f'{frame:06d}.png',mask*255)
+            writer.write(np.repeat(np.where(mask,60,220).astype('uint8')[:,:,None],3,axis=2))
+        writer.release()
+        self.run_pipeline(sample)
+        records=json.loads((base/f'phenotypes-{SOURCE}'/'per_frame_metrics.json').read_text(encoding='utf-8'))
+        self.assertTrue(records[5]['body_sequence_break_before'])
+        speeds=[r['speed_um_s'] for r in records if r['speed_um_s'] is not None]
+        self.assertTrue(speeds)
+        self.assertLess(max(speeds),1e-6)
 
 
 if __name__ == '__main__':

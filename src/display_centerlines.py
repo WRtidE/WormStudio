@@ -4,7 +4,7 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 from skimage.graph import route_through_array
 from skimage.morphology import skeletonize
-from skeleton_geometry import sampled
+from skeleton_geometry import sampled, visible_mask_tips
 from head_temporal import MAX_INTERVAL_S
 from quality_schema import permissions, flag
 from centerline_topology import geometry_quality
@@ -144,29 +144,6 @@ def fill_display_gaps(rows, output, get_mask):
             row.update(display_source='temporal_mask_review',display_valid=True,
                        display_inside_fraction=inside_fraction(line,mask),
                        display_reason='current_mask_and_bracketing_poses',display_version=VERSION)
-
-
-def visible_mask_tips(mask, length):
-    """Find free skeleton tips on the main silhouette, away from forks and crop edges."""
-    ys, xs = np.nonzero(mask)
-    if not len(xs):
-        return np.empty((0, 2))
-    x, y = xs.min(), ys.min()
-    patch = np.pad(mask[y:ys.max()+1, x:xs.max()+1], 1)
-    components, _ = ndimage.label(patch, structure=np.ones((3, 3), bool))
-    areas = np.bincount(components.ravel())[1:]
-    if areas.max() < .75 * areas.sum():
-        return np.empty((0, 2))
-    skeleton = skeletonize(components == areas.argmax() + 1)
-    degree = ndimage.convolve(skeleton.astype(np.uint8), np.ones((3, 3), np.uint8),
-                              mode='constant') - skeleton
-    tips = np.argwhere(skeleton & (degree == 1))
-    forks = np.argwhere(skeleton & (degree > 2))
-    if len(forks):
-        tips = tips[cKDTree(forks).query(tips)[0] >= max(3., .03 * length)]
-    tips = tips[:, ::-1] + [x-1, y-1]
-    margin = max(2., .01 * length)
-    return tips[np.all((tips >= margin) & (tips < np.array(mask.shape[::-1])-margin), axis=1)]
 
 
 def track_visible_tips(rows, display, get_mask, fps):
