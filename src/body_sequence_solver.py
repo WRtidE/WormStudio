@@ -15,8 +15,9 @@ from head_recovery import appearance_vote, pose_parity, tracking_indices
 from marked_end_recovery import fingerprint, recover_marked_end
 from head_evidence import normalize_anchors
 from short_turns import recover_flanked_candidates
+from blurred_tips import locate_blurred_tips
 
-VERSION = 'sam2-body-sequence-v5-bracketed-turn'
+VERSION = 'sam2-body-sequence-v9-darker-tail-tip'
 MIN_LENGTH_FRACTION = .85
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
@@ -26,7 +27,7 @@ SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_
                    'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
                    'analyze_phenotypes.py', 'body_frame_cache.py', 'skeleton_geometry.py',
                    'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py',
-                   'review_intervals.py', 'marked_end_recovery.py', 'terminal_overlap.py', 'short_turns.py')
+                   'review_intervals.py', 'marked_end_recovery.py', 'terminal_overlap.py', 'short_turns.py', 'blurred_tips.py')
 
 
 def signature():
@@ -370,6 +371,8 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                     appearance_support=len(useful),appearance_score=float(abs(useful.mean())))
     candidate_links=[] if seed is None else recover_flanked_candidates(
         output,facts,fps,seed,excluded,guards,lambda i:fingerprint(gray[i],masks[i],output[i]))
+    if seed is not None:
+        locate_blurred_tips(output,facts,gray,masks,guards,excluded)
     return output,facts,dict(version=VERSION,reference_length_px=reference,tracking_point_count=point_count,
                             anchors=marks,windows=windows,recovery=recovery,head_reacquisition=head_links,
                             flanked_candidates=candidate_links)
@@ -400,4 +403,10 @@ def head_results(quality):
             head_recovery_points=13,head_section_status='body_sequence_estimate' if known and not observed else '',
             head_display_estimated_end=0 if known and not f['head_observed'] else None,
             tail_display_estimated_end=1 if known and not f['tail_observed'] else None))
+        if known:
+            for side,estimate in f.get('blur_tip_estimates',{}).items():
+                x,y=estimate['xy']
+                results[-1][f'display_blur_{side}_x_px']=x
+                results[-1][f'display_blur_{side}_y_px']=y
+                results[-1][f'display_blur_{side}_method']=estimate.get('method','midpoint')
     return results

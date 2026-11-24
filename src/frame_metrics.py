@@ -77,6 +77,14 @@ def present_frame(row):
                                  if 'head' in tips else '跟踪到尾端 · 头端暂不可见' if 'tail' in tips
                                  else '头尾暂时无法定位')
         result['head_review_allowed'] = False
+    if (posture and (confirmed or candidate) and flag(row,'body_sequence_head_known')
+            and flag(row,'source_valid') and flag(row,'mask_valid') and result['identity_valid']
+            and not result['head_anchor_conflict']):
+        for side in ('head','tail'):
+            xy=[number(row.get(f'display_blur_{side}_{axis}_px')) for axis in ('x','y')]
+            if None not in xy:
+                key='blur_darker_tips' if row.get(f'display_blur_{side}_method')=='darker_tip' else 'blur_midpoints'
+                result.setdefault(key,{})[side]=xy
     result['self_contact_state'] = row.get('self_contact_state')
     refs = row.get('head_trajectory_frames')
     if isinstance(refs, str):

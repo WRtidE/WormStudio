@@ -6,7 +6,7 @@ import numpy as np
 from body_sequence_solver import head_results
 from marked_end_recovery import recover_marked_end
 from result_overlay import draw_worm
-from short_turns import bracketed_order, recover_flanked_candidates
+from short_turns import bracketed_order, recover_flanked_candidates, visible_end_order
 from test_marked_end_recovery import worm_frame
 
 
@@ -149,6 +149,117 @@ class ShortTurnTests(unittest.TestCase):
         self.assertEqual(audit[0]['target_orders'],[1,1])
         self.assertTrue(all(f['head_known'] and not f['manual_lineage'] for f in facts[5:7]))
         np.testing.assert_allclose(lines[5:7,0,0],[5,6])
+
+    def long_gap(self, mode):
+        lines=np.array([np.column_stack([np.arange(101)+i,np.full(101,40.)]) for i in range(19)])
+        features=np.ones((19,2,6))
+        facts=[]
+        for i in range(19):
+            component=next((a,b) for a,b in ((0,6),(7,7),(8,10),(11,12),(13,18)) if a<=i<=b)
+            known=i<7 or i>=13
+            if 8<=i<=10:
+                lines[i]=lines[i,::-1]
+                features[i]*=-1
+            facts.append(dict(component=component,head_known=known,head_source='auto_taper_seed' if known else 'unresolved',
+                              head_observed=True,tail_observed=True,candidate='clear_observation',
+                              anchor_conflict=False,manual_lineage=False,length_px=100))
+        for i in (5,6):
+            facts[i].update(head_observed=False,candidate='hidden_loop')
+            lines[i,:11]=[300,200]  # The inferred end has no vote.
+        facts[7]['candidate']='junction_pairing'
+        guards=[dict(mask_valid=True,identity_valid=True,identity_segment=1) for _ in lines]
+        if mode=='conflicting_motion':
+            lines[13:]=lines[13:,::-1]
+        if mode=='weak_component':
+            features[8:11]=0
+        if mode=='single_contradiction':
+            features[9]*=-1
+        if mode=='conflicting_templates':
+            features[13:]*=-1
+        if mode=='source_break':
+            guards[10]['source_frame_invalid']=True
+        if mode=='identity_break':
+            guards[10]['identity_segment']=2
+        if mode=='missing':
+            facts[9]=None
+        if mode=='mark_conflict':
+            facts[9]['anchor_conflict']=True
+        if mode=='only_recovered_flank':
+            facts[13]['head_source']='visible_end_track_candidate'
+        before=lines.copy()
+        audit=recover_flanked_candidates(lines,facts,12,2,set(),guards,features.__getitem__)
+        return before,lines,facts,audit
+
+    def test_visible_tail_links_multiple_components_without_confirming_a_head(self):
+        before,lines,facts,audit=self.long_gap('clear')
+        self.assertEqual([e['component'] for e in audit if e['accepted']],[[8,10],[11,12]])
+        self.assertFalse(facts[7]['head_known'])
+        np.testing.assert_array_equal(before[:8],lines[:8])
+        np.testing.assert_array_equal(before[13:],lines[13:])
+        for i in range(8,13):
+            self.assertEqual(lines[i,0,0],i)
+            self.assertEqual(facts[i]['head_source'],'visible_end_track_candidate')
+            self.assertFalse(head_results([dict(body_sequence=facts[i])])[0]['head_identity_confirmed'])
+
+    def test_visible_track_abstains_on_breaks_and_opposing_flanks(self):
+        for mode in ('conflicting_motion','conflicting_templates','source_break','identity_break',
+                     'missing','mark_conflict','only_recovered_flank'):
+            with self.subTest(mode=mode):
+                before,lines,_,audit=self.long_gap(mode)
+                self.assertFalse(any(e['accepted'] for e in audit))
+                np.testing.assert_array_equal(before,lines)
+        for mode in ('weak_component','single_contradiction'):
+            _,lines,facts,audit=self.long_gap(mode)
+            self.assertEqual([e['component'] for e in audit if e['accepted']],[[11,12]])
+            self.assertFalse(any(f['head_known'] for f in facts[8:11]))
+
+    def test_single_visible_tip_needs_a_distinct_shaft_and_bounded_travel(self):
+        a=np.column_stack((np.arange(101,dtype=float),np.zeros(101)))
+        b=a.copy()
+        b[-11:]=np.column_stack((np.full(11,1.),np.arange(10,-1,-1)))
+        b[:11]+=[4,0]  # The competing tip is closer, but points across the shaft.
+        self.assertEqual(visible_end_order(a,b,[True,False],[True,True],100),0)
+        self.assertEqual(visible_end_order(b[::-1],a,[True,True],[True,False],100),1)
+        b[-11:]=b[:11][::-1]
+        self.assertIsNone(visible_end_order(a,b,[True,False],[True,True],100))
+        self.assertIsNone(visible_end_order(a,b+100,[True,False],[True,True],100))
+
+    def test_curled_turn_uses_two_way_motion_and_a_reproducible_reference(self):
+        u=np.linspace(0,1,101)
+        path=np.column_stack((35*u,48*np.sin(np.pi*u)))
+        length=np.linalg.norm(np.diff(path,axis=0),axis=1).sum()
+        for mode in ('clear','no_witness','contradiction','occluded','opposite_root'):
+            with self.subTest(mode=mode):
+                lines=np.stack([path+[20*np.clip(i-4,0,5),0] for i in range(15)])
+                truth=lines.copy()
+                features=np.ones((15,2,6))
+                features[4:10,0]=0
+                features[10:,1]=0
+                if mode!='no_witness':features[12,1]=1
+                if mode=='contradiction':features[13,1]=-1
+                facts=[]
+                for i in range(len(lines)):
+                    known=i<4 or i>=10
+                    segment=[0,3] if i<4 else [4,6] if i<7 else [7,9] if i<10 else [10,14]
+                    if 4<=i<7 or (i>=10 and mode=='opposite_root'):
+                        lines[i]=lines[i,::-1]
+                        if i<7:features[i]*=-1
+                    facts.append(dict(head_known=known,head_source='auto_taper_seed' if known else 'unresolved',
+                                      component=segment,candidate='clear_observation',head_observed=True,
+                                      tail_observed=True,anchor_conflict=False,length_px=length))
+                if mode=='occluded':facts[6]['tail_observed']=False
+                self.assertIsNone(visible_end_order(lines[6],lines[7],(True,True),(True,True),length))
+                entries=recover_flanked_candidates(lines,facts,12,1,set(),None,features.__getitem__)
+                if mode=='clear':
+                    self.assertEqual(len(entries),2)
+                    for e in entries:
+                        self.assertTrue(e['accepted'] and e['candidate_only'])
+                        self.assertEqual(e['trajectory_bridge']['frames'],[5,6,7,8])
+                        self.assertEqual(e['supporting_reference'],12)
+                        self.assertEqual(e['motion_orders'][0],e['motion_orders'][1])
+                    np.testing.assert_array_equal(lines,truth)
+                else:
+                    self.assertFalse(any(e['accepted'] for e in entries))
 
     def test_export_distinguishes_unknown_candidate_and_confirmed_ends(self):
         for labels in (['A','B'],['H?','T?'],['H','T']):

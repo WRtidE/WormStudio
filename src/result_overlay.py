@@ -10,7 +10,7 @@ from PIL import Image,ImageDraw,ImageFont
 from framewise_pose import arc_midpoint
 
 CONTOUR = (55, 220, 55)
-OVERLAY_VERSION = 'endpoint-evidence-v2'
+OVERLAY_VERSION = 'endpoint-evidence-v4-darker-tail-tip'
 CENTERLINE = (250, 250, 250)
 UNCERTAIN = (0, 180, 255)
 
@@ -28,6 +28,18 @@ def draw_endpoint(image, xy, label):
     pos=(left,bottom)
     cv2.rectangle(image,(pos[0]-2,pos[1]-h-2),(pos[0]+w+1,pos[1]+baseline),(40,40,40),-1)
     cv2.putText(image,label,pos,0,.62,color,1,cv2.LINE_AA)
+
+
+def draw_pose_endpoint(image, xy, label, view):
+    side='head' if label.startswith('H') else 'tail' if label.startswith('T') else None
+    darker=view.get('blur_darker_tips',{}).get(side)
+    estimate=darker if darker is not None else view.get('blur_midpoints',{}).get(side)
+    if estimate is not None:
+        xy=np.rint(estimate).astype(int)
+        label+='~'
+        if darker is not None:
+            cv2.circle(image,tuple(xy),8,(225,110,20),2,cv2.LINE_AA)
+    draw_endpoint(image,tuple(xy),label)
 
 
 @lru_cache(maxsize=2)
@@ -118,7 +130,7 @@ def draw_pose(image, mask, points, row, view):
     if points is None: return
     for index, label in zip((0,-1),view['endpoint_labels']):
         if index in estimated:continue
-        draw_endpoint(image,tuple(points[index]),label)
+        draw_pose_endpoint(image,points[index],label,view)
 
 
 
@@ -161,4 +173,4 @@ def draw_worm(image, mask, points, row, *, label=None):
             cv2.circle(image, tuple(point), 4, (170,170,170), -1, cv2.LINE_AA)
         return
     for index,label in zip((0,-1),labels):
-        draw_endpoint(image,tuple(points[index]),label)
+        draw_pose_endpoint(image,points[index],label,view)
