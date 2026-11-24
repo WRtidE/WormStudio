@@ -56,6 +56,11 @@ def present_frame(row):
         head_confirmed=confirmed, movement_state=row.get('movement_state', 'unknown') if allowed['motion'] else 'unknown',
         circling_candidate=flag(row,'circling_candidate') if allowed['motion'] and row.get('circling_candidate') not in (None,'') else None)
     if row.get('body_sequence_version'):
+        result['head_direction_tracked']=flag(row,'body_sequence_head_known')
+        if row.get('head_reason')=='candidate_motion_conflict':
+            result['head_status']='前后追踪冲突 · 显示前向候选，待复核'
+        elif row.get('head_reason')=='bidirectional_tip_candidate':
+            result['head_status']='双向追踪一致 · 候选头尾已接续'
         if confirmed and method == 'recovered_from_user_point':
             result['head_status'] = '多帧自动找回 · 沿用原头端标记'
         result['head_section_status']=row.get('head_section_status','')
@@ -85,6 +90,15 @@ def present_frame(row):
             if None not in xy:
                 key='blur_darker_tips' if row.get(f'display_blur_{side}_method')=='darker_tip' else 'blur_midpoints'
                 result.setdefault(key,{})[side]=xy
+    result['track_tips']={}
+    if posture and result['identity_valid'] and not result['head_anchor_conflict'] and (candidate or confirmed):
+        for side in ('head','tail'):
+            point=[number(row.get(f'track_{side}_{axis}_px')) for axis in ('x','y')]
+            if None in point and confirmed:
+                point=[number(row.get(f'{side}_{axis}_crop_px')) for axis in ('x','y')]
+            if None not in point:
+                result['track_tips'][side]=point
+    result['track_segment']=number(row.get('identity_segment'))
     result['self_contact_state'] = row.get('self_contact_state')
     refs = row.get('head_trajectory_frames')
     if isinstance(refs, str):

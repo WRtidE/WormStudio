@@ -296,12 +296,24 @@ def recover_marked_end(lines, facts, masks, gray, fps, marks, excluded, guards):
                 # and a further independently supported block before it can be used.
                 passage = (d-c == 1 and len(frames) == 2 and len(support) >= 1
                            and np.all(np.median(signed,axis=1) >= .30))
-                if ((len(support) < max(3, .75*len(frames)) and not passage) or np.any(signed <= -.55)):
+                strong_appearance = len(support) >= max(3, .75*len(frames))
+                reciprocal = False
+                if abs(end-start)==1 and not strong_appearance:
+                    back, backward = motion_match(lines,facts,masks,end,start,flip)
+                    entry['backward_check'] = backward
+                    backward_ends = backward.get('tracked_ends',{})
+                    common = [name for name,track in evidence['tracked_ends'].items()
+                              if name in backward_ends and 'motion_frames' in track
+                              and 'motion_frames' in backward_ends[name]]
+                    reciprocal = back == source_flip and bool(common)
+                    if reciprocal:
+                        entry['reciprocal_ends'] = common
+                if (not (strong_appearance or passage or reciprocal) or np.any(signed <= -.55)):
                     entry['reason'] = 'appearance_insufficient_or_conflicting'
                     break
                 pending.append((j,flip,entry))
                 entry['reason'] = 'awaiting_more_clear_frames'
-                if len(support) >= 3:
+                if len(support) >= 3 or reciprocal:
                     for target,side,link in pending:
                         proposals.setdefault(target,[]).append((side,link))
                     pending.clear()
@@ -320,7 +332,8 @@ def recover_marked_end(lines, facts, masks, gray, fps, marks, excluded, guards):
         committed[target]=flip
         for _,link in links:
             shaft_only = all(e['method']=='shaft_overlap' for e in link['tracked_ends'].values())
-            link.update(accepted=True,reason='marked_end_shaft_and_appearance' if shaft_only else 'marked_end_motion_and_appearance')
+            reason = 'marked_end_shaft_and_appearance' if shaft_only else 'marked_end_motion_and_appearance'
+            link.update(accepted=True,reason='reciprocal_marked_end' if link.get('reciprocal_ends') else reason)
         for i in range(c,d+1):
             f = facts[i]
             if flip:

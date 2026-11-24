@@ -146,23 +146,13 @@
           <details><summary>查看关联依据与失败项</summary><pre id="identity-evidence" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre></details>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button id="identity-same" class="small-button">同一条虫</button><button id="identity-different" class="small-button">不同目标</button><button id="identity-unknown" class="small-button">无法判断</button><button id="identity-undo" class="small-button" disabled>撤销此片段复核</button></div><p id="identity-message" role="status"></p><p>提交或撤销会创建新结果，并自动记录本机用户。身份关联成功后，速度和头摆仍按连续有效区间计算。</p>
         </dialog>
-        <div class="review-navigation"><div class="section-label"><label for="result-issue-filter">问题帧导航</label><span id="result-issue-count">—</span></div><select id="result-issue-filter" class="result-select" disabled><option value="all">全部待复核项</option><option value="identity">个体身份</option><option value="source">源帧</option><option value="mask">掩膜</option><option value="pose">姿态</option><option value="head">头尾</option><option value="scale">尺度</option></select><div class="review-buttons"><button id="result-prev-issue" class="small-button" disabled>← 上个问题段</button><button id="result-next-issue" class="small-button" disabled>下个问题段 →</button></div><p id="result-issue-note">按连续帧归为问题段，点击即可定位。</p></div>
-        <section class="head-status-card" aria-label="区间复核" id="result-review-plan" hidden>
-          <h3>按区间复核</h3><p id="result-review-summary"></p>
-          <label class="section-label" for="result-review-picker">选择待检查区间</label><select id="result-review-picker" class="result-select"></select>
-          <div class="review-buttons"><button id="result-review-before" class="small-button">前侧清晰帧</button><button id="result-review-target" class="small-button">去推荐帧</button><button id="result-review-after" class="small-button">后侧清晰帧</button></div>
-          <p id="result-review-action" role="status"></p>
-        </section>
-        <section class="head-status-card" aria-label="头尾判断"><h3 id="result-head-status">正在读取头尾状态</h3><details class="head-evidence"><summary>判断依据与画面说明</summary><p id="result-head-explanation"></p><p id="result-head-evidence"></p></details><button id="head-auto" class="small-button" hidden>重新识别头尾</button><p id="head-auto-message" role="status"></p>
-          <details id="head-correction"><summary>确认或纠正头尾</summary><button id="head-first" class="small-button">跳到首帧</button><p id="head-choice-note"></p><div class="head-choice-buttons"><button id="head-a" class="small-button">A 端是头</button><button id="head-b" class="small-button">B 端是头</button></div><p>选择一次会应用于当前连续可靠片段，并另存结果；无需逐帧重复确认。初始化模式可跨明确的短缺口延续为候选；长缺口或身份边界需重新判断。</p><p id="head-review-message" role="status"></p><details><summary>头部锚点与撤销</summary><p>同一可靠片段内意见冲突时，暂停该片段头摆。撤销会创建新结果。</p><div id="head-anchor-list"></div></details></details>
-        </section>
-        <details class="identity-card"><summary>全片可用性分解</summary><p id="result-gate-audit"></p><div id="result-gate-triggers"></div></details>
-        
+        <details class="identity-card"><summary>全片可用性分解</summary><p id="result-review-summary"></p><p id="result-gate-audit"></p><div id="result-gate-triggers"></div></details>
+
 
         <details class="quality-evidence"><summary>全部质量检查与证据</summary><div id="result-dimensions" class="result-dimensions"></div></details>
-        
+
       </div>
-      
+
     </aside>
       </details>
       <details id="result-video-details" class="summary-disclosure result-video-details"><summary>查看分析视频</summary>
@@ -170,12 +160,29 @@
       <div class="result-video-layout">
         <div class="result-player">
           <div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b>分析画面</b><label><input id="result-original" type="checkbox">原始画面</label></span><span id="result-frame-label">正在读取结果…</span><button type="button" id="result-fullscreen" class="small-button">全屏</button></div>
-          <div class="result-view-tools" data-resizable="视频观察工具" data-resize-axis="x" role="group" aria-label="视频观察工具"><div class="result-view-modes" role="group" aria-label="观察范围"><button id="result-full" class="small-button" aria-pressed="true">完整画面</button><button id="result-focus" class="small-button" aria-pressed="false">跟随虫体</button></div><button id="result-zoom-out" class="small-button" aria-label="缩小视频">−</button><output id="result-zoom-level">100%</output><button id="result-zoom-in" class="small-button" aria-label="放大视频">＋</button><button id="result-fit" class="small-button" aria-label="复位缩放与位置" title="复位缩放与位置">↺</button></div>
+          <div class="result-view-tools" data-resizable="视频观察工具" data-resize-axis="x" role="group" aria-label="视频观察工具"><div class="result-view-modes" role="group" aria-label="观察范围"><button id="result-full" class="small-button" aria-pressed="true">完整画面</button><button id="result-focus" class="small-button" aria-pressed="false">跟随虫体</button></div><button id="result-trails" class="small-button" aria-pressed="false" title="最近一秒：蓝色头迹、橙色尾迹，红圈为冲突">头尾轨迹</button><button id="result-zoom-out" class="small-button" aria-label="缩小视频">−</button><output id="result-zoom-level">100%</output><button id="result-zoom-in" class="small-button" aria-label="放大视频">＋</button><button id="result-fit" class="small-button" aria-label="复位缩放与位置" title="复位缩放与位置">↺</button></div>
           <div class="result-screen" data-resizable="结果视频" data-resize-axis="y"><video id="studio-result-video" playsinline preload="metadata" aria-label="分析结果视频" class="result-video-source"></video><canvas id="result-canvas" tabindex="0" aria-keyshortcuts="Space ArrowLeft ArrowRight" aria-label="结果画面，可拖动平移、滚轮或双指缩放"></canvas><p id="result-video-message" hidden></p></div>
           <dialog id="result-event-picker" aria-labelledby="event-picker-title"><form method="dialog"><h3 id="event-picker-title">选择关键节点</h3><button class="small-button" aria-label="关闭">关闭</button></form><div class="event-choices"></div></dialog>
           <p id="result-frame-error" class="frame-error" role="status" hidden></p><div class="result-transport"><button id="result-play" class="small-button" title="空格播放或暂停，← 上一帧，→ 下一帧" aria-pressed="false">播放</button><button id="result-prev" class="small-button" aria-label="上一帧">←</button><div class="result-scrubber"><div id="result-event-track" role="group" aria-label="视频关键节点" hidden></div><div id="result-quality-track" class="result-quality-track" aria-hidden="true"></div><input id="result-frame" type="range" min="0" max="0" value="0" aria-label="结果视频帧" disabled></div><button id="result-next" class="small-button" aria-label="下一帧">→</button><label>帧 <input aria-describedby="result-frame-error" id="result-frame-number" type="number" min="0" max="0" value="0" aria-label="跳转到帧" disabled></label></div>
           <div class="media-caption"><span id="result-focus-note">滚轮或双指缩放 · 拖动平移 · 双击复位</span><span id="result-event-legend" aria-label="关键节点图例" hidden></span><span><i class="review-dot"></i> 色带：当前筛选的问题帧</span></div>
         </div>
+        <div class="result-video-sidebar">
+        <details id="result-review" class="review-navigation" hidden>
+          <summary>查看问题段</summary>
+          <label for="result-issue-filter">筛选问题</label><select id="result-issue-filter" class="result-select" disabled><option value="all">全部待复核项</option><option value="identity">个体身份</option><option value="source">源帧</option><option value="mask">掩膜</option><option value="pose">姿态</option><option value="head">头尾</option><option value="scale">尺度</option></select>
+          <section class="head-status-card" aria-label="区间复核" id="result-review-plan" hidden>
+
+          <label class="section-label" for="result-review-picker">待复核区间</label><select id="result-review-picker" class="result-select"></select>
+          <div class="review-buttons"><button id="result-review-before" class="small-button">前侧清晰帧</button><button id="result-review-target" class="small-button">去推荐帧</button><button id="result-review-after" class="small-button">后侧清晰帧</button></div>
+          <p id="result-review-action" role="status"></p>
+        </section>
+          <details id="result-range-details"><summary>按连续问题帧浏览</summary>
+            <span id="result-issue-count"></span><div class="review-buttons"><button id="result-prev-issue" class="small-button" disabled>← 上个问题段</button><button id="result-next-issue" class="small-button" disabled>下个问题段 →</button></div><p id="result-issue-note"></p>
+          </details>
+        </details>
+        <section class="head-status-card" aria-label="头尾判断"><h3 id="result-head-status">正在读取头尾状态</h3><details class="head-evidence"><summary>判断依据与画面说明</summary><p id="result-head-explanation"></p><p id="result-head-evidence"></p></details><button id="head-auto" class="small-button" hidden>重新识别头尾</button><p id="head-auto-message" role="status"></p>
+          <details id="head-correction"><summary>修改头尾</summary><button id="head-first" class="small-button">跳到首帧</button><p id="head-choice-note"></p><div class="head-choice-buttons"><button id="head-a" class="small-button">A 端是头</button><button id="head-b" class="small-button">B 端是头</button></div><p id="head-review-message" role="status"></p><details><summary>标注记录与撤销</summary><p>同一可靠片段内意见冲突时，暂停该片段头摆。撤销会创建新结果。</p><div id="head-anchor-list"></div></details></details>
+        </section>
         <aside class="result-frame-metrics" aria-labelledby="result-frame-metrics-title">
           <div class="result-metrics-heading">
             <h2 id="result-frame-metrics-title">当前帧指标</h2>
@@ -187,6 +194,7 @@
             <div id="studio-extra-metrics" class="studio-metric-cards"></div>
           </details>
         </aside>
+        </div>
       </div>
       </details>
       <div id="results-load-state" class="results-load-state" role="status"><span id="results-load-message">正在读取逐帧指标…</span><button id="results-retry" class="small-button" hidden>重新读取</button></div>

@@ -83,6 +83,14 @@ def review_row(frame,**updates):
 
 
 class ReviewIntervalTests(unittest.TestCase):
+    def test_tracked_candidates_only_request_direction_review_on_conflict(self):
+        rows=[review_row(i,body_sequence_version='current',body_sequence_head_known=True,
+                         head_reason=reason) for i,reason in enumerate(
+                         ('multi_frame_appearance_candidate','bidirectional_tip_candidate','candidate_motion_conflict'))]
+        task,=build_intervals(rows)['intervals']
+        self.assertEqual((task['kind'],task['target']),('head_motion_conflict',2))
+        self.assertFalse(any(r['head_identity_confirmed'] for r in rows))
+
     def test_selects_clear_keyframe_and_separates_evidence_boundaries(self):
         rows=[review_row(i,body_extension=.8 if i==2 else .4,body_sequence_segment=0 if i<4 else 4) for i in range(7)]
         report=build_intervals(rows)

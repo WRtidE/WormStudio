@@ -55,6 +55,11 @@ def verify(folder, target, source, ids, size, *, records=None):
             if posture:
                 valid_keys.add(key)
             length = row.get(metric_key('length_um', row))
+            if row.get('length_measurement_status') == 'hidden_endpoint_estimate':
+                if length and np.isfinite(float(length)):
+                    raise RuntimeError('Hidden endpoint has a formal length measurement')
+                # A hidden tip can have usable posture geometry but only an estimated length.
+                length = row.get(metric_key('length_estimate_um', row)) if posture else None
             if length and np.isfinite(float(length)):
                 available_keys.add(key)
             checks[worm]['mask_valid'] += row['mask_valid'] == 'True'

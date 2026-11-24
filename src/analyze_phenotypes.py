@@ -446,6 +446,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                         for lo,hi in json.loads(row['uncertain_point_ranges'])))
             row['endpoint_a_angle_deg']=signed_angle(p)
             row['opposite_end_angle_deg']=signed_angle(p[::-1])
+            if method=='body_sequence' and head['body_sequence_head_known'] and valid[i]:
+                for side,point,inferred in (('head',p[0],'endpoint_a_inferred'),('tail',p[-1],'endpoint_b_inferred')):
+                    if not row.get(inferred):
+                        row[f'track_{side}_x_px'],row[f'track_{side}_y_px']=point
             if row['head_metrics_valid']:
                 row['head_candidate_angle_deg']=signed_angle(p)
                 row['head_x_crop_px'],row['head_y_crop_px']=p[0]

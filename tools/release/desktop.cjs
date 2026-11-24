@@ -32,7 +32,6 @@ async function prepareOnline() {
       splash = window;
       await launch(true);
     }});
-  app.on('window-all-closed', () => { if (!splash) app.quit(); });
   let stopped = false;
   app.on('before-quit', event => {
     if (!stopped && setupController.setup.running) {

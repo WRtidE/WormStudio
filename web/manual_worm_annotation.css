@@ -41,3 +41,13 @@ ol.calibration-guide{padding-left:20px}
 @media(max-width:600px){.annotation-footer{padding:10px 12px}.annotation-footer>div.action-guidance:first-child{min-width:0}.action-guidance p{font-size:11px}.annotation-footer .footer-actions{width:100%;justify-content:flex-end}.footer-actions .repair-button{font-size:11px;padding:9px}}
 
 #viewport{display:block} #stage{width:max-content;margin:auto} .viewer-toolbar button{padding:6px 9px;font-size:12px} #anchor-frame{font-size:13px} .calibration-guide{font-size:13px} #saved-projects{padding:10px}
+
+#head-sampler {margin:auto; width:min(1040px,96vw); max-height:94dvh; padding:14px; border:1px solid var(--border); border-radius:14px; color:var(--ink); background:white}
+#head-sampler::backdrop {background:#161d2abb}
+.sample-toolbar,.sample-controls {display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.sample-toolbar {justify-content:space-between}
+#sample-zoom {min-width:3.5em; text-align:center; font-variant-numeric:tabular-nums}
+#sample-status {color:var(--muted)}
+#sample-view {position:relative; height:min(65dvh,680px); margin:10px 0; overflow:hidden; border-radius:8px; background:#20242e; touch-action:none; user-select:none; cursor:crosshair}
+#sample-view.dragging {cursor:grabbing}
+#sample-canvas {position:absolute; top:0; left:0; transform-origin:top left; pointer-events:none; max-width:none; max-height:none}

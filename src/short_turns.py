@@ -202,6 +202,27 @@ def recover_visible_run(lines, facts, middle, first, last, fps, feature):
     return audit
 
 
+def continue_candidate_tip(lines, facts, i):
+    """Predict both tips from two oriented observations on either side of one clear pose."""
+    tips = lines[i-2:i+3, [0,-1]]
+    target = tips[2]
+    length = min(facts[j]['length_px'] for j in range(i-2,i+3))
+    orders = []
+    errors = []
+    for old,near in ((tips[0],tips[1]),(tips[4],tips[3])):
+        prediction = 2*near-old
+        costs = [float(np.linalg.norm(prediction-order,axis=1).mean()/length)
+                 for order in (target,target[::-1])]
+        side = int(np.argmin(costs))
+        aligned = target[::-1] if side else target
+        if (costs[side] > .40 or costs[1-side]-costs[side] < .05
+                or np.max(np.linalg.norm(aligned-near,axis=1)) > .55*length):
+            return None
+        orders.append(side)
+        errors.append(costs)
+    return orders,errors
+
+
 def recover_flanked_candidates(lines, facts, fps, seed, excluded, guards, feature):
     """Fill a short visible break using already oriented images on both sides, as candidates."""
     def same_track(i):
@@ -282,4 +303,29 @@ def recover_flanked_candidates(lines, facts, fps, seed, excluded, guards, featur
                 lines[i]=lines[i,::-1]
             facts[i].update(head_known=True,manual_lineage=False,head_source=entry['reason'],
                             head_link_boundary=entry['boundary'],head_appearance_support=int(support.sum()))
+    # Both flanks must already have their own continuous order. A conflict
+    # may be shown as a forward candidate, but cannot orient another gap.
+    for i in range(first+2,last-1):
+        f=facts[i]
+        if not f or f['head_known'] or f['component'][0]!=f['component'][1]:
+            continue
+        window=facts[i-2:i+3]
+        if not all(row and row['candidate']=='clear_observation' and row['head_observed']
+                   and row['tail_observed'] and not row['anchor_conflict'] for row in window):
+            continue
+        if not all(facts[j]['head_known'] for j in (i-2,i-1,i+1,i+2)):
+            continue
+        if window[0]['component']!=window[1]['component'] or window[3]['component']!=window[4]['component']:
+            continue
+        match=continue_candidate_tip(lines,facts,i)
+        if match is None:
+            continue
+        (forward,backward),errors=match
+        conflict=forward!=backward
+        reason='candidate_motion_conflict' if conflict else 'bidirectional_tip_candidate'
+        if forward:
+            lines[i]=lines[i,::-1]
+        f.update(head_known=True,manual_lineage=False,head_source=reason,head_link_boundary=[i-1,i+1])
+        audit.append(dict(component=[i,i],reference_frames=[i-2,i-1,i+1,i+2],accepted=not conflict,
+                          reason=reason,candidate_only=True,orders=[forward,backward],prediction_errors_bl=errors))
     return audit

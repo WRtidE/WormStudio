@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -159,6 +160,18 @@ class ManualAnnotationTests(unittest.TestCase):
             bad=json.loads(json.dumps(body));bad['worms'][0]['head_point']=point
             with self.assertRaises(ValueError):manual.Annotation(self.settings).save(bad)
 
+    def test_sampled_heads_without_first_frame_label_roundtrip(self):
+        annotation = manual.Annotation(self.settings)
+        points = [dict(frame=1, point=[21,22]), dict(frame=4, point=[28,34])]
+        self.body['worms'][0]['head_points'] = points
+        annotation.save(self.body)
+        validate_config(annotation.result)
+        self.assertEqual(annotation.result['head_annotations']['9'],
+                         [dict(frame=1,point=[16,17]),dict(frame=4,point=[23,29])])
+        worm = manual.Annotation(self.settings).initial_state()['previous']['worms'][0]
+        self.assertIsNone(worm['head_point'])
+        self.assertEqual(worm['head_points'], points)
+
     def test_resaving_changed_mask_preserves_original_annotation_and_seeds(self):
         annotation=manual.Annotation(self.settings);annotation.save(self.body)
         original_path=annotation.path
@@ -243,6 +256,61 @@ class ManualAnnotationTests(unittest.TestCase):
                     self.assertEqual(json.load(response)['area_px'], 250)
         finally:
             server.shutdown(); server.server_close(); worker.join()
+
+    def test_background_prediction_is_scoped_to_the_frame_and_leaves_http_responsive(self):
+        annotation = manual.Annotation(self.settings)
+        server = manual.create_server(annotation)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        base = f'http://127.0.0.1:{server.server_port}'
+        headers = {'X-Annotation-Token': annotation.token}
+        started, finish = threading.Event(), threading.Event()
+
+        def infer(body, *, token):
+            self.assertEqual(token, annotation.token)
+            started.set()
+            if not finish.wait(5):
+                raise RuntimeError('test inference timed out')
+            return {'mask': 'complete', 'candidate': 2}
+
+        def request(path, data=None, auth=headers):
+            req = urllib.request.Request(base + path, data=data, headers=auth)
+            with urllib.request.urlopen(req, timeout=3) as response:
+                return response.status, json.load(response)
+
+        try:
+            with patch.object(annotation, 'predict', side_effect=infer):
+                code, accepted = request('/api/prediction', b'{}')
+                self.assertEqual(code, 202)
+                self.assertTrue(started.wait(3))
+                status_url = '/api/prediction?job=' + accepted['job']
+                self.assertEqual(request(status_url)[0], 202)
+                self.assertEqual(request('/state')[1]['frame'], 0)
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    request(status_url, auth={})
+                self.assertEqual(error.exception.code, 403)
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    request('/api/prediction', b'{}')
+                self.assertEqual(error.exception.code, 409)
+                finish.set()
+                deadline = time.monotonic() + 3
+                while True:
+                    code, result = request(status_url)
+                    if code == 200:
+                        break
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(.01)
+                self.assertEqual(result, {'mask': 'complete', 'candidate': 2})
+                request('/api/annotation-frame', b'{"frame":1}')
+                new_headers = {'X-Annotation-Token': request('/state')[1]['token']}
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    request(status_url, auth=new_headers)
+                self.assertEqual(error.exception.code, 409)
+        finally:
+            finish.set()
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     @unittest.skipUnless(manual.is_darwin(), 'Mac annotation worker')
     def test_annotation_worker_is_reused_and_releases_on_frame_change(self):

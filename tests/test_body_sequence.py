@@ -5,11 +5,28 @@ import numpy as np
 import cv2
 
 from body_sequence import select_body_sequence,loop_transition,persistent_loop_centers
-from body_sequence_solver import recover_short_observations, flow_supports_order
+from body_sequence_solver import recover_short_observations, flow_supports_order, reseed_clear_components
 from head_recovery import tracking_indices
 
 
 class BodySequenceTests(unittest.TestCase):
+    def test_local_reseed_needs_consistent_visible_ends_and_one_identity(self):
+        path=np.column_stack((np.arange(101)+10,np.full(101,20)))
+        mask=np.zeros((40,125),bool);mask[15:25,5:116]=True
+        for votes,identity,accepted in [([1,1,None,1],True,True),([0,1,None,1],True,False),
+                                        ([1,None,None,1],True,False),([1,1,None,1],False,False)]:
+            with self.subTest(votes=votes,identity=identity):
+                paths=np.stack([path]*4)
+                facts=[dict(head_known=False,anchor_conflict=False,candidate='clear_observation',
+                            head_observed=True,tail_observed=True) for _ in paths]
+                guards=[dict(identity_valid=True,mask_valid=True,identity_segment=int(not identity and i>1))
+                        for i in range(4)]
+                with patch('body_sequence_solver.taper_side',side_effect=votes):
+                    reseed_clear_components(paths,facts,[mask]*4,[(0,3)],guards)
+                self.assertEqual([r['head_known'] for r in facts],[accepted]*4)
+                np.testing.assert_array_equal(paths[0],path[::-1] if accepted else path)
+                self.assertFalse(any(f.get('manual_lineage') for f in facts))
+
     def test_short_visible_pose_requires_matching_tips_between_clear_frames(self):
         def line(x, right):
             return np.column_stack((np.linspace(x, right, 101), np.full(101, 45.)))

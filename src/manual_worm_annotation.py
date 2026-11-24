@@ -23,6 +23,7 @@ from image_io import png
 from compute_device import release_device_cache
 
 from platforms.system import is_darwin
+from workspace_http import WorkspaceHTTPServer, workspace_request
 
 
 class MaskPredictor:
@@ -181,8 +182,10 @@ class Annotation:
         self.connection = None
         self.predict_lock = threading.Lock()
 
-    def predict(self, body):
+    def predict(self, body, *, token=None):
         with self.predict_lock:
+            if token is not None and token != self.token:
+                raise ValueError('标注帧已切换，请重新点选')
             if self.done.is_set():
                 raise ValueError('本次标注已保存')
             if not is_darwin():
@@ -293,9 +296,11 @@ class Annotation:
             rgba=np.full((*self.image.shape[:2],4),255,np.uint8);rgba[:,:,3]=0
             rgba[y:y1,x:x1,3]=(mask>127).astype(np.uint8)*255
             from head_evidence import anchors_in_crop
-            heads=[a for a in anchors_in_crop(config.get('head_annotations',{}).get(str(entry['id'])),config['crop_xyxy'],config['crop_xyxy']) if a['frame']==self.frame]
+            records=anchors_in_crop(config.get('head_annotations',{}).get(str(entry['id'])),config['crop_xyxy'],config['crop_xyxy'])
+            heads=[a for a in records if a['frame']==self.frame]
             head_point=[heads[0]['point'][0]+x,heads[0]['point'][1]+y] if len(heads)==1 else None
             worms.append(dict(id=entry['id'],area_px=int((mask>127).sum()),head_point=head_point,
+                head_points=[dict(frame=a['frame'], point=[a['point'][0]+x,a['point'][1]+y]) for a in records if a['frame']!=self.frame],
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
         result['previous']=dict(measurement_mode=config.get('measurement_mode','physical'),worms=worms,roi=[x,y,x1,y1],scale_um_per_px=config['scale_um_per_px'],
             calibration=record.get('calibration'),head_detection=config.get('head_detection','twardis'),
@@ -367,6 +372,18 @@ class Annotation:
                 if np.min((xx-point[0])**2+(yy-point[1])**2)>12**2:
                     raise ValueError(f'线虫 {worm} 的头部点离当前虫体太远，请重新点选头端')
                 heads[str(worm)]=dict(frame=self.frame,point=[point[0]-x,point[1]-y])
+            if entry.get('head_points'):
+                from head_evidence import normalize_anchors
+                anchors = [heads[str(worm)]] if point is not None else []
+                seen_frames = {self.frame}
+                for anchor in normalize_anchors(entry['head_points'], self.n):
+                    frame = anchor['frame']
+                    px, py = anchor['point']
+                    if frame in seen_frames or not (x <= px < x1 and y <= py < y1):
+                        raise ValueError(f'线虫 {worm} 的抽帧标记重复或超出分析区域')
+                    seen_frames.add(frame)
+                    anchors.append(dict(frame=frame, point=[px-x, py-y]))
+                heads[str(worm)] = sorted(anchors, key=lambda a: a['frame'])
         absolute = [x + self.crop[0], y + self.crop[1], x1 + self.crop[0], y1 + self.crop[1]]
         if hasattr(self, 'correction_source'):
             from mask_correction import validate_edit
@@ -463,9 +480,9 @@ def change_annotation_mode(annotation, progress, chamber_mode):
             elif not chamber_mode and getattr(annotation, 'start_on_submit', False):
                 del annotation.sequence
             annotation.chamber_mode = chamber_mode
-            annotation.release_predictor()
             # A still-open page for the old mode must not write to the other draft.
             annotation.token = secrets.token_urlsafe(24)
+            annotation.release_predictor()
 
 
 def save_chambers(progress, annotation, body):
@@ -510,7 +527,7 @@ def save_chambers(progress, annotation, body):
             child.output = run / 'manual-initialization'
             child.path = child.output / 'annotation.json'
             child.save(dict(body, roi=chamber['roi'], worms=[dict(id=1, mask=chamber.get('mask'),
-                           head_point=chamber.get('head_point'))]))
+                           head_point=chamber.get('head_point'), head_points=chamber.get('head_points'))]))
             configs.append(child.result)
         samples = getattr(annotation, 'prior_chamber_samples', finished_videos) + [c['sample'] for c in configs]
         last_video = len(finished_videos) + 1 == len(paths)
@@ -656,7 +673,7 @@ def create_server(annotation=None, progress=None):
             self.end_headers()
             if self.command == 'HEAD': return
             try:
-                with path.open('rb') as handle:
+                with path.open('rb') as handle, self.server.outside_control():
                     handle.seek(start)
                     remaining = end-start+1
                     while remaining:
@@ -665,14 +682,50 @@ def create_server(annotation=None, progress=None):
                         self.wfile.write(chunk); remaining -= len(chunk)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError): pass
 
+        @workspace_request
         def do_HEAD(self):
             if progress and self.path.startswith('/api/library-media?'): self.send_artifact(library=True)
             elif progress and self.path.startswith('/artifact?'): self.send_artifact()
             else: self.send_response(404); self.end_headers()
 
+        @workspace_request
         def do_GET(self):
             from urllib.parse import parse_qs, urlsplit
             annotation = self.server.annotation
+            if urlsplit(self.path).path == '/api/head-preview':
+                if not annotation or self.headers.get('X-Annotation-Token') != annotation.token:
+                    self.respond(403, dict(error='标注会话已改变')); return
+                try:
+                    frame = int(parse_qs(urlsplit(self.path).query).get('frame', [''])[0])
+                    if not 0 <= frame < annotation.n: raise ValueError('帧号超出范围')
+                    cap = cv2.VideoCapture(annotation.video)
+                    try:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+                        ok, image = cap.read()
+                    finally:
+                        cap.release()
+                    if not ok: raise ValueError('无法解码此帧')
+                    x, y, x1, y1 = annotation.crop
+                    self.respond(200, png(image[y:y1,x:x1]), 'image/png')
+                except (ValueError, cv2.error) as error:
+                    self.respond(400, dict(error=str(error)))
+                return
+            if urlsplit(self.path).path == '/api/prediction':
+                if not annotation or self.headers.get('X-Annotation-Token') != annotation.token:
+                    self.respond(403, dict(error='标注会话已改变')); return
+                job = self.server.prediction
+                key = parse_qs(urlsplit(self.path).query).get('job', [None])[0]
+                if not job or job.key != key or job.token != annotation.token or annotation.done.is_set():
+                    self.respond(409, dict(error='本次预测已失效，请重新点选')); return
+                if not job.future.done():
+                    self.respond(202, dict(job=key)); return
+                try:
+                    result = job.future.result()
+                except (ValueError, KeyError, TypeError) as error:
+                    self.respond(400, dict(error=str(error))); return
+                except Exception as error:
+                    self.respond(500, dict(error=f'SAM2 预测失败：{error}')); return
+                self.respond(200, result); return
             if progress and self.path.startswith('/api/channel/'):
                 route = urlsplit(self.path)
                 query = parse_qs(route.query)
@@ -857,6 +910,7 @@ def create_server(annotation=None, progress=None):
                 self.respond(200, dict(algorithm=self.server.optional_probe))
             else: self.respond(404, {})
 
+        @workspace_request
         def do_POST(self):
             annotation = self.server.annotation
             try:
@@ -951,7 +1005,8 @@ def create_server(annotation=None, progress=None):
                         result = select(ROOT, json.loads(self.rfile.read(size)).get('id'))
                     else:
                         q = parse_qs(urlsplit(self.path).query)
-                        result = upload(ROOT, self.rfile, size, q.get('name',[''])[0], q.get('relativePath',[''])[0], q.get('signature',[''])[0],q.get('parent',[None])[0])
+                        result = upload(ROOT, self.rfile, size, q.get('name',[''])[0], q.get('relativePath',[''])[0], q.get('signature',[''])[0],q.get('parent',[None])[0],
+                                        transfer=self.server.outside_control)
                     self.respond(200,result); return
                 if progress and self.path == '/api/remove-history':
                     if self.headers.get('X-Annotation-Token') != progress.token:
@@ -1040,6 +1095,7 @@ def create_server(annotation=None, progress=None):
                     if hasattr(annotation, 'correction_source'):
                         raise ValueError('当前正在修正指定帧的掩膜，请保存后再选择其他帧')
                     candidate=Annotation(annotation.settings,frame=body.get('frame'))
+                    annotation.token = candidate.token
                     annotation.release_predictor()
                     # Keep the existing Event: collect_annotation is waiting on it.
                     for key in ('image','frame','identity','crop'):
@@ -1097,13 +1153,17 @@ def create_server(annotation=None, progress=None):
                         folder = ROOT/'input_videos'/secrets.token_hex(8)
                         folder.mkdir(parents=True)
                         uploaded = video = folder/filename
+                        initial_run = progress.run_id
+                        initial_config = progress.config
                         try:
-                            with video.open('wb') as handle:
-                                remaining = size
-                                while remaining:
-                                    chunk = self.rfile.read(min(1024*1024, remaining))
-                                    if not chunk: raise ValueError('视频传输中断，请重新选择')
-                                    handle.write(chunk); remaining -= len(chunk)
+                            from workspace_library import receive_file
+                            with self.server.outside_control():
+                                receive_file(video, self.rfile, size)
+                            if (progress.closed.is_set() or progress.run_id != initial_run or progress.config is not initial_config
+                                    or self.server.annotation is not annotation or progress.next_ready.is_set()
+                                    or (progress.batch and progress.batch.running)
+                                    or progress.snapshot()['status'] not in ('ready','complete','failed','cancelled')):
+                                raise ValueError('上传期间任务已改变，请重新选择视频')
                         except Exception:
                             video.unlink(missing_ok=True); folder.rmdir(); raise
                     try:
@@ -1136,13 +1196,28 @@ def create_server(annotation=None, progress=None):
                     self.respond_before_body(200, dict(closed=True))
                     return
                 if annotation is None: self.respond_before_body(404, {}); return
-                if self.path not in ('/save', '/predict', '/api/annotation-metrics'): self.respond_before_body(404, {}); return
+                if self.path not in ('/save', '/predict', '/api/prediction', '/api/annotation-metrics'): self.respond_before_body(404, {}); return
                 if self.headers.get('X-Annotation-Token') != annotation.token:
                     self.respond_before_body(403, dict(error='Invalid annotation session')); return
                 size = int(self.headers.get('Content-Length', '0'))
                 limit = 64 * 1024 * 1024 if self.path in ('/save', '/api/annotation-metrics') else 8192
                 if not 0 < size <= limit: raise ValueError('标注请求过大或为空')
                 body = json.loads(self.rfile.read(size))
+                if self.path in ('/predict', '/api/prediction'):
+                    if annotation.done.is_set():
+                        raise ValueError('本次标注已保存')
+                    job = self.server.submit_prediction(annotation, body)
+                    if job is None:
+                        self.respond(409, dict(error='已有轮廓预测正在进行')); return
+                    key, token, future = job
+                    if self.path == '/api/prediction':
+                        self.respond(202, dict(job=key)); return
+                    # Existing callers of /predict expect the completed mask.
+                    with self.server.outside_control():
+                        result = future.result()
+                    if self.server.annotation is not annotation or token != annotation.token or annotation.done.is_set():
+                        self.respond(409, dict(error='本次预测已失效，请重新点选')); return
+                    self.respond(200, result); return
                 if self.path == '/save' and annotation.done.is_set():
                     raise ValueError('当前标注已提交')
                 if self.path == '/save' and getattr(annotation, 'chamber_mode', False):
@@ -1150,7 +1225,7 @@ def create_server(annotation=None, progress=None):
                     self.respond(200, result)
                     return
                 from annotation_metrics import measure_annotation
-                action = {'/predict': annotation.predict, '/save': annotation.save,
+                action = {'/save': annotation.save,
                           '/api/annotation-metrics': lambda request: measure_annotation(annotation, request)}
                 result = action[self.path](body)
                 if self.path == '/save':
@@ -1183,14 +1258,18 @@ def create_server(annotation=None, progress=None):
                         result['progress_url'] = '/progress'
                 self.respond(200, result)
             except (ValueError, KeyError, TypeError) as error:
+                if self.server.closing:
+                    return
                 self.respond(400, dict(error=str(error)))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
             except Exception as error:
                 print(f'SAM2 标注服务出错：{error}', flush=True)
                 self.respond(500, dict(error=f'SAM2 预测失败：{error}'))
-    # Single-request server serializes saves and avoids model/state races.
-    from http.server import HTTPServer
-    class WorkspaceServer(HTTPServer):
+    class WorkspaceServer(WorkspaceHTTPServer):
+        annotation = None
         counts = None
+        chamber_videos = None
 
         def channel_counts(self):
             if self.counts is None:
@@ -1199,12 +1278,13 @@ def create_server(annotation=None, progress=None):
             return self.counts
 
         def server_close(self):
+            super().server_close()
             if self.annotation is not None:
                 self.annotation.release_predictor()
             if self.counts is not None:
                 self.counts.close()
-            self.chamber_videos.pool.shutdown(wait=True, cancel_futures=True)
-            super().server_close()
+            if self.chamber_videos is not None:
+                self.chamber_videos.pool.shutdown(wait=True, cancel_futures=True)
 
     server = WorkspaceServer(('127.0.0.1', 0), Handler)
     from chamber_videos import ChamberVideos
