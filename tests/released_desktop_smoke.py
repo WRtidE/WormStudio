@@ -71,7 +71,7 @@ def run(folder, backend='cpu', component_directory=None):
     (work/'smoke.json').write_text(json.dumps(cfg),encoding='utf8')
     subprocess.run([str(py),'-X','utf8','worm_pipeline.py','--config','smoke.json','--no-progress-ui','--no-resume'],cwd=work,env=env,check=True,timeout=900)
     dest=work/'outputs/practice-release/phenotypes-centerlines-body-sequence'
-    assert json.loads((dest/'summary.json').read_text(encoding='utf8'))['overlay_version']=='endpoint-evidence-v2'
+    assert json.loads((dest/'summary.json').read_text(encoding='utf8'))['overlay_version']=='endpoint-evidence-v4-darker-tail-tip'
     report=json.loads((dest/'verification.json').read_text(encoding='utf8'))
     assert report['frames']==5 and report['available_centerlines']>0
     with (dest/'per_frame_metrics.csv').open(encoding='utf-8-sig') as f:
