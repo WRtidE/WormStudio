@@ -58,10 +58,7 @@ function initUpdates() {
   updates = new Updates({directory:app.getPath('userData'), downloads:app.getPath('downloads'),
     fetch:(url, options) => net.fetch(url, {...options, credentials:'omit'}), notify,
     feed:process.env.WORM_STUDIO_UPDATE_FEED || require('./package.json').updateFeed,
-    installer:!viewer && appUpdate.supported(process.execPath, process.resourcesPath) ? async release => {
-      const apply = await appUpdate.prepare({...release, executable:process.execPath, directory:app.getPath('userData')});
-      await closeWindow(apply);
-    } : null});
+    installer:!viewer && appUpdate.supported(process.execPath, process.resourcesPath) ? closeWindow : null});
   function handle(channel, permitted, callback) {
     ipcMain.handle(channel, (event, ...args) => {
       if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || !permitted(event)) throw Error('无效的设置请求');
@@ -154,20 +151,21 @@ function signalBackend(signal) {
   }
 }
 
-async function closeWindow(applyUpdate = null) {
-  if (closePending) return;
+async function closeWindow(release = null) {
+  if (closePending || closing) return;
   closePending = true;
   try {
-    const choice = await dialog.showMessageBox(win, {
-      type: 'question', message: applyUpdate ? '重启并更新 WormStudio？' : '退出 WormStudio？', detail: '退出会停止当前正在运行的分析。',
-      buttons: ['继续使用', applyUpdate ? '重启并更新' : '退出'], defaultId: 0, cancelId: 0
+    const owner = release && settingsWindow ? settingsWindow : win;
+    const choice = await dialog.showMessageBox(owner, {
+      type: 'question', message: release ? '重启并更新 WormStudio？' : '退出 WormStudio？', detail: '退出会停止当前正在运行的分析。',
+      buttons: ['继续使用', release ? '重启并更新' : '退出'], defaultId: 0, cancelId: 0
     });
     if (choice.response !== 1) return;
     if (origin && !win.webContents.isCrashed()) {
       try {
         await win.webContents.executeJavaScript('window.StudioWorkspace?.prepareToLeave() ?? window.AnnotationDraft?.flush()');
       } catch (error) {
-        const result = await dialog.showMessageBox(win, {
+        const result = await dialog.showMessageBox(release && settingsWindow ? settingsWindow : win, {
           type: 'warning', message: '当前修改可能尚未保存', detail: error.message,
           buttons: ['返回工作台', '仍然退出'], defaultId: 0, cancelId: 0
         });
@@ -175,7 +173,26 @@ async function closeWindow(applyUpdate = null) {
       }
     }
     // Let Chromium run the page's remaining beforeunload checks.
-    pendingUpdate = applyUpdate;
+    if (release) {
+      const update = await appUpdate.prepare({...release, executable:process.execPath, directory:app.getPath('userData')});
+      // Keep Electron alive until Chromium accepts the close and the helper has started.
+      const closed = new Promise(resolve => { pendingUpdate = resolve; });
+      closing = true;
+      try {
+        win.close();
+        if (await closed) await update.start();
+        else await update.discard();
+      } catch (error) {
+        closing = !win;
+        await update.discard();
+        if (win) throw error;
+        dialog.showErrorBox('无法启动更新', error.message);
+      } finally {
+        pendingUpdate = null;
+        if (!win) app.quit();
+      }
+      return;
+    }
     closing = true;
     win.close();
   } finally {
@@ -209,18 +226,16 @@ function launch() {
     if (!closing) { event.preventDefault(); void closeWindow(); }
   });
   win.webContents.on('will-prevent-unload', event => {
-    const answer = dialog.showMessageBoxSync(win, {
+    const answer = dialog.showMessageBoxSync(pendingUpdate && settingsWindow ? settingsWindow : win, {
       type: 'warning', message: '仍有未保存的修改，确定离开？',
       buttons: ['留下', '离开'], defaultId: 0, cancelId: 0
     });
     if (answer === 1) event.preventDefault();
-    else { closing = false; pendingUpdate = null; }
+    else { closing = false; pendingUpdate?.(false); }
   });
   win.on('closed', () => {
     win = null;
-    if (pendingUpdate) void pendingUpdate().catch(error => {
-      dialog.showErrorBox('无法启动更新', error.message+'；原版本未更改。');
-    }).finally(() => { pendingUpdate = null; app.quit(); });
+    pendingUpdate?.(true);
   });
   initUpdates();
   Menu.setApplicationMenu(Menu.buildFromTemplate([

@@ -82,6 +82,127 @@ function say(text,kind=''){const el=$('#status');el.textContent=AnalysisPresenta
 function color(id){return ['#43d39b','#d976ed','#58c8ef','#ff9585'][id-1]||`hsl(${id*137.508%360} 70% 65%)`}
 function empty(){const c=document.createElement('canvas');c.width=W;c.height=H;return c}
 function active(){return objects.get(selected)}
+
+const sampler=$('#head-sampler'), sampleCanvas=$('#sample-canvas');
+const sampleView=$('#sample-view');
+let sampleFrames=[], sampleRequest=0, sampleReady=false, sampleBounds;
+let sampleTransform=null, sampleGesture=null;
+function fittedSample(){
+ return ResultViewport.fit(sampleCanvas.width,sampleCanvas.height,sampleView.clientWidth,sampleView.clientHeight);
+}
+function positionSample(transform){
+ const {width,height}=sampleCanvas;
+ sampleTransform=ResultViewport.constrain(transform,width,height,sampleView.clientWidth,sampleView.clientHeight);
+ const {x,y,s}=sampleTransform;
+ sampleCanvas.style.transform=`translate(${x}px,${y}px) scale(${s})`;
+ const ratio=s/fittedSample().s;
+ $('#sample-zoom').textContent=Number(ratio.toFixed(2))+'×';
+ $('#sample-out').disabled=ratio<=1.001;
+ $('#sample-in').disabled=ratio>=15.999;
+}
+function zoomSample(factor,x=sampleView.clientWidth/2,y=sampleView.clientHeight/2){
+ if(!sampleReady)return;
+ const fit=fittedSample();
+ positionSample(ResultViewport.zoomAt(sampleTransform,factor,x,y,fit.s,fit.s*16));
+}
+$('#sample-in').onclick=()=>zoomSample(1.5);
+$('#sample-out').onclick=()=>zoomSample(1/1.5);
+$('#sample-fit').onclick=()=>{if(sampleReady)positionSample(fittedSample())};
+sampleView.addEventListener('wheel',e=>{
+ e.preventDefault();
+ const rect=sampleView.getBoundingClientRect();
+ const pixels=e.deltaY*(e.deltaMode===1 ? 16 : e.deltaMode===2 ? rect.height : 1);
+ const factor=Math.exp(-Math.max(-250,Math.min(250,pixels))*.002);
+ zoomSample(factor,e.clientX-rect.left,e.clientY-rect.top);
+},{passive:false});
+new ResizeObserver(()=>{
+ if(sampleReady&&sampler.open)positionSample(fittedSample());
+}).observe(sampleView);
+function cancelSampleGesture(){
+ sampleGesture=null;
+ sampleView.classList.remove('dragging');
+}
+function endSampling(){
+ sampler.close();
+ refresh();
+}
+async function showSample(){
+ const request=++sampleRequest;
+ sampleReady=false;
+ cancelSampleGesture();
+ sampleCanvas.hidden=true;
+ if(!sampleFrames.length){endSampling();return}
+ const frame=sampleFrames[0];
+ $('#sample-title').textContent=`${state.chamber_mode?'槽':'线虫'} ${selected} · F${frame}`;
+ $('#sample-status').textContent='正在读取画面…';
+ try{
+  const response=await fetch('/api/head-preview?frame='+frame,{headers:{'X-Annotation-Token':state.token}});
+  if(!response.ok)throw Error('读取失败，可以跳过此帧。');
+  const bitmap=await createImageBitmap(await response.blob());
+  try{
+   if(request!==sampleRequest||!sampler.open)return;
+   const [x,y,x1,y1]=sampleBounds;
+   sampleCanvas.width=x1-x;sampleCanvas.height=y1-y;
+   sampleCanvas.getContext('2d').drawImage(bitmap,x,y,x1-x,y1-y,0,0,x1-x,y1-y);
+  }finally{bitmap.close()}
+  sampleReady=true;
+  positionSample(sampleTransform||fittedSample());
+  sampleCanvas.hidden=false;
+  $('#sample-status').textContent=`滚轮缩放，拖动画面，单击头端进入下一帧。还剩 ${sampleFrames.length} 帧。`;
+ }catch(error){if(request===sampleRequest)$('#sample-status').textContent=error.message}
+}
+for(const button of document.querySelectorAll('[data-sample-heads]')){
+ button.onclick=()=>{
+  if(!active()||busy||saved)return;
+  const used=new Set([state.frame,...(active().headPoints||[]).map(a=>a.frame)]);
+  const available=Array.from({length:state.frame_count},(_,i)=>i).filter(i=>!used.has(i));
+  const count=Math.min(Number(button.dataset.sampleHeads),available.length);
+  if(!count){say('所有可抽取帧都已标记。');return}
+  sampleFrames=Array.from({length:count},(_,i)=>{
+   const start=Math.floor(i*available.length/count),end=Math.floor((i+1)*available.length/count);
+   return available[start+Math.floor(Math.random()*(end-start))];
+  });
+  sampleBounds=(roi||[0,0,W,H]).slice();
+  sampleTransform=null;
+  sampler.showModal();void showSample();
+ };
+}
+sampleView.onpointerdown=e=>{
+ if(!sampleReady||e.button!==0||!e.isPrimary||sampleGesture)return;
+ sampleView.setPointerCapture(e.pointerId);
+ sampleGesture={id:e.pointerId,x:e.clientX,y:e.clientY,transform:sampleTransform,dragged:false};
+};
+sampleView.onpointermove=e=>{
+ const g=sampleGesture;
+ if(!g||g.id!==e.pointerId)return;
+ const dx=e.clientX-g.x,dy=e.clientY-g.y;
+ if(!g.dragged&&Math.hypot(dx,dy)<4)return;
+ g.dragged=true;
+ sampleView.classList.add('dragging');
+ positionSample({...g.transform,x:g.transform.x+dx,y:g.transform.y+dy});
+};
+sampleView.onlostpointercapture=sampleView.onpointercancel=e=>{
+ if(sampleGesture?.id===e.pointerId)cancelSampleGesture();
+};
+sampleView.onpointerup=e=>{
+ const g=sampleGesture;
+ if(!g||g.id!==e.pointerId)return;
+ cancelSampleGesture();
+ if(!sampleReady||g.dragged||Math.hypot(e.clientX-g.x,e.clientY-g.y)>=4)return;
+ const rect=sampleCanvas.getBoundingClientRect();
+ if(e.clientX<rect.left||e.clientX>=rect.right||e.clientY<rect.top||e.clientY>=rect.bottom)return;
+ const point=[Math.floor((e.clientX-rect.left)*sampleCanvas.width/rect.width)+sampleBounds[0],
+              Math.floor((e.clientY-rect.top)*sampleCanvas.height/rect.height)+sampleBounds[1]];
+ remember();
+ active().headPoints=[...(active().headPoints||[]),{frame:sampleFrames.shift(),point}];
+ refresh();void showSample();
+};
+$('#sample-skip').onclick=()=>{sampleFrames.shift();void showSample()};
+$('#sample-close').onclick=endSampling;
+$('#remove-sampled-head').onclick=()=>{
+ if(busy||saved||!active()?.headPoints?.length)return;
+ remember();active().headPoints=active().headPoints.slice(0,-1);refresh();
+};
 function changed(o){o.headPoint=null;o.confirmed=false;o.token=null;o.candidates=[];o.area=area(o.mask);refresh();draw()}
 function frameMetricsContext(){return JSON.stringify([state?.frame,selected,roi,$('#pixel-mode').checked,$('#scale').value,calibrationPending]);}
 function currentFrameMetrics(){const o=active();return o?.confirmed&&o.frameMetricsContext===frameMetricsContext()?o.frameMetrics:null;}
@@ -220,7 +341,15 @@ function refresh(){
   };
   row.append(select,remove);list.append(row);
  }
- const o=active();$('#head-info').textContent=o?.headPoint?`已标记线虫 ${selected} 的头部 · (${o.headPoint.join(', ')})`:'未标记：正式头摆暂不可用；体长、面积与速度仍可分析。';$('#review-heads').textContent=`${[...objects.values()].filter(w=>w.headPoint).length} / ${objects.size} 条已人工标记头部`;const confirmed=[...objects.values()].filter(o=>o.area>=20&&o.confirmed).length;
+ const o=active();
+ const frames=[...(o?.headPoints||[]).map(a=>a.frame),...(o?.headPoint?[state.frame]:[])].sort((a,b)=>a-b);
+ $('#head-info').textContent=frames.length?'已标记头端 · '+frames.map(f=>'F'+f).join('、'):'头端未标记，可在当前帧或随机抽帧标记。';
+ $('#sample-heads').hidden=!!state.mask_correction;
+ const lastSample=o?.headPoints?.at(-1);
+ $('#remove-sampled-head').hidden=!lastSample||!!state.mask_correction;
+ if(lastSample)$('#remove-sampled-head').textContent='移除 F'+lastSample.frame+' 的标记';
+ $('#review-heads').textContent=`${[...objects.values()].filter(w=>w.headPoint||w.headPoints?.length).length} / ${objects.size} 条已人工标记头部`;
+ const confirmed=[...objects.values()].filter(o=>o.area>=20&&o.confirmed).length;
  $('#worm-count').textContent=objects.size;$('#view-title').textContent=step===2?`${state.mask_correction?'修正源帧 '+state.frame:'正在标注'} · 线虫 ${String(selected).padStart(2,'0')}`:`标注帧 ${state.frame}`;
  if(state.sequence_total)$('#view-title').textContent=`标定 ${state.sequence_index}/${state.sequence_total} · ${state.video_name}`;
  const r=roi||[0,0,W,H];refreshRegionChoice();
@@ -322,8 +451,29 @@ function inside(p){if(state?.chamber_mode&&!roi)return false;return !roi||(p[0]>
 async function predict(){
  const o=active();if(busy||saved||!o)return;if(!o.points.some(p=>p.label===1)&&!o.box){say('先在虫体上点一个点，或框住整条虫。');return}
  setBusy(true);say(o.token?`正在修正线虫 ${selected} 的轮廓…`:`正在分割线虫 ${selected}，首次点选需要加载模型…`,'working');
- try{const response=await fetch('/predict',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({worm_id:selected,roi,points:o.points,box:o.box,prediction_token:o.token,previous_candidate:o.candidate})});const data=await response.json();if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);o.mask=await decode(data.mask);o.area=data.area_px;o.token=data.prediction_token;o.candidate=data.candidate;o.candidates=data.candidates;o.headPoint=null;o.confirmed=false;say(data.refined?'已在上一轮轮廓基础上修正。检查完整虫体后，确认这条虫。':'已生成虫体轮廓。可追加点、切换候选或手工修正。')}
- catch(e){say(`分割失败：${e.message}。可以撤销此次点选后重试。`,'error')}
+ const token=state.token, signal=keyListeners.signal;
+ try{
+  const {job}=await annotationPost('/api/prediction',{
+   worm_id:selected,roi,points:o.points,box:o.box,prediction_token:o.token,previous_candidate:o.candidate
+  });
+  const url='/api/prediction?job='+encodeURIComponent(job);
+  while(!signal.aborted){
+   const response=await fetch(url,{headers:{'X-Annotation-Token':token},cache:'no-store',signal});
+   const data=await response.json();
+   if(!response.ok)throw Error(data.error||`HTTP ${response.status}`);
+   if(response.status===202){
+    await new Promise(resolve=>setTimeout(resolve,250));
+    continue;
+   }
+   const mask=await decode(data.mask);
+   if(signal.aborted||state.token!==token||o!==active()||saved)return;
+   Object.assign(o,{mask,area:data.area_px,token:data.prediction_token,candidate:data.candidate,
+    candidates:data.candidates,headPoint:null,confirmed:false});
+   say(data.refined?'已在上一轮轮廓基础上修正。检查完整虫体后，确认这条虫。':'已生成虫体轮廓。可追加点、切换候选或手工修正。');
+   break;
+  }
+ }
+ catch(e){if(!signal.aborted)say(`分割失败：${e.message}。可以撤销此次点选后重试。`,'error')}
  finally{setBusy(false);draw()}
 }
 function stroke(a,b){const c=active().mask.getContext('2d');c.save();if(roi){c.beginPath();c.rect(roi[0],roi[1],roi[2]-roi[0],roi[3]-roi[1]);c.clip()}c.globalCompositeOperation=mode==='erase'?'destination-out':'source-over';c.lineWidth=+$('#brush').value;c.lineCap='round';c.lineJoin='round';c.strokeStyle='white';c.fillStyle='white';c.beginPath();c.moveTo(...a);c.lineTo(...b);c.stroke();c.beginPath();c.arc(b[0],b[1],c.lineWidth/2,0,Math.PI*2);c.fill();c.restore();draw()}
@@ -386,9 +536,9 @@ $('#scale-length').onfocus=()=>{if(step===1&&!busy&&!saved&&!isScaleTool(mode))s
 $('#scale').oninput=()=>{calibration=null;calibrationPending=false;scalePoints=[];$('#calibration-info').textContent='当前使用手动填写的比例。如需测量，请重新选取标尺两端。';if(isScaleTool(mode))setMode('view');refresh();draw()};$('#scale-length').oninput=()=>{if(scalePoints.length||calibrationPending)updateCalibration()};
 
 $('#save').onclick=saveAnnotation;
-async function saveAnnotation(){if(busy||saved)return;const check=readiness();if(!check.ready){refresh();resolveBlocker(check.blockers[0]);return}if(poly.length){say('请先闭合或取消多边形。','error');return}setBusy(true);say(state.batch_deferred?'正在保存标注并加入队列…':'正在保存标注并准备分析…','working');try{await draftSaver?.flush();const method=analysisMethod();const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({[state.chamber_mode?'chambers':'worms']:[...objects].map(([id,o])=>({id,roi:o.roi,mask:o.mask.toDataURL('image/png'),head_point:o.headPoint||null})),roi,measurement_mode:$('#pixel-mode').checked?'pixels':'physical',scale_um_per_px:$('#pixel-mode').checked?null:+$('#scale').value,calibration,analysis_profile:'current',centerline_method:method,head_detection:CURRENT_HEAD_DETECTION,provenance:'User-clicked SAM2 masks, individually reviewed and optionally brush-edited in Worm Studio'})});const data=await response.json();if(!response.ok)throw Error(data.error);saved=true;draftSaver?.stop();if(data.next_annotation){allowLeave=true;window.location.replace('/');return}if(data.queued){if(window.parent!==window){window.parent.postMessage({type:'annotation-queued'},location.origin);say('标注已加入队列，请选择下一个视频继续标定。');}else{location.assign('/studio');}return}if(data.progress_url){window.location.assign('/progress');return}$('#success-summary').textContent=`${data.worm_count} 条线虫 · 自动分析`;$('#saved-path').textContent=data.path;$('#success').hidden=false;$('#save-state').style.background='#35ac87';say(`已保存 ${data.worm_count} 条虫，正在准备分析。`);$('#close-success').focus()}catch(e){say(`保存失败：${e.message}`,'error')}finally{setBusy(false)}};
+async function saveAnnotation(){if(busy||saved)return;const check=readiness();if(!check.ready){refresh();resolveBlocker(check.blockers[0]);return}if(poly.length){say('请先闭合或取消多边形。','error');return}setBusy(true);say(state.batch_deferred?'正在保存标注并加入队列…':'正在保存标注并准备分析…','working');try{await draftSaver?.flush();const method=analysisMethod();const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({[state.chamber_mode?'chambers':'worms']:[...objects].map(([id,o])=>({id,roi:o.roi,mask:o.mask.toDataURL('image/png'),head_point:o.headPoint||null,head_points:o.headPoints||[]})),roi,measurement_mode:$('#pixel-mode').checked?'pixels':'physical',scale_um_per_px:$('#pixel-mode').checked?null:+$('#scale').value,calibration,analysis_profile:'current',centerline_method:method,head_detection:CURRENT_HEAD_DETECTION,provenance:'User-clicked SAM2 masks, individually reviewed and optionally brush-edited in Worm Studio'})});const data=await response.json();if(!response.ok)throw Error(data.error);saved=true;draftSaver?.stop();if(data.next_annotation){allowLeave=true;window.location.replace('/');return}if(data.queued){if(window.parent!==window){window.parent.postMessage({type:'annotation-queued'},location.origin);say('标注已加入队列，请选择下一个视频继续标定。');}else{location.assign('/studio');}return}if(data.progress_url){window.location.assign('/progress');return}$('#success-summary').textContent=`${data.worm_count} 条线虫 · 自动分析`;$('#saved-path').textContent=data.path;$('#success').hidden=false;$('#save-state').style.background='#35ac87';say(`已保存 ${data.worm_count} 条虫，正在准备分析。`);$('#close-success').focus()}catch(e){say(`保存失败：${e.message}`,'error')}finally{setBusy(false)}};
 $('#close-success').onclick=()=>$('#success').hidden=true;
-document.addEventListener('keydown',e=>{if(e.target.matches('input,select,textarea')||busy||saved)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();void undo()}else if(step===2&&['1','2','3'].includes(e.key)){e.preventDefault();setMode({'1':'sam_positive','2':'sam_negative','3':'erase'}[e.key])}else if(e.key==='Escape'){poly=[];setMode('view');draftSaver?.mark()}});
+document.addEventListener('keydown',e=>{if($('#head-sampler').open||e.target.matches('input,select,textarea')||busy||saved)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();void undo()}else if(step===2&&['1','2','3'].includes(e.key)){e.preventDefault();setMode({'1':'sam_positive','2':'sam_negative','3':'erase'}[e.key])}else if(e.key==='Escape'){poly=[];setMode('view');draftSaver?.mark()}});
 new ResizeObserver(fit).observe(viewport);
 async function init(){try{const response=await fetch('/state');if(!response.ok)throw Error('无法读取标注会话');state=await response.json();W=state.width;H=state.height;canvas.width=scratch.width=W;canvas.height=scratch.height=H;$('#video-name').textContent=state.sequence_total ? `标定 ${state.sequence_index}/${state.sequence_total} · ${state.video_name}` : state.video_name;$('#frame-label').textContent=`第 ${state.frame} 帧 / ${state.frame_count}`;$('#dimensions').textContent=`${W} × ${H}`;$('#model-label').textContent='智能分割';$('#scale').value=state.scale_um_per_px||'';$('#pixel-mode').checked=state.measurement_mode==='pixels';$('#anchor-frame').value=state.frame;$('#anchor-frame').max=state.frame_count-1;await loadImage(base,'/image.png');
  if(state.chamber_mode){
@@ -401,7 +551,7 @@ async function init(){try{const response=await fetch('/state');if(!response.ok)t
   $('#worm-list').setAttribute('aria-label','培养槽列表');
  }
  const previous=state.previous;
- if(previous){$('#pixel-mode').checked=previous.measurement_mode==='pixels';roi=previous.roi;$('#scale').value=previous.scale_um_per_px;calibration=previous.calibration||null;if(calibration){scalePoints=structuredClone(calibration.points);scalePointMethod=calibration.method||'manual';$('#scale-length').value=calibration.length_um;$('#calibration-info').textContent=calibrationText(measureCalibration(scalePoints,calibration.length_um))}for(const w of previous.worms)objects.set(w.id,{mask:await decode(w.mask),points:[],box:null,token:null,candidate:0,candidates:[],confirmed:w.confirmed!==false,area:w.area_px,headPoint:w.head_point||null});selected=objects.keys().next().value;state.centerline_method=previous.centerline_method;state.head_detection=previous.head_detection}else add(false);
+ if(previous){$('#pixel-mode').checked=previous.measurement_mode==='pixels';roi=previous.roi;$('#scale').value=previous.scale_um_per_px;calibration=previous.calibration||null;if(calibration){scalePoints=structuredClone(calibration.points);scalePointMethod=calibration.method||'manual';$('#scale-length').value=calibration.length_um;$('#calibration-info').textContent=calibrationText(measureCalibration(scalePoints,calibration.length_um))}for(const w of previous.worms)objects.set(w.id,{mask:await decode(w.mask),points:[],box:null,token:null,candidate:0,candidates:[],confirmed:w.confirmed!==false,area:w.area_px,headPoint:w.head_point||null,headPoints:w.head_points||[]});selected=objects.keys().next().value;state.centerline_method=previous.centerline_method;state.head_detection=previous.head_detection}else add(false);
  $('#loading').hidden=true;showStep(state.mask_correction?2:1);fit();say(state.mask_correction?`已载入源帧 ${state.frame} 的最新已保存掩膜。修正并确认后重新处理，原结果保留。`:previous?'已载入上次保存的掩膜与方法，可以继续检查或修改。':'设置分析区域与尺寸，随后点选每条线虫。');
  if(state.mask_correction){document.body.classList.add("mask-correction");$(".manual-tools").open=true;setMode("paint");$("#save").innerHTML="保存修正并重新处理 <span>→</span>";}
  await initDrafts();
@@ -435,7 +585,7 @@ function draftBody() {
  return {roi,selected,step,mode,poly,pixelMode:$('#pixel-mode').checked,scale:$('#scale').value,
   calibration,calibrationPending,scalePoints,scalePointMethod,scaleLength:$('#scale-length').value,
   method:analysisMethod(),autoHead:true,headInitMethod:CURRENT_HEAD_DETECTION,
-  objects:[...objects].map(([id,o])=>[id,{roi:o.roi,mask:o.mask.toDataURL(),points:o.points,box:o.box,confirmed:o.confirmed,area:o.area,headPoint:o.headPoint}])};
+  objects:[...objects].map(([id,o])=>[id,{roi:o.roi,mask:o.mask.toDataURL(),points:o.points,box:o.box,confirmed:o.confirmed,area:o.area,headPoint:o.headPoint,headPoints:o.headPoints||[]}])};
 }
 async function restoreDraft(d) {
  const restored=await Promise.all(d.objects.map(async([id,o])=>[id,{...o,mask:await decode(o.mask),token:null,candidate:0,candidates:[]}]));

@@ -6,7 +6,7 @@ import numpy as np
 from body_sequence_solver import head_results
 from marked_end_recovery import recover_marked_end
 from result_overlay import draw_worm
-from short_turns import bracketed_order, recover_flanked_candidates, visible_end_order
+from short_turns import continue_candidate_tip, bracketed_order, recover_flanked_candidates, visible_end_order
 from test_marked_end_recovery import worm_frame
 
 
@@ -260,6 +260,19 @@ class ShortTurnTests(unittest.TestCase):
                     np.testing.assert_array_equal(lines,truth)
                 else:
                     self.assertFalse(any(e['accepted'] for e in entries))
+
+    def test_candidate_continuation_compares_forward_and_reverse_orders(self):
+        line=np.column_stack([np.linspace(0,30,101),np.zeros(101)])
+        poses=np.stack([line+i for i in range(5)])
+        facts=[dict(length_px=100) for _ in poses]
+        poses[2]=poses[2,::-1]
+        orders,_=continue_candidate_tip(poses,facts,2)
+        self.assertEqual(orders,[1,1])
+        poses[3:]=poses[3:,::-1]
+        orders,_=continue_candidate_tip(poses,facts,2)
+        self.assertEqual(orders,[1,0])
+        poses[2]=[15,2]
+        self.assertIsNone(continue_candidate_tip(poses,facts,2))
 
     def test_export_distinguishes_unknown_candidate_and_confirmed_ends(self):
         for labels in (['A','B'],['H?','T?'],['H','T']):

@@ -24,6 +24,22 @@ def worm_frame(shift, partial=None, mirror=False):
 
 
 class MarkedEndRecoveryTests(unittest.TestCase):
+    def test_adjacent_components_rejoin_by_the_same_tip_in_both_directions(self):
+        from marked_end_recovery import recover_marked_end
+        lines=np.array([np.column_stack([np.arange(101)+i,np.zeros(101)]) for i in range(9)])
+        lines[7:]=lines[7:,::-1]
+        facts=[dict(component=[0,6] if i<7 else [7,8],manual_lineage=i<7,
+                    anchor_frames=[2] if i<7 else [],anchor_conflict=False,
+                    head_observed=True,tail_observed=True,length_px=100,candidate='clear_observation')
+               for i in range(9)]
+        with patch('marked_end_recovery.fingerprint',return_value=np.zeros((2,6))), \
+             patch('marked_end_recovery.appearance_vote',return_value=0):
+            audit=recover_marked_end(lines,facts,[None]*9,[None]*9,12,[dict(frame=2)],set(),None)
+        self.assertEqual(audit[0]['reason'],'reciprocal_marked_end')
+        self.assertTrue(audit[0]['reciprocal_ends'])
+        self.assertEqual(lines[7,0,0],7)
+        self.assertEqual(facts[8]['anchor_frames'],[2])
+
     def test_stationary_shaft_recovers_after_tip_slides_then_stops(self):
         for end in ('head','tail'):
             for mark in (2,13):

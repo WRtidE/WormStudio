@@ -1,9 +1,12 @@
 """Results streaming, next-video session transitions, and immutable reruns."""
 import csv
 import io
+import http.client
 import json
 from pathlib import Path
 import tempfile
+import socket
+import time
 import unittest
 from unittest.mock import Mock, patch
 import urllib.error
@@ -248,6 +251,71 @@ class ResultSessionTests(unittest.TestCase):
         imported=Path(self.progress.server.annotation.video)
         self.assertTrue(imported.is_relative_to(self.root/'input_videos'))
         self.assertEqual(imported.read_bytes(),self.video.read_bytes())
+
+    def test_progress_responds_while_a_large_download_is_paused(self):
+        path = self.root / 'large.mp4'
+        with path.open('wb') as stream:
+            stream.truncate(32 * 1024 * 1024)
+        self.progress.artifacts['video'] = path
+        client = http.client.HTTPConnection('127.0.0.1', self.progress.server.server_port, timeout=3)
+        try:
+            client.connect()
+            client.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+            client.request('GET', '/artifact?key=video', headers={'Range': 'bytes=128-'})
+            with client.getresponse() as download:
+                self.assertEqual(download.status, 206)
+                self.assertEqual(download.read(16), bytes(16))
+                with urllib.request.urlopen(self.url + '/api/progress', timeout=3) as response:
+                    self.assertEqual(json.load(response)['token'], self.progress.token)
+        finally:
+            client.close()
+
+    def test_upload_rechecks_destination_after_a_concurrent_workspace_change(self):
+        with self.post('/api/library-tree', {'op': 'mkdir', 'name': 'target'}) as response:
+            folder = json.load(response)['folder']['id']
+        client = http.client.HTTPConnection('127.0.0.1', self.progress.server.server_port, timeout=3)
+        try:
+            client.request('POST', '/api/library-upload?name=worms.csv&parent=' + folder,
+                           body=b'ab', headers={'Content-Length': '4', 'X-Annotation-Token': self.progress.token})
+            staging = self.root / 'input_videos/library'
+            deadline = time.monotonic() + 3
+            while not list(staging.glob('*/upload.part')):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            with urllib.request.urlopen(self.url + '/api/progress', timeout=3) as response:
+                self.assertEqual(response.status, 200)
+            with self.post('/api/library-tree', {'op': 'remove', 'id': folder}):
+                pass
+            client.send(b'cd')
+            with client.getresponse() as response:
+                self.assertEqual(response.status, 400)
+            self.assertEqual(list(staging.iterdir()), [])
+            with urllib.request.urlopen(self.url + '/api/library') as response:
+                self.assertEqual(json.load(response)['files'], [])
+        finally:
+            client.close()
+
+    def test_late_video_upload_does_not_replace_the_new_annotation(self):
+        self.progress.fail('test')
+        data = self.video.read_bytes()
+        client = http.client.HTTPConnection('127.0.0.1', self.progress.server.server_port, timeout=3)
+        try:
+            client.request('POST', '/api/upload-video?name=slow.mp4', body=data[:1],
+                           headers={'Content-Length': str(len(data)), 'X-Annotation-Token': self.progress.token})
+            imports = self.root / 'input_videos'
+            deadline = time.monotonic() + 3
+            while not list(imports.glob('*/slow.mp4')):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            with self.post('/api/new-video', {'video_path': str(self.video)}):
+                pass
+            client.send(data[1:])
+            with client.getresponse() as response:
+                self.assertEqual(response.status, 400)
+            self.assertEqual(Path(self.progress.server.annotation.video), self.video)
+            self.assertEqual(list(imports.iterdir()), [])
+        finally:
+            client.close()
 
     def test_completed_summary_nulls_are_not_reported_as_zero(self):
         config=dict(sample='done',video=str(self.video),centerline_method='body_sequence')

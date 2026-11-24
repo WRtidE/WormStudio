@@ -5,6 +5,7 @@ window.ResultPlayer=(()=>{
   const ctx=canvas.getContext('2d'),math=window.ResultViewport;
   let transform=null,focus=false,box=null,visible=false,pointers=new Map(),vw=0,vh=0;
   let frameInfo=null,crop=null,frameCount=0,fps=12,callback=null;
+  let frames=[],currentFrame=0,showTrails=false;
   const dimensions=()=>[video.videoWidth,video.videoHeight];
   function bounds(){
     const b=frameInfo?.mask_bbox_crop_xyxy;
@@ -30,7 +31,30 @@ window.ResultPlayer=(()=>{
     const ratio=window.devicePixelRatio||1;
     ctx.setTransform(ratio,0,0,ratio,0,0);ctx.clearRect(0,0,vw,vh);
     ctx.save();ctx.translate(transform.x,transform.y);ctx.scale(transform.s,transform.s);
-    ctx.drawImage(video,0,0);ctx.restore();
+    ctx.drawImage(video,0,0);
+    if(showTrails && frameInfo){
+      const start=Math.max(0,currentFrame-Math.round(fps));
+      for(const [side,color] of [['head','#329fe2'],['tail','#ef8c26']]){
+        let previous=null;
+        for(let i=start;i<=currentFrame;i++){
+          const row=frames[i]?.find(r=>r.worm_id===frameInfo.worm_id);
+          const point=row?.track_tips?.[side];
+          if(!point){previous=null;continue;}
+          const x=point[0]+(crop?.[0]||0),y=point[1]+(crop?.[1]||0);
+          const conflict=row.head_reason==='candidate_motion_conflict';
+          ctx.strokeStyle=color;ctx.lineWidth=2/transform.s;
+          if(previous && previous.segment===row.track_segment && !conflict){
+            ctx.beginPath();ctx.moveTo(previous.x,previous.y);ctx.lineTo(x,y);ctx.stroke();
+          }
+          if(conflict || i===currentFrame){
+            ctx.beginPath();ctx.arc(x,y,4/transform.s,0,2*Math.PI);
+            ctx.strokeStyle=conflict?'#d13f46':color;ctx.stroke();
+          }
+          previous=conflict?null:{x,y,segment:row.track_segment};
+        }
+      }
+    }
+    ctx.restore();
   }
   function resize(){
     const rect=canvas.getBoundingClientRect();
@@ -79,6 +103,9 @@ window.ResultPlayer=(()=>{
     else if(transform){const delta={ArrowUp:[0,30],ArrowDown:[0,-30]}[e.key];if(delta){transform.x+=delta[0];transform.y+=delta[1];apply();}}
   });
   el('result-zoom-in').onclick=()=>zoom(1.25);el('result-zoom-out').onclick=()=>zoom(.8);
+  el('result-trails').onclick=()=>{
+    showTrails=!showTrails;el('result-trails').setAttribute('aria-pressed',String(showTrails));paint();
+  };
   el('result-fit').onclick=fit;
   el('result-full').onclick=()=>{focus=false;fit();};el('result-focus').onclick=()=>{focus=true;fit();};
   fullscreenButton.hidden=!document.fullscreenEnabled;
@@ -112,8 +139,8 @@ window.ResultPlayer=(()=>{
     const tick=(_,m)=>{if(visible&&!video.paused){callback?.(Math.min(frameCount-1,Math.floor(m.mediaTime*fps+1e-4)));paint();}video.requestVideoFrameCallback(tick);};video.requestVideoFrameCallback(tick);
   }else video.addEventListener('timeupdate',paint);
   return {
-    configure(info,onFrame){crop=info.crop_xyxy;frameCount=info.frame_count;fps=info.fps;callback=onFrame;},
-    frame(row){
+    configure(info,onFrame){frames=info.frames;crop=info.crop_xyxy;frameCount=info.frame_count;fps=info.fps;callback=onFrame;},
+    frame(row,index){currentFrame=index;
       const previous=box;frameInfo=row;
       if(focus){
         const next=bounds();
@@ -128,7 +155,7 @@ window.ResultPlayer=(()=>{
       paint();
     },
     source(){transform=null;},
-    reset(){video.pause();focus=false;box=null;frameInfo=null;transform=null;pointers.clear();fit();},
+    reset(){frames=[];currentFrame=0;video.pause();focus=false;box=null;frameInfo=null;transform=null;pointers.clear();fit();},
     setVisible(value){
       visible=value;
       if(value) resize();

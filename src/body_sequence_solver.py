@@ -17,7 +17,7 @@ from head_evidence import normalize_anchors
 from short_turns import recover_flanked_candidates
 from blurred_tips import locate_blurred_tips
 
-VERSION = 'sam2-body-sequence-v9-darker-tail-tip'
+VERSION = 'sam2-body-sequence-v11-local-reseed'
 MIN_LENGTH_FRACTION = .85
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
@@ -156,12 +156,50 @@ def recover_short_observations(frames, observed, masks, reference, fps):
 def taper_seed(mask,line):
     """Optional shape-only initialization; never claim anatomical confirmation."""
     radii=map_coordinates(distance_transform_edt(mask),line.T[::-1],order=1,mode='constant')
+    side=taper_side(radii)
+    return None if side is None else line[0 if side==0 else -1].copy()
+
+
+def taper_side(radii):
     ratios=[]
     for r in (radii,radii[::-1]):
         if np.median(r[20:31])<=0:return None
         ratios.append(float(np.median(r[2:13])/np.median(r[20:31])))
     if abs(ratios[0]-ratios[1])/max(sum(ratios),1e-9)<.15:return None
-    return line[0 if np.argmax(ratios)==0 else -1].copy()
+    return int(np.argmax(ratios))
+
+
+def reseed_clear_components(lines,facts,masks,components,guards):
+    """Orient a still-unassigned continuous track from multiple measured taper observations."""
+    audit=[]
+    for lo,hi in components:
+        span=range(lo,hi+1)
+        if hi-lo<2 or any(facts[i]['head_known'] or facts[i]['anchor_conflict']
+                or facts[i]['candidate']!='clear_observation'
+                or not (facts[i]['head_observed'] and facts[i]['tail_observed']) for i in span):
+            continue
+        if guards and any(not guards[i]['identity_valid'] or not guards[i]['mask_valid']
+                or guards[i].get('source_frame_invalid') or guards[i]['identity_segment']!=guards[lo]['identity_segment']
+                for i in span):
+            continue
+        votes=[[],[]]
+        for i in span:
+            field,origin=local_field(masks[i])
+            radii=map_coordinates(field,(lines[i]-origin).T[::-1],order=1,mode='constant')
+            side=taper_side(radii)
+            if side is not None:
+                votes[side].append(i)
+        side=int(len(votes[1])>len(votes[0]))
+        support=votes[side]
+        # A neighbouring pair plus a later or earlier observation must agree.
+        accepted=len(support)>=3 and not votes[1-side] and any(b==a+1 for a,b in zip(support,support[1:]))
+        audit.append(dict(component=[lo,hi],votes=votes,accepted=accepted))
+        if accepted:
+            if side:
+                lines[lo:hi+1]=lines[lo:hi+1,::-1].copy()
+            for i in span:
+                facts[i].update(head_known=True,head_source='local_taper_consensus',manual_lineage=False)
+    return audit
 
 
 def flow_supports_order(gray, masks, start, stop, earlier, later, indices):
@@ -371,11 +409,12 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                     appearance_support=len(useful),appearance_score=float(abs(useful.mean())))
     candidate_links=[] if seed is None else recover_flanked_candidates(
         output,facts,fps,seed,excluded,guards,lambda i:fingerprint(gray[i],masks[i],output[i]))
+    local_seeds=reseed_clear_components(output,facts,masks,components,guards) if auto_seed else []
     if seed is not None:
         locate_blurred_tips(output,facts,gray,masks,guards,excluded)
     return output,facts,dict(version=VERSION,reference_length_px=reference,tracking_point_count=point_count,
                             anchors=marks,windows=windows,recovery=recovery,head_reacquisition=head_links,
-                            flanked_candidates=candidate_links)
+                            flanked_candidates=candidate_links,local_reseeding=local_seeds)
 
 
 def head_results(quality):

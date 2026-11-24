@@ -40,7 +40,13 @@
 <div class="divider"></div><div class="section-title"><h2>头尾标记</h2><span class="tag">可选 · 优先使用</span></div>
 <div class="two-buttons"><button data-mode="head">标记头部</button><button id="clear-head">清除头部点</button></div>
 <p id="head-info" class="help">未标记：可选择按两端尖锐程度初始化候选。</p>
-<p class="help">首帧清晰时，选中线虫并点一下头端，另一端作为尾；首帧不清晰时可在清晰标注帧指定。头部点只确定头尾，不改变掩膜。</p>
+<div class="two-buttons" id="sample-heads"><button data-sample-heads="2">随机抽 2 帧</button><button data-sample-heads="3">随机抽 3 帧</button></div>
+<button id="remove-sampled-head" hidden></button>
+<dialog id="head-sampler" aria-labelledby="sample-title">
+<div class="sample-toolbar"><h2 id="sample-title">抽帧标记头端</h2>
+<div class="sample-controls" role="group" aria-label="画面缩放"><button id="sample-out" aria-label="缩小">−</button><output id="sample-zoom" aria-label="相对适应画面的倍率">1×</output><button id="sample-in" aria-label="放大">＋</button><button id="sample-fit">适应画面</button></div></div>
+<div id="sample-view"><canvas id="sample-canvas" hidden></canvas></div>
+<div class="sample-toolbar"><p id="sample-status" role="status"></p><div class="sample-controls"><button id="sample-skip">跳过此帧</button><button id="sample-close">完成</button></div></div></dialog>
 </section>
 <section class="step-panel" data-panel="3" hidden>
 <div class="readiness-card" aria-label="处理前必填检查"><div class="section-title"><h2>处理前检查</h2><span id="readiness-count" class="tag"></span></div><div id="readiness-list"></div></div>
@@ -64,4 +70,4 @@
 </section></main>
 <footer class="app-footer annotation-footer" data-resize-label="底部操作区" data-resize-edge="n"><div class="action-guidance" aria-live="polite"><strong id="action-title">正在检查标注…</strong><p id="draft-status" role="status" hidden></p><span id="save-state" class="save-dot" hidden></span></div><div class="footer-actions"><button id="resolve-blocker" class="repair-button" hidden></button><button id="previous" class="secondary" hidden>上一步</button><button id="confirm-worm" class="primary confirm-button" hidden disabled>确认虫体</button><button id="next" class="primary" aria-describedby="action-title">下一步：点选线虫 <span>→</span></button><button id="save" class="primary" aria-describedby="action-title" hidden>保存并开始处理 <span>→</span></button></div></footer>
 <div id="success" class="success-shade" hidden><section class="success-card" role="dialog" aria-modal="true" aria-labelledby="success-title"><span class="success-icon">✓</span><p class="eyebrow">ANNOTATION SAVED</p><h2 id="success-title">标注已保存</h2><p id="success-summary"></p><div class="success-flow">掩膜跟踪 <span>→</span> 中线提取 <span>→</span> 指标与视频</div><p class="help">已交给处理程序。请在运行窗口查看计算进度，完成后视频与指标将保存到样本输出目录。</p><code id="saved-path"></code><button id="close-success" class="wide secondary">查看已保存的标注</button></section></div>
-<script src="/workspace-links.js"></script><script src="/draft-autosave.js"></script><script src="/analysis-presentation.js"></script><script src="/annotation-readiness.js"></script><script src="/annotation-coordinates.js"></script><script src="/annotation.js"></script></body></html>
+<script src="/workspace-links.js"></script><script src="/draft-autosave.js"></script><script src="/analysis-presentation.js"></script><script src="/annotation-readiness.js"></script><script src="/annotation-coordinates.js"></script><script src="/result-viewport.js"></script><script src="/annotation.js"></script></body></html>

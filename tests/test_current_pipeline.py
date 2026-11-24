@@ -20,6 +20,7 @@ from frame_metrics import present_frame
 from pipeline_progress import PipelineProgress
 from quality_fixture import make_fixture
 from quality_schema import VERSION
+from review_configured_video import verify
 from workspace_sessions import confirm_head
 
 SOURCE = 'centerlines-body-sequence'
@@ -168,6 +169,8 @@ class CurrentPipelineTests(unittest.TestCase):
             self.assertIsNone(hidden[field])
         self.assertTrue(hidden['display_valid'])
         self.assertNotIn('length_outlier',hidden['quality_reason'])
+        verification = verify(base/f'phenotypes-{SOURCE}', None, self.source, [1], (640, 360))
+        self.assertEqual(verification['available_centerlines'], sum(r['valid_for_summary'] for r in records))
 
     def test_unsupported_body_jump_does_not_create_a_speed_spike(self):
         sample=self.config['sample'];base=self.root/'outputs'/sample

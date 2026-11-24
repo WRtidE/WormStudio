@@ -21,7 +21,9 @@ def review_kind(row):
         return 'scale'
     if flag(row,'head_anchor_conflict'):
         return 'head_conflict'
-    if not permissions(row)['head']:
+    if row.get('head_reason')=='candidate_motion_conflict':
+        return 'head_motion_conflict'
+    if not permissions(row)['head'] and not (row.get('body_sequence_version') and flag(row,'body_sequence_head_known')):
         return 'head'
     if row.get('head_angle_method')=='review_geometry':
         return 'head_geometry'
@@ -64,7 +66,7 @@ def build_intervals(rows):
                              _segment=segment,_rank=None)
                 worm_tasks.append(current)
             current['end']=frame
-            if kind=='head' and head_reviewable(row):
+            if kind in ('head','head_motion_conflict') and head_reviewable(row):
                 # Prefer well-separated observed ends, then mask support. These
                 # are selection criteria, not a probability of anatomical truth.
                 extension=number(row.get('body_extension'))

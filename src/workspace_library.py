@@ -6,6 +6,7 @@ import re
 import secrets
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from itertools import chain
 
 VIDEO = {'.mp4', '.avi', '.mov', '.mkv', '.m4v', '.mpg', '.mpeg', '.wmv', '.webm'}
@@ -58,9 +59,11 @@ def register(root, path, *, auto=False, **metadata):
     state = read(root)
     item = next((f for f in state['files'] if Path(f['path']) == path), None)
     if item is None:
+        parent = metadata.get('parent')
+        check_parent(state, parent)
         item = dict(id=secrets.token_hex(16), path=str(path), name=path.name,
                     size=path.stat().st_size, kind='video' if path.suffix.lower() in VIDEO else 'image' if path.suffix.lower() in IMAGE else 'file',
-                    added=time.time(), parent=None, order=next_order(state,None))
+                    added=time.time(), parent=parent, order=next_order(state,parent))
         item.update(metadata)
         state['files'].append(item)
         write(root, state)
@@ -91,28 +94,33 @@ def media(root, file_id):
     return Path(item['path'])
 
 
-def upload(root, stream, size, name, relative_path='', signature='', parent=None):
+def receive_file(path, stream, size):
+    with path.open('wb') as handle:
+        remaining = size
+        while remaining:
+            chunk = stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ValueError('传输中断，文件尚未保存，请重新导入')
+            handle.write(chunk)
+            remaining -= len(chunk)
+
+
+def upload(root, stream, size, name, relative_path='', signature='', parent=None, *, transfer=nullcontext):
     name = re.sub(r'[<>:"|?*\x00-\x1f]', '_', name.replace('\\', '/').rsplit('/', 1)[-1]).strip('. ')
     if not name or Path(name).suffix.lower() not in ALLOWED: raise ValueError('请选择视频、图片、CSV、JSON 或 TXT')
     if name.split('.')[0].lower() in {'con','prn','aux','nul',*[f'{p}{i}' for p in ('com','lpt') for i in range(1,10)]}: name = 'file-'+name
     if not 0 < size <= 8*1024**3: raise ValueError('文件为空或超过 8 GB；大视频请使用完整路径打开')
     # Check the index before receiving bytes; a corrupt index must not be lost.
-    state=read(root)
-    check_parent(state,parent)
+    check_parent(read(root), parent)
     folder = root/'input_videos/library'/secrets.token_hex(16)
     folder.mkdir(parents=True)
     temporary, target = folder/'upload.part', folder/name
     try:
-        with temporary.open('wb') as handle:
-            remaining = size
-            while remaining:
-                chunk = stream.read(min(1024*1024, remaining))
-                if not chunk: raise ValueError('传输中断，文件尚未保存，请重新导入')
-                handle.write(chunk)
-                remaining -= len(chunk)
+        with transfer():
+            receive_file(temporary, stream, size)
         temporary.replace(target)
         return register(root, target, relativePath=relative_path[:4096], signature=signature[:4096], cached=True,
-                        parent=parent,order=next_order(state,parent))
+                        parent=parent)
     except Exception:
         temporary.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
