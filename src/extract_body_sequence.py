@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from resource_paths import PROJECT_ROOT as ROOT
-from tracking_data import load_sample
+from tracking_data import load_sample, load_guards
 from serialization import json_safe
 from body_sequence_solver import solve, VERSION, signature
 from live_preview import report_geometry
@@ -31,15 +31,17 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
         report_progress(current,total,detail,fraction=.1+.85*fraction)
     from head_evidence import anchors_in_crop
     manual=anchors_in_crop(config.get('head_annotations',{}).get(str(worm)),config['crop_xyxy'],source['crop_xyxy'])
+    guards = load_guards(data,[worm],source['frames'],required=bool(config.get('quality_schema_version') and manual))
     lines,facts,audit=solve(masks,gray,source['fps'],manual=manual,
         point_count=config.get('tracking_point_count',13),source_invalid=config.get('source_invalid_frames',()),
-        auto_seed=config.get('head_detection','taper_seed') not in ('manual_only','manual_seed'),progress=progress)
+        auto_seed=config.get('head_detection','taper_seed') not in ('manual_only','manual_seed'),progress=progress,
+        guards=guards[worm] if guards else None)
     quality=[]
     for i,f in enumerate(facts):
         valid=f is not None
         quality.append(dict(frame=i,mask_valid=bool(masks[i].any()),centerline_valid=valid,
             quality_reasons=[] if valid else ['no_supported_body_path'],
-            topology='simple' if f and f['candidate'] in ('clear_observation','short_observation') else 'paired_contact' if valid else 'uncertain',
+            topology='simple' if f and f['candidate'] in ('clear_observation','short_observation','native_observation_recovery') else 'paired_contact' if valid else 'uncertain',
             selected_candidate=f['candidate'] if f else None,branch_score_margin=None,
             endpoint_a_inferred=bool(f and not f['head_observed']),endpoint_b_inferred=bool(f and not f['tail_observed']),
             uncertain_point_ranges=([[0,4]] if f and not f['head_observed'] else [])+

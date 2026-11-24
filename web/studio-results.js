@@ -36,7 +36,8 @@ window.StudioResults = (() => {
   const translate = value => String(value || '').split(';').map(reason => reasons[reason] || reason).filter(Boolean).join('；');
   const needsReview = (row, dimension) => dimension==='scale' && row?.measurement_mode==='pixels' ? false : !row || (dimension === 'all'
     ? Object.keys(dimensions).some(name => needsReview(row, name))
-    : !row.quality?.dimensions[dimension]?.valid || ['legacy_unassessed','missing','candidate','unknown'].includes(row.quality?.dimensions[dimension]?.status));
+    : (dimension==='head' && row.head_angle_method==='review_geometry') || !row.quality?.dimensions[dimension]?.valid
+      || ['legacy_unassessed','missing','candidate','unknown'].includes(row.quality?.dimensions[dimension]?.status));
 
   function issueRanges() {
     ranges = []; let count = 0;
@@ -52,6 +53,7 @@ window.StudioResults = (() => {
     text('result-issue-note', ranges.length ? `${ranges.length} 个连续问题段 · ${filter === 'all' ? '含头尾候选与未评估项' : dimensions[filter]}` : '当前筛选未发现问题帧。');
     const track = el('result-quality-track'); track.replaceChildren();
     showEvents(timeline, worm, ranges);
+    renderReviewPlan(filter);
     for (const range of ranges) {
       const span = document.createElement('span');
       span.style.left = `${range.start / timeline.frame_count * 100}%`;
@@ -59,6 +61,46 @@ window.StudioResults = (() => {
       track.append(span);
     }
   }
+  let reviewTasks = [];
+  function renderReviewPlan(filter) {
+    const plan=timeline.review_plan;
+    const section=el('result-review-plan'),picker=el('result-review-picker');
+    section.hidden=!plan;
+    if(!plan)return;
+    reviewTasks=plan.intervals.filter(item=>item.worm_id===worm &&
+      (filter==='all'||item.kind===filter||(filter==='head'&&['head_conflict','head_geometry'].includes(item.kind))));
+    picker.replaceChildren();
+    const labels={...dimensions,head_conflict:'头端标注冲突',head_geometry:'头颈轮廓与中线不一致'};
+    reviewTasks.forEach((task,index)=>{
+      const option=document.createElement('option');option.value=index;
+      option.textContent=`${labels[task.kind]} · ${task.start}–${task.end} 帧`;
+      picker.append(option);
+    });
+    picker.disabled=!reviewTasks.length;
+    const recoveredHead = plan.head_recovered_from_mark_frames;
+    text('result-review-summary',`中线恢复 ${plan.automatic_recovered_frames} 帧。${recoveredHead == null ? '' : `头尾方向自动找回 ${recoveredHead} 帧。`}当前筛选 ${reviewTasks.length} 个复核区间。`);
+    updateReviewSelection();
+  }
+  function updateReviewSelection() {
+    const task=reviewTasks[Number(el('result-review-picker').value)];
+    for(const side of ['before','target','after']) {
+      el('result-review-'+side).disabled=!task||task[side]==null;
+    }
+    text('result-review-action',!task?'当前筛选没有待复核区间。':task.action==='confirm_head'
+      ?`推荐第 ${task.target} 帧：确认一个头端后，程序会另存并重算当前可靠片段。`
+      :task.action==='inspect_anchors'?'请核对下方头部锚点并撤销错误标注；不会自动选择相信哪次标注。'
+      :task.kind==='head_geometry'?'请对照前后帧检查头颈轮廓和中线。这段的摆角和摆幅暂缺。'
+      :'此区间暂不能直接确认头端，可对照前后清晰帧检查原因。');
+  }
+  el('result-review-picker').onchange=updateReviewSelection;
+  for(const side of ['before','target','after']) el('result-review-'+side).onclick=()=>{
+    const task=reviewTasks[Number(el('result-review-picker').value)];
+    if(!task||task[side]==null)return;
+    el('result-video-details').open=true;
+    el('result-original').checked=false;el('result-original').dispatchEvent(new Event('change'));
+    seek(task[side],true);
+    if(task.action==='confirm_head'||task.action==='inspect_anchors')el('head-correction').open=true;
+  };
   function draw(frame, force = false) {
     if (!timeline) return;
     frame = Math.max(0, Math.min(timeline.frame_count - 1, frame));
@@ -77,15 +119,19 @@ window.StudioResults = (() => {
     el('head-a').disabled=el('head-b').disabled=!row.head_review_allowed;
     const contactDirection=row.head_reason==='two_sided_contact_orientation';
     const labels=row.endpoint_labels || ['A','B'];
-    const colors = row.self_contact_state ? (row.head_confirmed || row.head_candidate ? ['红色','蓝色'] : ['灰色','灰色']) : ['蓝色','橙色'];
-    const palette = row.self_contact_state ? (row.head_confirmed || row.head_candidate ? ['#f64c2a','#00a1e1'] : ['#aaa','#aaa']) : [];
+    const neutral = labels[0] === 'A';
+    const colors = neutral ? ['灰色','灰色'] : row.self_contact_state ? ['红色','蓝色'] : ['蓝色','橙色'];
+    const palette = neutral ? ['#aaa','#aaa'] : row.self_contact_state ? ['#f64c2a','#00a1e1'] : [];
     for (const [i,id] of ['head-a','head-b'].entries()) el(id).style.setProperty('--endpoint-color',palette[i] || '');
     el('head-a').textContent=row.head_confirmed?'保持 H 端为头':`选择 ${labels[0]} 端为头`;
     el('head-b').textContent=row.head_confirmed?'纠正：T 端才是头':`选择 ${labels[1]} 端为头`;
-    text('result-head-status',row.head_status);
+    const angleNote={section_fit:' · 头颈角经当帧轮廓与邻帧核验',review_geometry:' · 头颈角待复核'};
+    text('result-head-status',row.head_status+(angleNote[row.head_angle_method]||''));
     const headReasons={tracked_endpoint_order:'沿同一条虫的中线匹配传递定向',endpoint_order_unanchored:'当前片段无法接回已知头端，可在清晰帧重新点选',endpoint_anchor_conflict:'头部锚点与几何对应有冲突，需复核',taper_seed_initialization:'起始清晰帧按尖锐程度初始化，此后保持骨架点序',initial_taper_insufficient:'起始清晰帧的尖锐程度差异不足',initial_taper_conflict:'起始清晰帧的形状判断不一致',manual_seed_propagated:'沿短缺口骨架关联继承人工种子方向，仍为未确认候选',temporal_orientation_conflict:'局部方向与连续块分歧，按骨架关联保留端点身份',temporal_orientation_reference:'短缺口两侧骨架匹配，沿连续块方向跟踪',relative_endpoint_bending:'端部相对中体的摆动差异',appearance_and_seed_evidence:'灰度外观与片段初始定向一致',appearance_temporal_reference:'同身份段的灰度外观时序匹配',appearance_motion_conflict:'外观与初始定向冲突',endpoint_taper:'两端渐细程度的连续帧投票',taper_and_motion_agree:'两端形状与运动投票一致',twardis_endpoint_motion:'两端运动差异',shape_motion_conflict:'形状与运动证据冲突',conflicting_shape_votes:'形状投票不一致',insufficient_window:'连续可靠帧不足',insufficient_motion_evidence:'两端差异不足',conflicting_motion_votes:'运动投票不一致',posture_unreliable:'当前姿态不可靠',endpoints_too_close:'两端过近',manual_anchor:'当前连续片段已有人工锚点',manual_anchor_conflict:'同一片段锚点冲突',manual_point_not_near_endpoint:'锚点未匹配可靠端点',automatic_detection_disabled:'自动检测已关闭',manual_anchor_unreliable:'锚点所在帧姿态不可靠'};
     headReasons.trajectory_block_orientation='用相邻片段的端部轨迹接回头尾顺序';
+    headReasons.visible_end_track_candidate='沿可见端部接回轨迹，断点前后的清晰帧共同支持这个候选方向';
     headReasons.trajectory_frame_orientation='用邻近清晰帧的端部轨迹推定这一帧的方向';
+    headReasons.bracketed_trajectory_and_appearance_candidate='快速转弯中，两端的前后轨迹和原标记片段的外观支持这一候选方向';
     headReasons.centerline_overlap_orientation='根据两帧重合虫身的位置和切线方向接回头尾';
     headReasons.endpoint_continuity_conflict='前后轨迹给出的头端与虫身对应关系冲突，头尾待复核';
     text('result-head-explanation',row.head_confirmed?'H 为已确认头，T 为尾。此连续片段无需重复确认；发现错误时可展开纠正或撤销锚点。':row.head_candidate?'H? / T? 为候选头尾。':'A / B 表示当前片段内的两个端点，头尾方向待确认。');
@@ -113,6 +159,8 @@ window.StudioResults = (() => {
       el('head-b').textContent='纠正头尾';
     }
     if(row.display_source!=='legacy')el('result-head-explanation').textContent+=` 骨架：${displayLabels[row.display_source]||row.display_source}。`;
+    if(row.blur_midpoints)el('result-head-explanation').textContent+=' '+Object.keys(row.blur_midpoints).map(side=>side==='head'?'头端':'尾端').join('和')+'的 ~ 标记位于两条可见拖影的中点。';
+    if(row.blur_darker_tips?.tail)el('result-head-explanation').textContent+=' 尾端标记的蓝色外圈位于较深拖影的影尖。';
     text('head-choice-note',row.head_review_allowed?`${colors[0]} ${labels[0]} / ${colors[1]} ${labels[1]}，按钮颜色与画面对应。请选择实际头端，确认后应用于当前片段。`:'本帧端点或身份不可靠，请切换至清晰、可靠的姿态帧。');
     el('head-choice-note').textContent+=el('result-original').checked?' 当前为原始画面，请先取消“原始画面”查看端点标记。':'';
     if(el('result-original').checked)el('head-a').disabled=el('head-b').disabled=true;
@@ -364,6 +412,7 @@ window.StudioResults = (() => {
     renderPhenotypes(data.phenotypes && {...data.phenotypes,video_name:data.video_name||data.phenotypes.video_name},data.sample);
     el('result-summary').disabled=!data.phenotypes?.worms?.length;
     text('head-review-message','');el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
+    el('result-review-plan').hidden=true;reviewTasks=[];
     video.pause(); video.removeAttribute('src'); video.load();
     controls.forEach(id => el(id).disabled = true);
     ['studio-metric-cards','studio-extra-metrics','studio-extra-artifacts','result-dimensions','result-quality-track','result-worm','studio-artifacts'].forEach(id => el(id).replaceChildren());

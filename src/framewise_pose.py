@@ -16,7 +16,7 @@ def arc_midpoint(line):
     return np.array([np.interp(arc[-1] / 2, arc, axis) for axis in points.T])
 
 
-def observed_pose(mask):
+def observed_pose(mask, *, max_size=320):
     """Return a measured path only when supported by a continuous visible silhouette."""
     from skeleton_geometry import centerline
     x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
@@ -25,7 +25,7 @@ def observed_pose(mask):
     if x == 0 or y == 0 or x+w == mask.shape[1] or y+h == mask.shape[0]:
         return None, 'image_boundary_truncation'
     patch = mask[y:y+h, x:x+w].astype(np.uint8)
-    ratio = min(1., 320 / max(w, h))
+    ratio = 1. if max_size is None else min(1., max_size / max(w, h))
     if min(w,h)*ratio < 1:
         return None, 'unresolved_body_width'
     small = cv2.resize(patch, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_NEAREST_EXACT)

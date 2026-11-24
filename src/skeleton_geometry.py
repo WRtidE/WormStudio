@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 from scipy import ndimage
+from scipy.spatial import cKDTree
 from scipy.signal import savgol_filter
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import dijkstra
@@ -90,3 +91,56 @@ def sampled(points):
     keep = np.r_[True, np.diff(distance) > 0]
     return np.column_stack([np.interp(np.linspace(0, distance[-1], 101),
                                       distance[keep], axis[keep]) for axis in points.T])
+
+
+def _free_tips(mask, length):
+    """Return a padded skeleton, its local XY tips and their image offset."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return None, np.empty((0, 2), int), np.zeros(2, int)
+    x, y = xs.min(), ys.min()
+    patch = np.pad(mask[y:ys.max()+1, x:xs.max()+1], 1)
+    components, _ = ndimage.label(patch, structure=np.ones((3, 3), bool))
+    areas = np.bincount(components.ravel())[1:]
+    if areas.max() < .75 * areas.sum():
+        return None, np.empty((0, 2), int), np.zeros(2, int)
+    skeleton = skeletonize(components == areas.argmax() + 1)
+    degree = ndimage.convolve(skeleton.astype(np.uint8), np.ones((3, 3), np.uint8),
+                              mode='constant') - skeleton
+    tips = np.argwhere(skeleton & (degree == 1))
+    forks = np.argwhere(skeleton & (degree > 2))
+    if len(forks):
+        tips = tips[cKDTree(forks).query(tips)[0] >= max(3., .03 * length)]
+    offset = np.array([x-1, y-1])
+    tips = tips[:, ::-1]
+    xy = tips + offset
+    margin = max(2., .01 * length)
+    return skeleton, tips[np.all((xy >= margin) & (xy < np.array(mask.shape[::-1])-margin), axis=1)], offset
+
+
+def visible_mask_tips(mask, length):
+    """Find free skeleton tips on the main silhouette, away from forks and crop edges."""
+    _, tips, offset = _free_tips(mask, length)
+    return tips + offset
+
+
+def visible_terminal_branches(mask, length, max_distance):
+    """Trace inward from each free tip, stopping at the first fork or the distance limit."""
+    skeleton, tips, offset = _free_tips(mask, length)
+    branches = []
+    for tip in tips:
+        x, y = tip
+        path = [(x,y)]
+        previous = None
+        distance = 0.
+        while distance < max_distance:
+            neighbors = [(x+dx,y+dy) for dy in (-1,0,1) for dx in (-1,0,1)
+                         if (dy or dx) and skeleton[y+dy,x+dx] and (x+dx,y+dy) != previous]
+            if len(neighbors) != 1:
+                break
+            previous = x,y
+            x,y = neighbors[0]
+            distance += math.hypot(x-previous[0],y-previous[1])
+            path.append((x,y))
+        branches.append(np.asarray(path) + offset)
+    return branches

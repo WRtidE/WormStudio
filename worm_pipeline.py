@@ -214,7 +214,7 @@ def build_stages(config, info, snapshot, phenotype_path, *, defer_video=False):
         '--centerline-method',method,'--wormtracer-source',source],
         [results / name for name in ('summary.json', 'per_frame_metrics.csv', 'worm_summary.csv', 'centerlines.npz',
             'phenotypes-overlay.mp4', '报告.md', 'quality.json', 'per_frame_metrics.json',
-            'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv',
+            'diagnostic-metrics.json', 'diagnostic-centerlines.npz', 'quality-audit.json','quality-gates.csv','review-intervals.json',
             'tracklets.json','tracklet-metrics.csv','identity-links.json','display-centerlines.npz',
             'behavior_events.csv','trajectory_segments.csv')])
     if defer_video:

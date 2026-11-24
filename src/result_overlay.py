@@ -10,9 +10,36 @@ from PIL import Image,ImageDraw,ImageFont
 from framewise_pose import arc_midpoint
 
 CONTOUR = (55, 220, 55)
-OVERLAY_VERSION = 'contour-only-v1'
+OVERLAY_VERSION = 'endpoint-evidence-v4-darker-tail-tip'
 CENTERLINE = (250, 250, 250)
 UNCERTAIN = (0, 180, 255)
+
+
+def draw_endpoint(image, xy, label):
+    color = (255,200,0) if label.startswith('H') else (0,110,255) if label.startswith('T') else (215,215,215)
+    thickness = -1 if label in ('H','T') else 2
+    cv2.circle(image,xy,5,(45,45,45),3,cv2.LINE_AA)
+    cv2.circle(image,xy,5,color,thickness,cv2.LINE_AA)
+    (w,h),baseline=cv2.getTextSize(label,0,.62,1)
+    left=max(2,min(xy[0]+8,image.shape[1]-w-2))
+    bottom=xy[1]-12-baseline
+    if bottom<h+2:
+        bottom=min(image.shape[0]-baseline-1,xy[1]+12+h)
+    pos=(left,bottom)
+    cv2.rectangle(image,(pos[0]-2,pos[1]-h-2),(pos[0]+w+1,pos[1]+baseline),(40,40,40),-1)
+    cv2.putText(image,label,pos,0,.62,color,1,cv2.LINE_AA)
+
+
+def draw_pose_endpoint(image, xy, label, view):
+    side='head' if label.startswith('H') else 'tail' if label.startswith('T') else None
+    darker=view.get('blur_darker_tips',{}).get(side)
+    estimate=darker if darker is not None else view.get('blur_midpoints',{}).get(side)
+    if estimate is not None:
+        xy=np.rint(estimate).astype(int)
+        label+='~'
+        if darker is not None:
+            cv2.circle(image,tuple(xy),8,(225,110,20),2,cv2.LINE_AA)
+    draw_endpoint(image,tuple(xy),label)
 
 
 @lru_cache(maxsize=2)
@@ -71,6 +98,8 @@ def draw_pose(image, mask, points, row, view):
             from centerline_topology import resample
             for index,xy in zip(tracking_indices(),resample(points)[tracking_indices()]):
                 color=(255,210,85) if index<50 else (0,145,255) if index>50 else (240,240,240)
+                if view['endpoint_labels'][0]=='A':
+                    color=(215,215,215)
                 cv2.circle(image,tuple(np.rint(xy).astype(int)),2,color,1,cv2.LINE_AA)
     if points is not None and view['head_section_status']=='body_sequence_estimate':
         occupied=[]
@@ -98,21 +127,10 @@ def draw_pose(image, mask, points, row, view):
         if not occupied and len(rear) and view['head_section_status']=='hindbody_only':
             cv2.putText(image,'T-side',tuple(rear[0]+[5,-6]),0,.5,(0,140,255),1,cv2.LINE_AA)
         return
-    if row.get('body_sequence_version'):
-        view['head_section_status']=row.get('head_section_status','')
-        view['overlay_endpoint_labels']=view['endpoint_labels']
-        draw_pose(image,mask,points,row,view)
-        return
     if points is None: return
-    # Display names are fixed; the results panel reports confirmation separately.
-    labels = view.get('overlay_endpoint_labels', ('H','T'))
-    for index, label, color in [(0, labels[0], (255,200,0)), (-1, labels[1], (0,110,255))]:
+    for index, label in zip((0,-1),view['endpoint_labels']):
         if index in estimated:continue
-        # Endpoint identity is distinguished by color even before head confirmation.
-        # Amber dashes describe pose quality, not head confirmation.
-        xy = tuple(points[index])
-        cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
-        cv2.putText(image, label, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
+        draw_pose_endpoint(image,points[index],label,view)
 
 
 
@@ -131,9 +149,7 @@ def draw_worm(image, mask, points, row, *, label=None):
             cv2.polylines(image, [np.rint(points).astype(np.int32)], False, CENTERLINE, 1, cv2.LINE_AA)
         for side, point in view['display_tips'].items():
             xy = tuple(np.rint(point).astype(int))
-            symbol, color = ('H?', (255,200,0)) if side == 'head' else ('T?', (0,110,255))
-            cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
-            cv2.putText(image, symbol, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
+            draw_endpoint(image,xy,'H?' if side=='head' else 'T?')
         return
     if points is None: return
     points = np.rint(points).astype(np.int32)
@@ -156,8 +172,5 @@ def draw_worm(image, mask, points, row, *, label=None):
         for point in points[[0,-1]]:
             cv2.circle(image, tuple(point), 4, (170,170,170), -1, cv2.LINE_AA)
         return
-    for index, label, color in [(0, labels[0], (255,200,0)), (-1, labels[1], (0,110,255))]:
-        # Endpoint identity is distinguished by color even before head confirmation.
-        xy = tuple(points[index])
-        cv2.circle(image, xy, 4, color, -1, cv2.LINE_AA)
-        cv2.putText(image, label, (xy[0]+6,xy[1]-6), 0, .45, color, 1, cv2.LINE_AA)
+    for index,label in zip((0,-1),labels):
+        draw_pose_endpoint(image,points[index],label,view)

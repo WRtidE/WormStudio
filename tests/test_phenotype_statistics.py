@@ -85,6 +85,13 @@ class BehaviorStatisticsTests(unittest.TestCase):
         self.assertEqual((pauses[1]['start_frame'], pauses[1]['end_frame']), (2, 2))
         self.assertTrue(stats['behavior_events'][-1]['right_censored'])
 
+    def test_head_only_motion_stays_in_the_same_pause(self):
+        rows=[self.row(s) for s in ('stationary','trunk_stationary','stationary')]
+        stats=behavior_statistics(rows,np.arange(3.),[np.arange(3)])
+        self.assertEqual((stats['stationary_duration_s'],stats['moving_duration_s'],stats['pause_onset_count']),(2,0,0))
+        self.assertEqual((stats['forward_duration_s'],stats['backward_duration_s']),(0,0))
+        self.assertEqual(len(stats['behavior_events']),1)
+
     def test_boundaries_break_observations_and_direction_candidates_are_excluded(self):
         rows = [self.row('forward'), self.row('backward',1), self.row('unknown'),
                 self.row('forward_candidate',confirmed=False), self.row('backward',2)]

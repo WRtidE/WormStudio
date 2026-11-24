@@ -3,12 +3,24 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.ndimage import binary_fill_holes,label
 
-from head_recovery import tracking_indices
+from head_recovery import tracking_indices, pose_parity
 from motion import lk_step
 
 
 def huber_squared(distance):
     return np.where(distance<=2,distance**2,4*distance-4)
+
+
+def flow_matches(state, target, direction, indices, length):
+    """Require image agreement on both terminal quarters, not just the midbody."""
+    use = state['good_f' if direction == 'forward' else 'good_b']
+    predicted = state[direction]
+    error = np.linalg.norm(predicted - target, axis=1)
+    opposite = np.linalg.norm(predicted - target[::-1], axis=1)
+    matches = use & (error <= .12*length) & (error + .15*length < opposite)
+    contradicts = use & (opposite <= .12*length) & (opposite + .15*length < error)
+    return (not contradicts.any() and matches.sum() >= 3
+            and matches[indices <= 25].any() and matches[indices >= 75].any())
 
 def persistent_loop_centers(a,b,radius):
     """Find enclosed background shared by two silhouettes around the same pillar."""
@@ -90,6 +102,17 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
             if use.sum()>=4:
                 error=np.linalg.norm(a[:,use]-s['backward'][use],axis=-1)/radius
                 cost[:,k]+=1.2*huber_squared(error).mean(-1)
+        # A finite cost is not proof of correspondence. A weak image may use
+        # unambiguous geometry; a large motion needs support in both images.
+        for j, earlier in enumerate(left):
+            for k, later in enumerate(right):
+                if pose_parity(earlier['points'], later['points'], indices) == 0:
+                    continue
+                length = min(np.linalg.norm(np.diff(s['points'], axis=0), axis=1).sum()
+                             for s in (earlier, later))
+                if not (flow_matches(earlier, later['sampled'], 'forward', indices, length)
+                        and flow_matches(later, earlier['sampled'], 'backward', indices, length)):
+                    cost[j,k] = np.inf
         checks=[]
         centers=list(pillar_centers) or persistent_loop_centers(masks[i],masks[i+1],radius)
         for center in centers:
@@ -113,6 +136,8 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
         if not np.isfinite(unary[frame]).any():
             raise ValueError('Initial head mark does not match a body endpoint')
     cost=unary[0][:,None]+unary[1][None,:]+transitions[0]
+    if not np.isfinite(cost).any():
+        raise BodySequenceBreak(1)
     pointers=[]
     for i in range(2,len(states)):
         a,b,c=geometry[i-2],geometry[i-1],geometry[i]
