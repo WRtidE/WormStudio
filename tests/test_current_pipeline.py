@@ -145,6 +145,48 @@ class CurrentPipelineTests(unittest.TestCase):
         self.assertEqual(len(rows), self.source['frames'])
         self.assertTrue(all(row['quality_schema_version'] == VERSION for row in rows))
 
+    def test_translating_ellipsoid_has_calibrated_geometry_and_speed(self):
+        sample = self.config['sample']
+        base = self.root / 'outputs' / sample
+        self.config.update(source_invalid_frames=[], head_annotations={'1': {'frame': 0, 'point': [359, 180]}})
+        (base/'pipeline-config.json').write_text(json.dumps(self.config), encoding='utf-8')
+        a, b, shift = 110, 8, 3
+        y, x = np.mgrid[:360, :640]
+        writer = cv2.VideoWriter(self.source['video'], cv2.VideoWriter_fourcc(*'mp4v'), self.source['fps'], (640,360))
+        try:
+            for frame in range(self.source['frames']):
+                mask = ((x-250-shift*frame)/a)**2 + ((y-180)/b)**2 <= 1
+                write_png(base/'sam2-tracking'/'masks'/'worm-1'/f'{frame:06d}.png', mask.astype('uint8')*255)
+                writer.write(cv2.cvtColor(np.where(mask,60,220).astype('uint8'), cv2.COLOR_GRAY2BGR))
+        finally:
+            writer.release()
+        row = self.run_pipeline(sample)['worms'][0]
+        scale = self.source['scale_um_per_px']
+        self.assertEqual(row['length_valid_frames'], self.source['frames'])
+        self.assertAlmostEqual(row['median_length_um']/(2*a*scale), 1, delta=.01)
+        self.assertAlmostEqual(row['median_area_um2'], mask.sum()*scale**2)
+        self.assertAlmostEqual(row['median_width_um']/(np.pi*b/2*scale), 1, delta=.035)
+        self.assertAlmostEqual(row['median_volume_estimate_um3']/(4*np.pi*a*b*b/3*scale**3), 1, delta=.045)
+        self.assertAlmostEqual(row['mean_speed_um_s'], shift*scale*self.source['fps'], places=5)
+        self.assertEqual(row['movement_state_counts'], {'forward': self.source['frames']})
+        self.assertEqual(row['directional_bend_count'], 0)
+
+        # The same observed translation is backward if the other end is the
+        # annotated head. Its speed and growth measurements must agree.
+        self.config['head_annotations']['1']['point'] = [141, 180]
+        (base/'pipeline-config.json').write_text(json.dumps(self.config), encoding='utf-8')
+        backward = self.run_pipeline(sample)['worms'][0]
+        self.assertEqual(backward['movement_state_counts'], {'backward': self.source['frames']})
+        self.assertAlmostEqual(backward['mean_speed_um_s'], row['mean_speed_um_s'])
+
+    def test_missing_prefix_does_not_classify_a_stationary_worm_as_slow_crawling(self):
+        sample = self.config['sample']
+        self.config['source_invalid_frames'] = [0]
+        (self.root/'outputs'/sample/'pipeline-config.json').write_text(json.dumps(self.config), encoding='utf-8')
+        row = self.run_pipeline(sample)['worms'][0]
+        self.assertEqual(row['movement_state_counts'], {'unknown': 1, 'stationary': 9})
+        self.assertEqual(row['activity_class_provisional'], 'stationary_head_unconfirmed')
+
     def test_hidden_endpoint_length_stays_an_estimate_and_contact_width_is_missing(self):
         sample=self.config['sample'];base=self.root/'outputs'/sample
         self.config['source_invalid_frames']=[]

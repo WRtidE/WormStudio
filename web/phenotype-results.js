@@ -169,6 +169,7 @@ const renderPhenotypes=(()=>{
  const render=(data,run)=>{
   el('summary-export-all').hidden=!(data?.worms?.length>1);
   const present=!!data?.worms?.length;el('phenotype-panel').hidden=!present;el('summary-empty').hidden=present;el('summary-export').disabled=!present;
+  el('summary-trends').hidden=!present;
   if(!present){current=null;timeline=null;signature='';return;}const key=JSON.stringify([run,data]);if(key===signature)return;if(sample!==run)timeline=null;
   sample=run;signature=key;current=data;if(!data.worms.some(w=>w.worm_id===selected))selected=data.worms[0].worm_id;draw();
  };

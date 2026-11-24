@@ -56,6 +56,20 @@ class AnnotationMetricTests(unittest.TestCase):
         self.assertIsNone(pixel['scale_um_per_px'])
         json.dumps(pixel, allow_nan=False)
 
+    def test_rasterized_spheroids_recover_transverse_width_and_volume(self):
+        y, x = np.mgrid[-150:151, -150:151]
+        a = 110
+        for b, degrees in ((5, 0), (8, 30), (20, 70)):
+            with self.subTest(b=b, degrees=degrees):
+                angle = np.deg2rad(degrees)
+                u = x*np.cos(angle) + y*np.sin(angle)
+                v = -x*np.sin(angle) + y*np.cos(angle)
+                values = self.values(self.measure((u/a)**2 + (v/b)**2 <= 1))
+                self.assertAlmostEqual(values['length']/(2*a), 1, delta=.01)
+                # The thinnest horizontal raster loses 3% of the continuous area.
+                self.assertAlmostEqual(values['width']/(np.pi*b/2), 1, delta=.04)
+                self.assertAlmostEqual(values['volume']/(4*np.pi*a*b*b/3), 1, delta=.07)
+
     def test_fragmented_and_closed_loop_frames_keep_area_but_do_not_invent_length(self):
         fragmented = self.mask.copy(); fragmented[10:15, 10:15] = 255
         ring = np.zeros_like(self.mask); cv2.circle(ring, (180, 90), 40, 255, 10)

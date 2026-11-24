@@ -63,22 +63,21 @@ class SingleDeliveryTests(unittest.TestCase):
         source = dict(video='source.mp4', crop_xyxy=[0, 0, 127, 79], frames=3, fps=12)
         for failure in ('source', 'metadata', 'writer'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
-                cropped, raw, writer = Mock(), Mock(), Mock()
+                cropped, raw = Mock(), Mock()
                 cropped.isOpened.return_value = True
                 raw.isOpened.return_value = failure != 'source'
                 raw.get.side_effect = {cv2.CAP_PROP_FRAME_COUNT: 2 if failure == 'metadata' else 3,
                     cv2.CAP_PROP_FPS: 12, cv2.CAP_PROP_FRAME_WIDTH: 128, cv2.CAP_PROP_FRAME_HEIGHT: 80}.__getitem__
-                writer.isOpened.return_value = False
                 with patch('review_configured_video.cv2.VideoCapture', side_effect=[cropped, raw]), \
-                        patch('review_configured_video.cv2.VideoWriter', return_value=writer), \
+                        patch('review_configured_video.h264_writer', side_effect=RuntimeError('encoder failed')) as writer, \
                         self.assertRaises((RuntimeError, ValueError)):
                     export_video(Path(folder), 'result.mp4', source, [1], Mock())
                 cropped.release.assert_called_once_with()
                 raw.release.assert_called_once_with()
                 if failure == 'writer':
-                    writer.release.assert_called_once_with()
+                    writer.assert_called_once()
                 else:
-                    writer.release.assert_not_called()
+                    writer.assert_not_called()
 
     def test_tracking_review_decode_failure_releases_source(self):
         from review_configured_video import tracking_review
@@ -108,6 +107,14 @@ class SingleDeliveryTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate_scale(dict(scale_um_per_px=value))
         row=pixel_fields(dict(length_um=10,area_um2=20,speed_um_s=0))
         self.assertEqual(row['length_px'],10);self.assertNotIn('length_um',row)
+
+    def test_short_opening_pts_preserves_constant_velocity_through_smoothing(self):
+        for count in (13, 21):
+            times = np.r_[0., 1/600 + np.arange(count-1)/30]
+            points = np.column_stack((30*times, -40*times))
+            path, velocity = metrics.trajectory_kinematics(points, times, [np.arange(count)], 13, [{}]*count)
+            np.testing.assert_allclose(path, points, atol=1e-11)
+            np.testing.assert_allclose(np.linalg.norm(velocity,axis=1), 50., atol=1e-9)
 
     def test_unconfirmed_head_is_not_formal_and_scale_not_required_for_angle(self):
         row=dict(worm_id=1,quality_schema_version=VERSION,source_valid=True,mask_valid=True,pose_valid=True,
@@ -165,6 +172,18 @@ class SingleDeliveryTests(unittest.TestCase):
         events,cycles,duration=metrics.bend_events(angles,np.ones(25,bool),12,20,.15,segments=blocks)
         self.assertEqual(cycles,0)
         self.assertAlmostEqual(duration,21/12)
+
+    def test_near_threshold_swing_counts_are_independent_of_sampling_phase(self):
+        t = np.arange(721)/12
+        # At the latter phases one boundary peak lacks an observed flank.
+        for phase, visible in ((.22, 120), (1.1, 119), (2.5, 119)):
+            for amplitude, count in ((19, 0), (21, visible)):
+                with self.subTest(phase=phase, amplitude=amplitude):
+                    angles = 30 + amplitude*np.sin(2*np.pi*t + phase)
+                    events, cycles, duration = metrics.bend_events(angles, np.ones(len(t), bool), 12, 20, .15)
+                    self.assertEqual(len(events), count)
+                    self.assertEqual(cycles, 59 if count else 0)
+                    self.assertEqual(duration, 60.)
 
     def test_circles_use_elapsed_time_and_cannot_cross_a_gap(self):
         config=json.loads((metrics.ROOT/'config/phenotype_config.json').read_text(encoding='utf8'))

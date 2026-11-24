@@ -36,6 +36,19 @@ class ManualAnnotationTests(unittest.TestCase):
     def tearDown(self):
         self.patch.stop(); self.temp.cleanup()
 
+    def test_changing_tracking_contrast_preserves_prior_run_and_confirmed_seed(self):
+        old = manual.Annotation(self.settings)
+        old.save(self.body)
+        (old.output.parent/'sam2-tracking').mkdir()
+        edited = manual.Annotation(self.settings)
+        edited.save(dict(self.body, sam2_input_contrast='static_background'))
+        self.assertNotEqual(old.result['sample'], edited.result['sample'])
+        self.assertNotIn('sam2_input_contrast', old.result)
+        restored = manual.Annotation(edited.settings).initial_state()['previous']
+        self.assertEqual(restored['sam2_input_contrast'], 'static_background')
+        old_seed, new_seed = (Path(run.result['groups'][0]['worms'][0]['mask_path']) for run in (old, edited))
+        self.assertEqual(old_seed.read_bytes(), new_seed.read_bytes())
+
     def test_current_profile_overrides_legacy_choices_without_changing_masks(self):
         annotation=manual.Annotation(dict(self.settings,analysis_profile='current'))
         self.assertEqual(annotation.initial_state()['analysis_method'],'body_sequence')
@@ -239,6 +252,22 @@ class ManualAnnotationTests(unittest.TestCase):
         np.testing.assert_array_equal(predictor.predict.call_args.kwargs['point_coords'], [[10, 10]])
         with self.assertRaisesRegex(ValueError, '分析区域外'):
             annotation.predict(dict(roi=[20, 10, 60, 40], points=[dict(x=2, y=20, label=1)]))
+
+    def test_background_prediction_uses_source_roi_and_discards_raw_logits(self):
+        session = manual.Annotation(self.settings)
+        annotation = manual.MaskPredictor(session.image, 'large', session.video, session.crop[:2])
+        model = annotation.predictor = MagicMock()
+        model.predict.return_value = (np.ones((3, 30, 40), bool), np.array([.8,.1,.1]), np.ones((3, 8, 8)))
+        prompt = dict(roi=[20,10,60,40], points=[dict(x=30,y=20,label=1)])
+        first = annotation.predict(prompt)
+        extra = prompt['points'] + [dict(x=35,y=23,label=1)]
+        with patch('sam2_frames.sam2_input_transform', return_value=lambda image: image) as transform:
+            updated = annotation.predict(dict(prompt, points=extra, prediction_token=first['prediction_token'],
+                                              sam2_input_contrast='static_background'))
+            self.assertFalse(updated['refined'])
+            self.assertEqual(transform.call_args.args[2], [30,20,70,50])
+            annotation.predict(dict(prompt, sam2_input_contrast='static_background'))
+            self.assertEqual(transform.call_count, 1)
 
     def test_predict_api_requires_token(self):
         annotation = manual.Annotation(self.settings)

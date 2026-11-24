@@ -85,10 +85,8 @@
       <div id="welcome" class="welcome">
         <img class="welcome-icon" src="./wormstudio-icon.png" alt="">
         <h1>从一段视频开始</h1>
-        <p class="welcome-copy">观察、标注，了解线虫的每一次运动。</p>
         <button id="welcome-import" class="primary"><svg><use href="#i-plus"/></svg>导入实验文件</button>
-        <button id="drop-area" class="drop-area">将多个视频一起拖到这里，依次标定</button>
-        <p class="welcome-formats">视频 · 图片 · CSV · JSON</p>
+        <button id="drop-area" class="drop-area">支持拖入多个视频，依次标定</button>
       </div>
       <div id="media-workspace" class="media-workspace" hidden><div class="media-toolbar"><span><svg><use href="#i-video"/></svg><b id="media-kind">视频预览</b></span><span id="media-resolution">原始画面</span></div><div id="media-stage" class="media-stage"><video id="source-video" controls playsinline preload="metadata" hidden></video><img id="source-image" alt="所选实验图片" hidden><pre id="source-text" hidden></pre><div id="unavailable-preview" class="unavailable-preview" hidden><svg><use href="#i-file"/></svg><p id="unavailable-message"></p></div></div><div class="media-caption"><span id="media-description">原始文件 · 尚未进行处理</span><span id="media-size"></span></div></div>
       <div id="drop-overlay" class="drop-overlay" hidden><svg><use href="#i-upload"/></svg><strong>松开鼠标，将文件加入工作区</strong></div>
@@ -125,36 +123,10 @@
             <section><h3>运动指标</h3><table class="summary-table"><thead><tr><th scope="col">指标</th><th scope="col">结果</th></tr></thead><tbody id="motion-metrics"></tbody></table><details id="motion-more" class="metric-more" hidden><summary>更多运动指标</summary><table class="summary-table" aria-label="更多运动指标"><tbody id="motion-extra"></tbody></table></details></section></div>
           </section>
           <section id="summary-comparison" class="summary-comparison" hidden><h2>线虫对比</h2><div class="summary-table-scroll"><table class="summary-table" id="summary-comparison-table"></table></div></section>
-          <details id="summary-trends" class="summary-disclosure"><summary>指标变化</summary><div class="summary-trend-toolbar"><label>查看指标 <select id="summary-trend-metric"><option value="length">体长</option><option value="speed">运动速度</option><option value="width">平均体宽</option></select></label></div><div id="summary-trend-chart" class="summary-trend-chart"></div><p id="summary-trend-note" class="summary-empty"></p></details>
         </section>
         <p id="summary-empty" class="summary-empty" hidden>本次尚无整段指标，请查看分析详情或重新读取结果。</p>
       </section>
       <dialog id="metric-detail-dialog" class="metric-detail-dialog" aria-labelledby="metric-detail-title"><div class="metric-detail-heading"><h2 id="metric-detail-title">指标详情</h2><button id="metric-detail-close" class="small-button" aria-label="关闭指标详情">关闭</button></div><p id="metric-detail-value"></p><p id="metric-detail-note"></p><p id="metric-detail-definition"></p><p id="metric-detail-coverage"></p></dialog>
-      <details id="result-analysis-details" class="summary-disclosure result-analysis-details"><summary>查看分析详情</summary>
-    <aside class="inspector result-inspector" aria-label="质量与身份复核">
-      <div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>质量与身份</h2><span id="result-quality-badge">逐帧检查</span></div>
-      <div class="inspector-content">
-        <div id="result-worm-picker" hidden><label class="section-label" for="result-worm">当前个体<span id="result-worm-count"></span></label><select id="result-worm" class="result-select" disabled></select></div>
-        <details id="result-identity" class="identity-card"><summary id="result-identity-title">等待结果</summary><p id="result-identity-note">选择线虫，查看当前帧的身份状态。</p></details>
-        <button id="identity-open" class="small-button" disabled>片段身份关联与复核</button>
-        <dialog id="identity-dialog" style="width:min(1150px,95vw);max-height:94vh;overflow:auto;border:1px solid #cad7ce;border-radius:12px;padding:24px">
-          <div style="display:flex;justify-content:space-between;gap:20px"><h2>片段身份关联与复核</h2><button id="identity-close" class="small-button">关闭</button></div>
-          <p>绿色为跟踪轮廓，白色为候选中线。下方同步播放关联前后的原图片段；匹配评分属于工程依据。</p>
-          <label>片段 <select id="identity-edge" class="result-select"></select></label><p id="identity-edge-state"></p>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><figure style="margin:0"><figcaption id="identity-before-label"></figcaption><img id="identity-before-image" alt="关联前原图与轮廓" style="width:100%"></figure><figure style="margin:0"><figcaption id="identity-after-label"></figcaption><img id="identity-after-image" alt="关联后原图与轮廓" style="width:100%"></figure></div>
-          <div style="display:flex;gap:14px;align-items:center;margin:14px 0"><button id="identity-play" class="small-button">同步播放</button><label>片段内帧 <input id="identity-offset" type="range" min="0" max="3" value="0"></label></div>
-          <details><summary>查看关联依据与失败项</summary><pre id="identity-evidence" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre></details>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button id="identity-same" class="small-button">同一条虫</button><button id="identity-different" class="small-button">不同目标</button><button id="identity-unknown" class="small-button">无法判断</button><button id="identity-undo" class="small-button" disabled>撤销此片段复核</button></div><p id="identity-message" role="status"></p><p>提交或撤销会创建新结果，并自动记录本机用户。身份关联成功后，速度和头摆仍按连续有效区间计算。</p>
-        </dialog>
-        <details class="identity-card"><summary>全片可用性分解</summary><p id="result-review-summary"></p><p id="result-gate-audit"></p><div id="result-gate-triggers"></div></details>
-
-
-        <details class="quality-evidence"><summary>全部质量检查与证据</summary><div id="result-dimensions" class="result-dimensions"></div></details>
-
-      </div>
-
-    </aside>
-      </details>
       <details id="result-video-details" class="summary-disclosure result-video-details"><summary>查看分析视频</summary>
       <div id="legacy-video-tools" hidden><span id="legacy-video-note" role="status"></span> <button id="refresh-video" type="button" class="small-button">生成无黑条副本</button></div>
       <div class="result-video-layout">
@@ -190,12 +162,46 @@
           </div>
           <div id="studio-metric-cards" class="studio-metric-cards"></div>
           <details class="extra-metrics">
-            <summary>更多指标与匿名片段</summary>
+            <summary>更多指标</summary>
             <div id="studio-extra-metrics" class="studio-metric-cards"></div>
+            <section id="tracklet-metrics" aria-labelledby="tracklet-title" hidden>
+              <h3 id="tracklet-title">连续跟踪片段</h3>
+              <p>只测量这一段连续画面。跨段是否为同一条虫，需另行判断。</p>
+              <div class="studio-metric-cards">
+                <article class="studio-metric"><span>本帧体长</span><strong id="tracklet-length">—</strong><small>px</small></article>
+                <article class="studio-metric"><span title="根据本帧与上一帧的轮廓中心位移计算">轮廓中心速度</span><strong id="tracklet-speed">—</strong><small>px/s</small></article>
+              </div>
+            </section>
           </details>
         </aside>
         </div>
       </div>
+      </details>
+      <details id="summary-trends" class="summary-disclosure" hidden><summary>指标变化</summary><div class="summary-trend-toolbar"><label>查看指标 <select id="summary-trend-metric"><option value="length">体长</option><option value="speed">运动速度</option><option value="width">平均体宽</option></select></label></div><div id="summary-trend-chart" class="summary-trend-chart"></div><p id="summary-trend-note" class="summary-empty"></p></details>
+      <details id="result-analysis-details" class="summary-disclosure result-analysis-details"><summary>查看分析详情</summary>
+    <aside class="inspector result-inspector" aria-label="质量与身份复核">
+      <div class="inspector-heading"><svg><use href="#i-sliders"/></svg><h2>质量与身份</h2><span id="result-quality-badge">逐帧检查</span></div>
+      <div class="inspector-content">
+        <div id="result-worm-picker" hidden><label class="section-label" for="result-worm">当前个体<span id="result-worm-count"></span></label><select id="result-worm" class="result-select" disabled></select></div>
+        <details id="result-identity" class="identity-card"><summary id="result-identity-title">等待结果</summary><p id="result-identity-note">选择线虫，查看当前帧的身份状态。</p></details>
+        <button id="identity-open" class="small-button" disabled>片段身份关联与复核</button>
+        <dialog id="identity-dialog" style="width:min(1150px,95vw);max-height:94vh;overflow:auto;border:1px solid #cad7ce;border-radius:12px;padding:24px">
+          <div style="display:flex;justify-content:space-between;gap:20px"><h2>片段身份关联与复核</h2><button id="identity-close" class="small-button">关闭</button></div>
+          <p>绿色为跟踪轮廓，白色为候选中线。下方同步播放关联前后的原图片段；匹配评分属于工程依据。</p>
+          <label>片段 <select id="identity-edge" class="result-select"></select></label><p id="identity-edge-state"></p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><figure style="margin:0"><figcaption id="identity-before-label"></figcaption><img id="identity-before-image" alt="关联前原图与轮廓" style="width:100%"></figure><figure style="margin:0"><figcaption id="identity-after-label"></figcaption><img id="identity-after-image" alt="关联后原图与轮廓" style="width:100%"></figure></div>
+          <div style="display:flex;gap:14px;align-items:center;margin:14px 0"><button id="identity-play" class="small-button">同步播放</button><label>片段内帧 <input id="identity-offset" type="range" min="0" max="3" value="0"></label></div>
+          <details><summary>查看关联依据与失败项</summary><pre id="identity-evidence" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto"></pre></details>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px"><button id="identity-same" class="small-button">同一条虫</button><button id="identity-different" class="small-button">不同目标</button><button id="identity-unknown" class="small-button">无法判断</button><button id="identity-undo" class="small-button" disabled>撤销此片段复核</button></div><p id="identity-message" role="status"></p><p>提交或撤销会创建新结果，并自动记录本机用户。身份关联成功后，速度和头摆仍按连续有效区间计算。</p>
+        </dialog>
+        <details class="identity-card"><summary>全片可用性分解</summary><p id="result-review-summary"></p><p id="result-gate-audit"></p><div id="result-gate-triggers"></div></details>
+
+
+        <details class="quality-evidence"><summary>全部质量检查与证据</summary><div id="result-dimensions" class="result-dimensions"></div></details>
+
+      </div>
+
+    </aside>
       </details>
       <div id="results-load-state" class="results-load-state" role="status"><span id="results-load-message">正在读取逐帧指标…</span><button id="results-retry" class="small-button" hidden>重新读取</button></div>
     </div>

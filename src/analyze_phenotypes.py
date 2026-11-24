@@ -14,10 +14,13 @@ import csv
 import json
 import tempfile
 from pathlib import Path
+from contextlib import ExitStack
+from video_encoding import h264_writer
 
 import cv2
 import numpy as np
 from scipy import ndimage
+from scipy.optimize import brentq
 from scipy.signal import find_peaks, savgol_filter
 from centerline_topology import geometry_quality
 from result_overlay import OVERLAY_VERSION, draw_worm
@@ -25,10 +28,10 @@ from head_tail import detect_head_tail, CANDIDATE_STATUSES, VERSION as HEAD_TAIL
 from head_bend_geometry import local_angle, supported_angles, turn
 from image_io import write_png
 from serialization import json_safe, write_json_records
-from skeleton_geometry import centerline, frustum_volume
+from skeleton_geometry import centerline, silhouette_dimensions
 from tracking_data import load_sample
 from display_centerlines import build_display, track_visible_tips, VERSION as DISPLAY_VERSION
-from phenotype_statistics import VERSION as METRIC_VERSION, measure_posture, trajectory_statistics, behavior_statistics
+from phenotype_statistics import VERSION as METRIC_VERSION, angular_half_span, measure_posture, trajectory_statistics, behavior_statistics
 from quality_schema import VERSION as QUALITY_VERSION, tracking_dimensions, finish_dimensions, permissions, exclude_unusable, describe
 
 from resource_paths import PROJECT_ROOT as ROOT
@@ -56,15 +59,48 @@ def runs(valid,segments=None):
     return np.split(indices,np.flatnonzero(cut)+1)
 
 
-def smooth_valid(values,valid,window,*,angles=False,segments=None):
+def smooth_samples(values, window, times):
+    w = min(window, len(values) if len(values)%2 else len(values)-1)
+    if w < 5:
+        return values
+    smoothed = savgol_filter(values, w, 2, axis=0)
+    # The decoder also accepts a short first interval in a trimmed CFR video.
+    # Fit every output whose Savitzky-Golay window includes that first sample
+    # against the actual PTS. Later windows retain their regular cadence.
+    if times is not None and not np.isclose(times[1]-times[0], times[2]-times[1], atol=1e-6):
+        t = (times[:w] - times[0]) / (times[w-1] - times[0])
+        basis = np.vander(t, 3, increasing=True)
+        coefficients = np.linalg.lstsq(basis, values[:w], rcond=None)[0]
+        end = w if len(values) == w else w//2 + 1
+        smoothed[:end] = basis[:end] @ coefficients
+    return smoothed
+
+
+def smooth_valid(values,valid,window,*,angles=False,segments=None,timestamps=None):
     result=np.full_like(values,np.nan,dtype=float)
     for idx in runs(valid,segments):
-        w=min(window,len(idx) if len(idx)%2 else len(idx)-1)
         part=values[idx]
         if angles:part=np.degrees(np.unwrap(np.radians(part)))
-        smoothed=savgol_filter(part,w,2,axis=0) if w>=5 else part
+        smoothed=smooth_samples(part,window,None if timestamps is None else timestamps[idx])
         result[idx]=(smoothed+180)%360-180 if angles else smoothed
     return result
+
+
+def time_median(signal, times):
+    """Median angle over observed time, linearly interpolating adjacent samples."""
+    lo = np.minimum(signal[:-1], signal[1:])
+    span = np.abs(np.diff(signal))
+    dt = np.diff(times)
+    half = dt.sum() / 2
+
+    def balance(angle):
+        fraction = np.divide(angle-lo, span, out=(angle >= lo).astype(float), where=span > 0)
+        return np.dot(dt, fraction.clip(0, 1)) - half
+
+    bottom, top = float(lo.min()), float(signal.max())
+    if balance(bottom) >= 0:
+        return bottom
+    return brentq(balance, bottom, top, xtol=1e-9)
 
 
 def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None,*,segments=None):
@@ -75,16 +111,19 @@ def bend_events(angles,valid,fps,threshold,min_interval,timestamps=None,*,segmen
         if len(idx)<3:continue
         duration+=timestamps[idx[-1]]-timestamps[idx[0]]
         signal=np.degrees(np.unwrap(np.radians(angles[idx])))
-        signal-=np.median(signal)
+        signal-=time_median(signal,timestamps[idx])
         candidates=[]
         for sign in (1,-1):
             side=sign*signal
             peaks=find_peaks(side,prominence=threshold/2,distance=distance)[0]
             for i in peaks:
                 left,peak,right=side[i-1:i+2]
-                curvature=left+right-2*peak
                 # Estimate the peak height between samples, keeping its observed frame and time.
-                height=peak-(right-left)**2/(8*curvature) if curvature<0 else peak
+                dt_left,dt_right=np.diff(timestamps[idx[i-1:i+2]])
+                left_slope=(peak-left)/dt_left
+                quadratic=((right-peak)/dt_right-left_slope)/(dt_left+dt_right)
+                slope=left_slope+quadratic*dt_left
+                height=peak-slope**2/(4*quadratic) if quadratic<0 else peak
                 if height>=threshold:
                     candidates.append((int(i),sign,float(height)))
         selected=[]
@@ -114,7 +153,7 @@ def trajectory_kinematics(points,times,segments,window,rows):
     velocity=np.full_like(points,np.nan)
     for idx in segments:
         part=points[idx]
-        smoothed[idx]=part if np.all(part==part[0]) else smooth_valid(part,np.ones(len(idx),bool),window)
+        smoothed[idx]=part if np.all(part==part[0]) else smooth_samples(part,window,times[idx])
         if len(idx)>=2:
             velocity[idx]=np.gradient(smoothed[idx],times[idx],axis=0)
         if rows[idx[0]].get('identity_link_source') in ('auto_reassociated','human_same'):
@@ -194,6 +233,11 @@ def pose_length_reference(rows):
 
 def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,defer_video=False):
     data,source,ids,get_mask,bad=load_sample(sample,fitted_mask_source(sample,wormtracer_source) if method!='skeleton' else None,root=ROOT)
+    from platforms.device import selected_device
+    from body_geometry import sampled_mask_radii
+    geometry_device = 'cuda' if method == 'body_sequence' and selected_device() == 'cuda' else 'cpu'
+    if geometry_device == 'cuda':
+        print('CUDA 计算逐帧中线交叉', flush=True)
     output=ROOT/'outputs'/sample/('phenotypes-'+wormtracer_source if method!='skeleton' else 'phenotypes');output.mkdir(parents=True,exist_ok=True)
     scale,scale_info=calibration(sample,source,config)
     fps=source['fps'];n=source['frames'];all_rows=[];all_summaries=[];all_events=[];lines={}
@@ -251,13 +295,18 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         for frame in range(n):
             done=ids.index(worm)*n+frame
             report_progress(done,n*len(ids),f'计算线虫 {worm} 的逐帧表型',unit='虫帧',fraction=.6*done/(n*len(ids)))
-            mask=get_mask(worm,frame);ys,xs=np.nonzero(mask)
+            mask=get_mask(worm,frame)
+            mask_bytes=mask.astype(np.uint8, copy=False)
+            x,y,w,h=cv2.boundingRect(mask_bytes)
+            ys,xs=np.nonzero(mask[y:y+h,x:x+w])
+            xs+=x
+            ys+=y
             row={'sample':sample,'worm_id':worm,'frame':frame,'time_s':timebase['timestamps_s'][frame],
-                 'mask_bbox_crop_xyxy':json.dumps([int(xs.min()),int(ys.min()),int(xs.max()+1),int(ys.max()+1)]) if len(xs) else '',
+                 'mask_bbox_crop_xyxy':json.dumps([x,y,x+w,y+h]) if w else '',
                  'time_valid':True,'time_status':timebase['status'],
                  'body_center_x_source_px':np.nan,'body_center_y_source_px':np.nan,'centroid_x_source_px':float(xs.mean()+source['crop_xyxy'][0]) if len(xs) else np.nan,
                  'centroid_y_source_px':float(ys.mean()+source['crop_xyxy'][1]) if len(ys) else np.nan,
-                 'area_um2':float(mask.sum()*scale**2),'centroid_x_um':float(xs.mean()*scale) if len(xs) else np.nan,
+                 'area_um2':float(len(xs)*scale**2),'centroid_x_um':float(xs.mean()*scale) if len(xs) else np.nan,
                  'centroid_y_um':float(ys.mean()*scale) if len(ys) else np.nan,
                  'head_status':head_status,'head_identity_confirmed':False,
                  'mask_valid':not bad.get((frame,worm),False),'centerline_valid':False,
@@ -298,15 +347,13 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                     p=fitted[frame].copy()
                     if not np.isfinite(p).all(): raise ValueError('centerline_missing')
                     if method == 'self_contact':
-                        x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
                         dt = ndimage.distance_transform_edt(np.pad(mask[y:y+h,x:x+w],2))
                         coords = (p - [x-2,y-2]).T[::-1]
-                    else:
-                        dt = ndimage.distance_transform_edt(mask)
-                        coords = p.T[::-1]
-                    r=ndimage.map_coordinates(dt,coords,order=1,mode='constant')
-                    inside=ndimage.map_coordinates(mask.astype(float),[p[:,1],p[:,0]],order=0,mode='constant')
-                    qa=dict(centerline_inside_fraction=float(inside.mean()),**geometry_quality(p))
+                        r=ndimage.map_coordinates(dt,coords,order=1,mode='constant')
+                    elif radius_profiles is not None:
+                        r=sampled_mask_radii(mask,p,(x,y,w,h),geometry_device)
+                    inside=ndimage.map_coordinates(mask_bytes,p.T[::-1],order=0,mode='constant')
+                    qa=dict(centerline_inside_fraction=float(inside.mean()),**geometry_quality(p,device=geometry_device))
                     qa.pop('crossing_segments')
                     if method != 'self_contact' and qa['local_hairpin']:reasons.append('local_hairpin')
                 center=p.mean(axis=0)
@@ -330,8 +377,12 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                         if 0<=my<mask.shape[0] and 0<=mx<mask.shape[1] and mask[my,mx]:
                             row['body_center_x_source_px'],row['body_center_y_source_px']=mid+source['crop_xyxy'][:2]
                 length=float(np.linalg.norm(np.diff(p,axis=0),axis=1).sum()*scale)
-                row.update(length_um=length,volume_estimate_um3=frustum_volume(p,r)*scale**3,
-                           mean_width_um=float(2*r.mean()*scale),head_candidate_angle_deg=signed_angle(p),
+                width, volume = np.nan, np.nan
+                if (row.get('centerline_topology','simple') == 'simple' and not row.get('contact_bridge')
+                        and not row.get('endpoint_a_inferred') and not row.get('endpoint_b_inferred')):
+                    width, volume = silhouette_dimensions(mask, p, (x,y,w,h))
+                row.update(length_um=length,volume_estimate_um3=volume*scale**3,
+                           mean_width_um=width*scale,head_candidate_angle_deg=signed_angle(p),
                            opposite_end_angle_deg=signed_angle(p[::-1]),**qa)
                 row['endpoint_a_angle_deg']=signed_angle(p)
                 if row.get('contact_bridge'):
@@ -344,7 +395,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                     if row.get('centerline_topology')!='simple':
                         row['mean_width_um']=np.nan
                         row['width_measurement_status']='contact_width_unresolved'
-                row['volume_valid']=not reasons and row.get('centerline_topology','simple')=='simple'
+                row['volume_valid']=not reasons and bool(np.isfinite(volume))
                 if method == 'self_contact' and (qa.get('local_hairpin') or qa['centerline_inside_fraction'] < .97):
                     row['volume_valid'] = False
                 if not row['volume_valid']:row['volume_estimate_um3']=np.nan
@@ -509,7 +560,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                 row['head_angle_method']=angle_method
                 row['head_angle_block']=int(block)
         angle_valid=np.isfinite(angles)
-        angle_smooth=smooth_valid(angles,angle_valid,5,angles=True,segments=head_blocks)
+        angle_smooth=smooth_valid(angles,angle_valid,5,angles=True,segments=head_blocks,timestamps=times)
         events,cycles,duration=bend_events(angles,angle_valid,fps,config['head_angle_threshold_deg'],
                                            config['minimum_bend_interval_s'],times,segments=head_blocks)
         all_events.extend(dict(sample=sample,worm_id=worm,head_status=rows[e['frame']]['head_status'],**e) for e in events)
@@ -530,9 +581,12 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             row['movement_state']=state
         good=smoothed[mask_valid];spread=float(np.linalg.norm(np.ptp(good,axis=0))/median_length) if len(good) else np.nan
         if len(trajectory_runs)>1:spread=np.nan
-        mean_speed=finite_stat(bl_s,np.mean)
+        path_stats=trajectory_statistics(smoothed, times, trajectory_runs)
+        path_speed=path_stats['mean_speed_um_s']
+        mean_speed=path_speed/median_length if path_speed is not None else np.nan
         states={row['movement_state'] for row in rows}
-        stationary_observation=states.issubset({'stationary','trunk_stationary'})
+        observed_states=states-{'unknown'}
+        stationary_observation=bool(observed_states) and observed_states.issubset({'stationary','trunk_stationary'})
         if not np.isfinite(mean_speed) or not np.isfinite(spread):activity='unknown_insufficient_valid_data'
         elif mean_speed>=config['active_speed_bl_s'] and spread>=config['active_range_bl']:activity='A'
         elif stationary_observation and spread<config['localized_range_bl']:
@@ -555,8 +609,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             median_length_um=finite_stat(lengths[valid]),
             median_area_um2=finite_stat([rows[i]['area_um2'] for i in np.flatnonzero(mask_valid)]),
             median_volume_estimate_um3=finite_stat([rows[i]['volume_estimate_um3'] for i in np.flatnonzero(valid)]),
-            mean_speed_um_s=finite_stat(speeds,np.mean),mean_speed_bl_s=mean_speed,
-            **trajectory_statistics(smoothed, times, trajectory_runs),
+            mean_speed_bl_s=mean_speed, **path_stats,
             **behavior_statistics(rows, times, trajectory_runs),
             normalized_speed_valid_frames=int(np.isfinite(bl_s).sum()),
             length_valid_frames=int(np.isfinite(lengths[valid]).sum()),
@@ -571,7 +624,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             head_cycle_frequency_hz=cycles/cycle_seconds if cycles else None,
             head_cycle_amplitude_deg=finite_stat([e['cycle_amplitude_deg'] for e in events if 'cycle_amplitude_deg' in e]),
             head_candidate_amplitude_deg=float(np.nanpercentile(np.abs(angle_smooth),95)) if angle_valid.any() else None,
-            head_candidate_half_excursion_deg=float(np.subtract(*np.nanpercentile(angle_smooth,[95,5]))/2) if angle_valid.any() else None,
+            head_candidate_half_excursion_deg=angular_half_span(angle_smooth[angle_valid]),
             activity_class_provisional=activity,
             circling_observed_frames=int(circle_observed.sum()),circling_candidate_frames=int(circle.sum()) if circle_observed.any() else None,
             movement_state_counts={state:sum(r['movement_state']==state for r in rows) for state in sorted(states)}))
@@ -733,7 +786,8 @@ def write_report(output,report,rows):
     text += ['', '头摆只统计头端已确认的连续片段。角度相对片段中性位超过阈值计一次，回正后同侧再次摆动可另计。频率分母为可检测的连续观察秒数。',
              '头颈弯曲角采用中线 0–10% 与 10–30% 两段方向的夹角。周期摆幅取连续同侧峰之间两段峰谷半差的平均，再按完整周期取中位数。另报弯曲角绝对值 P95。',
              '单虫身体序列在头颈局部近直且前后帧支持时，采用当帧轮廓截面中点拟合方向。持续的几何冲突进入区间复核，受影响的头角留空。',
-             '体积采用圆形截面分段圆台估算，不是实测三维体积。速度位于图像坐标系，未校正载物台漂移。',
+             '体宽沿中线法向量取轮廓两侧的距离，按弧长加权平均。体积按圆形截面分段圆台估算。细尾若在掩膜外，体长和面积会漏计该部分。',
+             '平均运动速度为连续有效片段的平滑质心路程之和除以对应时长。坐标随画面移动，载物台漂移会计入速度。',
              '前后方向使用已确认头端和躯干中段的平移。转圈单独统计，采用基础与双倍时长两个连续轨迹窗口。A/B/C 与转圈为待验证研究规则。',
              '运动与方向时长在各自的连续有效窗口内按相邻帧时间中点分配。停顿次数只计可见起点；事件表中的 left_censored / right_censored 表示该端被窗口截断。倒退事件需同一头尾片段内从前进直接切换为后退。',
              '', '[停顿与倒退事件](behavior_events.csv) · [分段净位移](trajectory_segments.csv)',
@@ -749,10 +803,10 @@ def render(sample,source,output,ids,rows,lines):
     width,height=x1-x0,y1-y0
     with tempfile.TemporaryDirectory(dir=output) as scratch:
         temp=Path(scratch)/'overlay.mp4'
-        cap=cv2.VideoCapture(source['video'])
-        writer=cv2.VideoWriter(str(temp),cv2.VideoWriter_fourcc(*'mp4v'),fps,(width+width%2,height+height%2))
-        try:
-            if not writer.isOpened():raise RuntimeError('Cannot create phenotype video')
+        with ExitStack() as resources:
+            cap=cv2.VideoCapture(source['video'])
+            resources.callback(cap.release)
+            writer=resources.enter_context(h264_writer(temp,(width,height),fps))
             for frame in range(source['frames']):
                 report_progress(frame,source['frames'],'绘制虫体轮廓、中线与端点',fraction=.6+.39*frame/source['frames'])
                 ok,image=cap.read()
@@ -766,11 +820,8 @@ def render(sample,source,output,ids,rows,lines):
                         preview_masks.append((worm, mask))
                     draw_worm(image,mask,lines.get((worm,frame)),lookup[(worm,frame)])
                 report_preview(image,frame,source['frames'],'表型叠加画面 · 质量状态以结果页为准', raw=raw, masks=preview_masks)
-                writer.write(cv2.copyMakeBorder(image,0,height%2,0,width%2,cv2.BORDER_CONSTANT))
+                writer.write(memoryview(image))
                 if frame in (0,source['frames']//2,source['frames']-1):write_png(output/f'preview-{frame:04d}.png',image)
-        finally:
-            writer.release()
-            cap.release()
         check=cv2.VideoCapture(str(temp))
         count=int(check.get(cv2.CAP_PROP_FRAME_COUNT));check.release()
         if count!=source['frames']:raise RuntimeError('Export video frame count mismatch')

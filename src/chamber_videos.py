@@ -2,7 +2,6 @@
 import csv
 import hashlib
 import json
-import subprocess
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +11,7 @@ from pathlib import Path
 from workspace_sessions import load_config
 from run_storage import video_path
 from video_timing import verify_encoded
+from video_encoding import h264_writer
 
 
 def members_for_video(items, sample, *, partial=False, single=False):
@@ -78,7 +78,6 @@ def chamber_layer(root, item, stack, video, frames, fps):
 
 def render_video(root, members, target):
     import cv2
-    import imageio_ffmpeg
 
     video = Path(members[0]['video_path']).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -91,34 +90,16 @@ def render_video(root, members, target):
         fps, frames = cap.get(cv2.CAP_PROP_FPS), int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         layers = [chamber_layer(root, item, stack, video, frames, fps) for item in members]
         output = Path(scratch)/'video.mp4'
-        command = [imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error',
-                   '-f', 'rawvideo', '-pixel_format', 'bgr24', '-video_size', f'{w}x{h}',
-                   '-framerate', str(fps), '-i', 'pipe:0', '-i', str(video), '-map', '0:v', '-map', '1:a?',
-                   '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2', '-c:v', 'libx264', '-threads', '4',
-                   '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
-                   '-movflags', '+faststart', str(output)]
-        with (Path(scratch)/'encoder.log').open('w+b') as log:
-            with subprocess.Popen(command, stdin=subprocess.PIPE, stderr=log) as encoder:
-                try:
-                    for frame in range(frames):
-                        ok, pixels = cap.read()
-                        if not ok:
-                            raise ValueError(f'原片第 {frame} 帧无法解码')
-                        for draw in layers:
-                            draw(pixels, frame)
-                        encoder.stdin.write(memoryview(pixels))
-                    if cap.read()[0]:
-                        raise ValueError('原片帧数与分析记录不符')
-                    encoder.stdin.close()
-                    if encoder.wait():
-                        raise BrokenPipeError()
-                except BrokenPipeError as exc:
-                    encoder.wait()
-                    log.seek(0)
-                    raise RuntimeError('视频编码失败 ' + log.read().decode(errors='replace')[-500:]) from exc
-                except BaseException:
-                    encoder.kill()
-                    raise
+        with h264_writer(output, (w, h), fps, audio_source=video) as writer:
+            for frame in range(frames):
+                ok, pixels = cap.read()
+                if not ok:
+                    raise ValueError(f'原片第 {frame} 帧无法解码')
+                for draw in layers:
+                    draw(pixels, frame)
+                writer.write(memoryview(pixels))
+            if cap.read()[0]:
+                raise ValueError('原片帧数与分析记录不符')
         verify_encoded(output, dict(frames=frames, fps=fps), (w, h))
         output.replace(target)
 

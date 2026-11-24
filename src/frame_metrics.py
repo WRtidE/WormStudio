@@ -28,7 +28,7 @@ def present_frame(row):
         quality=quality,quality_schema_version=quality['version'],
         identity_valid=flag(row,'identity_valid'),identity_status=row.get('identity_status','legacy_unassessed'),
         identity_note=('旧结果：身份与标定未按新规则评估' if quality['legacy'] else
-            '身份待复核；面积仅作匿名轮廓参考' if not flag(row,'identity_valid') else
+            '个体身份待复核，面积仅供本帧参考' if not flag(row,'identity_valid') else
             '独立复核后连续' if row.get('identity_status')=='reviewed_continuous' else '初始标注后暂定连续'),
         quality_reason=row.get('quality_reason', ''),
         head_anchor_conflict=flag(row,'head_anchor_conflict'),head_reason=row.get('head_reason',''),
@@ -127,7 +127,7 @@ def present_frame(row):
     for name,gate in [('length_px','tracklet_pose_valid'),('mean_width_px','tracklet_pose_valid'),('speed_px_s','tracklet_motion_valid')]:
         result['tracklet_'+name]=value('tracklet_'+name,flag(row,gate))
     if not result['identity_valid'] and result['tracklet_status']=='stable_anonymous':
-        result['identity_note']='后续稳定片段可作匿名局部分析；与跳变前个体的关联尚未确认。'
+        result['identity_note']='本段可连续测量。与其他片段是否为同一条虫，仍待确认。'
     if result['measurement_mode'] == 'pixels':
         for field, source, gate in [('length_px','length_px',posture),('area_px2','area_px2',mask),
                 ('volume_px3','volume_estimate_px3',allowed['volume']),('mean_width_px','mean_width_px',posture),

@@ -84,6 +84,45 @@ def frustum_volume(points,radius):
     return float(np.sum(np.pi*ds*(radius[:-1]**2+radius[:-1]*radius[1:]+radius[1:]**2)/3))
 
 
+def silhouette_dimensions(mask, points, bounds):
+    """Arc-average transverse width and integrate circular frusta, in pixel units."""
+    x, y, w, h = bounds
+    patch = np.pad(mask[y:y+h, x:x+w].astype(np.float32), 1)
+    stations = points - [x-1, y-1]
+    # A short chord stabilizes normals against a one-pixel staircase in the axis.
+    index = np.arange(len(points))
+    tangent = points[np.minimum(index+2, index[-1])] - points[np.maximum(index-2, 0)]
+    norms = np.linalg.norm(tangent, axis=1)
+    if np.any(norms == 0):
+        return np.nan, np.nan
+    normals = np.column_stack((-tangent[:, 1], tangent[:, 0])) / norms[:, None]
+    center = ndimage.map_coordinates(patch, stations.T[::-1], order=1)
+    if np.any(center[1:-1] < .5):
+        return np.nan, np.nan
+    # Trace both normals to the first half-intensity crossing. Nearby sections
+    # of a curved body beyond that crossing do not contribute to the width.
+    origins = np.tile(stations, (2, 1))
+    rays = np.concatenate((normals, -normals))
+    distances = np.zeros(len(rays))
+    pending = np.flatnonzero(np.tile(center >= .5, 2))
+    offsets = np.arange(33) / 2
+    while len(pending):
+        xy = origins[pending, None] + rays[pending, None] * offsets[None, :, None]
+        values = ndimage.map_coordinates(patch, xy.transpose(2, 0, 1)[::-1], order=1)
+        outside = values[:, 1:] < .5
+        crossed = outside.any(axis=1)
+        found = np.flatnonzero(crossed)
+        before = outside[found].argmax(axis=1)
+        a, b = values[found, before], values[found, before+1]
+        distances[pending[found]] = offsets[before] + .5 * (a-.5) / (a-b)
+        pending = pending[~crossed]
+        offsets += 16
+    width = distances.reshape(2, -1).sum(axis=0)
+    steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    average = np.dot(steps, (width[1:] + width[:-1]) / 2) / steps.sum()
+    return float(average), frustum_volume(points, width / 2)
+
+
 def sampled(points):
     distance = np.r_[0., np.linalg.norm(np.diff(points, axis=0), axis=1).cumsum()]
     if not np.isfinite(distance).all() or distance[-1] < 1:

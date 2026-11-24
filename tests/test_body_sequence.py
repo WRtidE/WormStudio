@@ -10,6 +10,48 @@ from head_recovery import tracking_indices
 
 
 class BodySequenceTests(unittest.TestCase):
+    def test_widths_match_full_distance_field_at_borders_and_subpixel_points(self):
+        import torch
+        from scipy import ndimage
+        from body_geometry import sampled_mask_radii
+        mask = np.zeros((67,91), dtype=bool)
+        mask[:37,12:53] = True
+        mask[10:16,32:36] = False
+        points = np.array([[12.,0.], [21.83,5.79], [32.2,13.9], [36.3,11.1],
+                           [11.9,7.4], [21.,-0.1], [1.,62.2], [90.,66.]])
+        for silhouette in (mask, ~mask, np.zeros_like(mask), np.ones_like(mask)):
+            expected = ndimage.map_coordinates(ndimage.distance_transform_edt(silhouette), points.T[::-1], order=1)
+            bounds = cv2.boundingRect(silhouette.view(np.uint8))
+            for device in (('cpu','cuda') if torch.cuda.is_available() else ('cpu',)):
+                with self.subTest(device=device, bounds=bounds):
+                    result = sampled_mask_radii(silhouette, points, bounds, device)
+                    np.testing.assert_array_equal(result, expected)
+
+    def test_cuda_preserves_crossings_and_marked_endpoint_when_storage_reverses(self):
+        import torch
+        from centerline_topology import geometry_quality
+        if not torch.cuda.is_available():
+            self.skipTest('CUDA runtime required')
+        crossing = np.array([[8., 12.], [91., 84.], [9., 83.], [70., 8.]])
+        expected = geometry_quality(crossing)
+        self.assertGreater(expected['projection_crossings'], 0)
+        self.assertEqual(geometry_quality(crossing, device='cuda'), expected)
+
+        line = np.column_stack((np.arange(101, dtype=float) + 12, np.full(101, 45.)))
+        frames = [[dict(points=line, unary=0.)], [dict(points=(line + 1)[::-1], unary=0.)],
+                  [dict(points=line + 3, unary=0.), dict(points=line + 18, unary=0.)]]
+        mask = np.ones((96, 144), dtype=bool)
+        images = [np.zeros(mask.shape, np.uint8)] * len(frames)
+        def flow(a, b, points):
+            return points, np.ones(len(points), bool), np.zeros(len(points))
+        with patch('body_sequence.lk_step', side_effect=flow):
+            results = [select_body_sequence(frames, images, [mask] * len(frames), 5,
+                       anchor=(1, line[0] + 1), device=device) for device in ('cpu', 'cuda')]
+        (cpu, cpu_audit), (gpu, gpu_audit) = results
+        np.testing.assert_array_equal([s['points'] for s in gpu], [s['points'] for s in cpu])
+        np.testing.assert_allclose(cpu_audit['final_order_costs'], gpu_audit['final_order_costs'])
+        self.assertEqual(cpu_audit['links'], gpu_audit['links'])
+
     def test_local_reseed_needs_consistent_visible_ends_and_one_identity(self):
         path=np.column_stack((np.arange(101)+10,np.full(101,20)))
         mask=np.zeros((40,125),bool);mask[15:25,5:116]=True

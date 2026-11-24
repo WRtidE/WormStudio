@@ -52,16 +52,15 @@ def replay_model(config):
     from sam2.build_sam import build_sam2_video_predictor
     from resource_paths import sam2_checkpoint
     from sam2_models import model_spec
-    from sam2_frames import init_tracking_state, propagate_frames
-    from track_configured_video import sam2_input_transform
+    from sam2_frames import init_tracking_state, propagate_frames, refine_mask_edges, sam2_input_transform
     spec = model_spec(config.get('sam2_model', 'large'))
     device = selected_device()
     model = build_sam2_video_predictor(spec['config'], str(sam2_checkpoint(spec['checkpoint'])), device=device,
         hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
-    transform = sam2_input_transform(config.get('sam2_input_contrast', 'none'))
 
     def predict(cap, box, indices, seed):
         x,y,r,b = box
+        transform = sam2_input_transform(config.get('sam2_input_contrast', 'none'), cap, box)
         with TemporaryDirectory(prefix='worm-crop-replay-') as tmp, torch.inference_mode(), inference_context(device):
             directory = Path(tmp)
             cap.set(cv2.CAP_PROP_POS_FRAMES, min(indices))
@@ -79,11 +78,15 @@ def replay_model(config):
             model.add_new_mask(state, frame_idx=0, obj_id=1, mask=seed)
             for j, _, logits in propagate_frames(model, state, start_frame_idx=0):
                 if j:
-                    mask = (logits[0,0].cpu().numpy() > 0).astype(np.uint8)
+                    mask = (logits[0,0] > 0).byte().cpu().numpy()
                     _, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
                     keep = stats[:, cv2.CC_STAT_AREA] >= 20
                     keep[0] = False
-                    yield indices[j], keep[labels]
+                    mask = keep[labels]
+                    if config.get('sam2_input_contrast') == 'edge_refine':
+                        from image_io import read_image
+                        mask = refine_mask_edges(read_image(directory/f'{j:06}.jpg'), mask)
+                    yield indices[j], mask
     return predict
 
 

@@ -4,14 +4,12 @@ from pipeline_progress import report_progress
 from live_preview import report_preview
 import csv
 import json
-import shutil
-import subprocess
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
 import cv2
-import imageio_ffmpeg
+from video_encoding import h264_writer
 import numpy as np
 from resource_paths import PROJECT_ROOT as ROOT
 from tracking_data import load_sample
@@ -164,8 +162,7 @@ def export_video(folder, filename, source, ids, get_mask, *, records=None):
     overlay_size = (crop_h + crop_h % 2, crop_w + crop_w % 2)
     previews = []
     samples = {0, source['frames'] // 2, source['frames'] - 1}
-    with tempfile.TemporaryDirectory(prefix='worm-export-') as temporary:
-        intermediate = Path(temporary) / 'full.mp4'
+    with tempfile.TemporaryDirectory(dir=folder, prefix='worm-export-') as temporary:
         encoded = Path(temporary) / 'encoded.mp4'
         with ExitStack() as resources:
             cropped = cv2.VideoCapture(str(folder / 'phenotypes-overlay.mp4'))
@@ -177,11 +174,7 @@ def export_video(folder, filename, source, ids, get_mask, *, records=None):
             if int(raw.get(cv2.CAP_PROP_FRAME_COUNT)) != source['frames'] or abs(raw.get(cv2.CAP_PROP_FPS)-source['fps']) > .001:
                 raise ValueError('原视频的帧数或帧率与保存的标注不符')
             size = (int(raw.get(3)), int(raw.get(4)))
-            encoded_size = tuple(value + value % 2 for value in size)
-            writer = cv2.VideoWriter(str(intermediate), cv2.VideoWriter_fourcc(*'mp4v'), source['fps'], encoded_size)
-            resources.callback(writer.release)
-            if not writer.isOpened():
-                raise RuntimeError('Cannot encode full video')
+            writer = resources.enter_context(h264_writer(encoded, size, source['fps']))
             for f in range(source['frames']):
                 report_progress(f,source['frames'],'合成完整画面视频',fraction=.55*f/source['frames'])
                 ok, im = raw.read()
@@ -195,12 +188,8 @@ def export_video(folder, filename, source, ids, get_mask, *, records=None):
                 if f in samples:
                     write_png(folder / f'full-preview-{f:04d}.png', im)
                     previews.append(preview(im))
-                writer.write(cv2.copyMakeBorder(im, 0, size[1] % 2, 0, size[0] % 2, cv2.BORDER_CONSTANT))
-        report_progress(detail='正在编码 H.264 视频',fraction=.55,force=True)
-        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error', '-y',
-                        '-i', str(intermediate), '-an', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
-                        '-pix_fmt', 'yuv420p', '-movflags', '+faststart', str(encoded)], check=True)
-        shutil.copy2(encoded, target)
+                writer.write(memoryview(im))
+        encoded.replace(target)
     write_png(folder / 'full-comparison.png', np.vstack(previews))
     print(json.dumps(verify(folder, target, source, ids, size, records=records), ensure_ascii=False, indent=2))
 

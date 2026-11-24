@@ -3,11 +3,18 @@ import unittest
 import numpy as np
 
 from measurement_units import pixel_fields
-from phenotype_statistics import behavior_statistics, measure_posture, trajectory_statistics
+from phenotype_statistics import angular_half_span, behavior_statistics, measure_posture, trajectory_statistics
 from result_metrics import present_report
 
 
 class PostureStatisticsTests(unittest.TestCase):
+    def test_bend_angle_span_across_the_wrap(self):
+        angles = np.tile([178., 179., -179., -178.], 10)
+        self.assertAlmostEqual(angular_half_span(angles), 2.)
+        self.assertAlmostEqual(angular_half_span(np.array([-2., -1., 1., 2.]).repeat(10)), 2.)
+        self.assertIsNone(angular_half_span(np.array([])))
+        self.assertIsNone(angular_half_span(np.array([0., 180.])))
+
     def measure(self, points, scale=1., **overrides):
         row = dict(mask_valid=True, centerline_valid=True)
         row.update(overrides)
@@ -46,9 +53,11 @@ class PostureStatisticsTests(unittest.TestCase):
         self.assertEqual(result['path_valid_frames'], 5)
         self.assertAlmostEqual(result['path_valid_duration_s'], .6)
         self.assertEqual(result['path_length_um'], 12.)
+        self.assertAlmostEqual(result['mean_speed_um_s'], 20.)
         self.assertAlmostEqual(result['path_straightness'], 8 / 12)
         still = trajectory_statistics(points[[0,0]], np.array([0.,.1]), [np.arange(2)])
         self.assertEqual(still['path_length_um'], 0.)
+        self.assertEqual(still['mean_speed_um_s'], 0.)
         self.assertIsNone(still['path_straightness'])
         self.assertIsNone(trajectory_statistics(points, np.arange(6), [])['path_length_um'])
 

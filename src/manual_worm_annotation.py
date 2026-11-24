@@ -12,7 +12,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from centerline_methods import display_method, analysis_method, CURRENT_METHOD, CURRENT_HEAD_DETECTION
-from sam2_models import model_spec
+from sam2_models import input_contrast, model_spec
 from pathlib import Path
 
 import cv2
@@ -27,11 +27,13 @@ from workspace_http import WorkspaceHTTPServer, workspace_request
 
 
 class MaskPredictor:
-    def __init__(self, image, model_size):
+    def __init__(self, image, model_size, video=None, origin=(0, 0)):
         self.image = image
         self.model_size = model_size
+        self.video = video
+        self.origin = origin
         self.predictor = None
-        self.predictor_roi = None
+        self.predictor_view = None
         self.prediction_cache = {}
 
     def predict(self, body):
@@ -80,10 +82,24 @@ class MaskPredictor:
             if not checkpoint.is_file(): raise RuntimeError(f'找不到 SAM2 权重：{checkpoint}')
             model = build_sam2(spec['config'], str(checkpoint), device=device)
             self.predictor = SAM2ImagePredictor(model)
-        if self.predictor_roi != roi:
+        contrast = input_contrast(body.get('sam2_input_contrast', 'none'))
+        view = (tuple(roi), contrast)
+        if self.predictor_view != view:
+            from sam2_frames import sam2_input_transform
+            image = self.image[y0:y1, x0:x1]
+            if contrast == 'static_background':
+                ox, oy = self.origin
+                cap = cv2.VideoCapture(self.video)
+                try:
+                    transform = sam2_input_transform(contrast, cap, [ox+x0, oy+y0, ox+x1, oy+y1])
+                finally:
+                    cap.release()
+                image = transform(image)
+            elif contrast == 'clahe':
+                image = sam2_input_transform(contrast)(image)
             with torch.inference_mode(), inference_context(device):
-                self.predictor.set_image(cv2.cvtColor(self.image[y0:y1, x0:x1], cv2.COLOR_BGR2RGB))
-            self.predictor_roi = roi.copy()
+                self.predictor.set_image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            self.predictor_view = view
         previous=self.prediction_cache.get(worm_id)
         mask_input=None
         if previous and body.get('prediction_token')==previous['token']:
@@ -91,7 +107,7 @@ class MaskPredictor:
             idx=body.get('previous_candidate',previous['winner'])
             if type(idx) is not int or not 0<=idx<previous['candidate_count']:
                 raise ValueError('候选编号无效')
-            if (previous['roi']==roi and previous['box']==box and len(points)>len(old)
+            if (previous['view']==view and previous['box']==box and len(points)>len(old)
                     and points[:len(old)]==old and previous['logits'] is not None):
                 mask_input=previous['logits'][idx:idx+1]
         with torch.inference_mode(), inference_context(device):
@@ -103,6 +119,9 @@ class MaskPredictor:
         token=secrets.token_urlsafe(18)
         options=[]
         for index, candidate in enumerate(candidates):
+            if contrast == 'edge_refine':
+                from sam2_frames import refine_mask_edges
+                candidate = refine_mask_edges(self.image[y0:y1, x0:x1], candidate.astype(bool))
             mask = np.zeros((h, w), np.uint8)
             mask[y0:y1,x0:x1]=candidate.astype(np.uint8)*255
             rgba = np.full((h,w,4),255,np.uint8);rgba[:,:,3]=mask
@@ -110,16 +129,16 @@ class MaskPredictor:
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
         if options[winner]['area_px']<20:
             raise ValueError('未找到足够大的虫体，请追加虫体点或框住虫体')
-        self.prediction_cache[worm_id]=dict(points=points,box=box,roi=roi,token=token,
+        self.prediction_cache[worm_id]=dict(points=points,box=box,view=view,token=token,
                                             logits=logits,candidate_count=len(options),winner=winner)
         return dict(**options[winner], candidate=winner,candidates=options,
                     prediction_token=token,refined=mask_input is not None)
 
 
-def annotation_worker(connection, image, model_size):
+def annotation_worker(connection, image, model_size, video, origin):
     # The child owns the model and Metal allocations for one annotation frame.
     with connection:
-        predictor = MaskPredictor(image, model_size)
+        predictor = MaskPredictor(image, model_size, video, origin)
         while True:
             try:
                 body = connection.recv()
@@ -190,12 +209,12 @@ class Annotation:
                 raise ValueError('本次标注已保存')
             if not is_darwin():
                 if self.local_predictor is None:
-                    self.local_predictor = MaskPredictor(self.image, self.model_size)
+                    self.local_predictor = MaskPredictor(self.image, self.model_size, self.video, self.crop[:2])
                 return self.local_predictor.predict(body)
             if self.worker is None:
                 ctx = multiprocessing.get_context('spawn')
                 parent, child = ctx.Pipe()
-                worker = ctx.Process(target=annotation_worker, args=(child, self.image, self.model_size), daemon=True)
+                worker = ctx.Process(target=annotation_worker, args=(child, self.image, self.model_size, self.video, self.crop[:2]), daemon=True)
                 try:
                     worker.start()
                 except BaseException:
@@ -268,7 +287,7 @@ class Annotation:
         result=dict(algorithm=dict(available=False,checking=True,detail='正在检查分析组件…'),analysis_method=CURRENT_METHOD,sample=self.settings['sample'],frame=self.frame,
             width=self.image.shape[1],height=self.image.shape[0],token=self.token,
             measurement_mode=self.settings.get('measurement_mode','physical'),scale_um_per_px=self.settings.get('scale_um_per_px'),video_name=Path(self.video).name,
-            frame_count=self.n,sam2_model=self.model_size,
+            frame_count=self.n,sam2_model=self.model_size,sam2_input_contrast=self.settings.get('sam2_input_contrast','none'),
             head_detection=self.settings.get('head_detection','twardis'),
             centerline_method=self.settings.get('centerline_method',CURRENT_METHOD),previous=None)
         if hasattr(self, 'correction_previous'):
@@ -304,11 +323,14 @@ class Annotation:
                 mask='data:image/png;base64,'+base64.b64encode(png(rgba)).decode('ascii')))
         result['previous']=dict(measurement_mode=config.get('measurement_mode','physical'),worms=worms,roi=[x,y,x1,y1],scale_um_per_px=config['scale_um_per_px'],
             calibration=record.get('calibration'),head_detection=config.get('head_detection','twardis'),
+            sam2_input_contrast=config.get('sam2_input_contrast','none'),
             centerline_method=config.get('centerline_method', CURRENT_METHOD))
         return result
 
     def save(self, body):
         if self.done.is_set(): raise ValueError('本次标注已保存')
+        contrast = input_contrast(self.correction_source.get('sam2_input_contrast','none') if hasattr(self,'correction_source')
+                                  else body.get('sam2_input_contrast', self.settings.get('sam2_input_contrast','none')))
         current_profile = body.get('analysis_profile')=='current' or self.settings.get('analysis_profile')=='current'
         if current_profile:
             method=self.settings['centerline_method'] if hasattr(self,'correction_source') else CURRENT_METHOD
@@ -400,6 +422,7 @@ class Annotation:
         same_inputs = (same_masks and old_record.get('input') == self.identity
                        and old_config.get('crop_xyxy') == absolute and old_config.get('scale_um_per_px') == scale
                        and old_record.get('calibration') == calibration
+                       and old_config.get('sam2_input_contrast','none') == contrast
                        and old_config.get('head_annotations',{}) == heads
                        and old_config.get('head_detection','twardis') == head_mode)
         previous_sample = None
@@ -424,6 +447,8 @@ class Annotation:
                       review_intervals=self.settings.get('review_intervals', []),
                       centerline_method=method,sam2_model=self.model_size,
                       head_annotations=heads,head_detection=head_mode)
+        if contrast != 'none':
+            config['sam2_input_contrast'] = contrast
         if "chamber_id" in self.settings:
             config["chamber_id"] = self.settings["chamber_id"]
         for key in ('identity_confirmations', 'source_invalid_frames'):

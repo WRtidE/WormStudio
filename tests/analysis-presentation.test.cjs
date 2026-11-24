@@ -28,3 +28,48 @@ test('completed metrics become the default result without interrupting a batch o
  assert.equal(prompt(run),true);
  assert.equal(prompt({...run,sample:'video-two'}),true);
 });
+
+test('the progress page keeps polling across chamber handoffs, failures and a reconnect',async()=>{
+ const vm=require('node:vm'),fs=require('node:fs');
+ const nav=require('../web/result-navigation.js');
+ const nodes=new Map(),timers=new Map(),previews=[];
+ function element(){return {children:[],style:{},dataset:{},firstChild:{},classList:{add(){},remove(){},toggle(){}},
+  setAttribute(){},removeAttribute(){},replaceChildren(...nodes){this.children=nodes},append(...nodes){this.children.push(...nodes)}};}
+ const dom=id=>{if(!nodes.has(id))nodes.set(id,element());return nodes.get(id);};
+ const frames=[
+  ['running',23,['running','pending','pending']],
+  ['complete',23,['running','pending','pending']],
+  null,
+  ['preparing',24,['complete','running','pending']],
+  ['failed',24,['complete','failed','pending']],
+  ['running',25,['complete','failed','running']],
+  ['complete',25,['complete','failed','complete']]
+ ];
+ let nextTimer=0,last;
+ const ctx=vm.createContext({window:{LivePreview:{update(d){previews.push(d.preview_run)}}},
+  document:{body:element(),querySelector:dom,createElement:element,createTextNode:String},
+  AnalysisPresentation:presentation,ResultNavigation:nav,AbortController,
+  setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id)},
+  async fetch(){
+   const f=frames.shift();if(!f)throw Error('offline');
+   const [status,id,states]=f;
+   const items=states.map((state,i)=>({chamber_id:23+i,sample:String(23+i),status:state,video_path:'222324.mp4'}));
+   last={status,sample:String(id),stages:[],active:null,percent:0,batch:{running:!!frames.length,result_items:items},preview_run:status==='preparing'?null:'run-'+id};
+   return {ok:true,json:async()=>last};
+  }});
+ await vm.runInContext(fs.readFileSync(require.resolve('../web/processing.js'),'utf8'),ctx);
+ async function tick(){const pending=[...timers].find(([,t])=>t.ms===1000);assert.ok(pending,'must still be polling');timers.delete(pending[0]);await pending[1].fn();}
+ await tick();
+ assert.equal(presentation.sessionView(last),'progress');
+ assert.equal(dom('#finish-session').hidden,true);assert.equal(dom('#result-card').hidden,true);
+ assert.match(dom('#batch-progress-count').textContent,/1 \/ 3/);
+ await tick();assert.equal(dom('#offline-notice').hidden,false);
+ await tick();assert.match(dom('#progress-title').textContent,/槽 24/);
+ assert.equal(dom('#offline-notice').hidden,true);
+ await tick();assert.equal(dom('.processing-actions').hidden,true);
+ await tick();assert.match(dom('#progress-title').textContent,/槽 25/);
+ await tick();assert.equal(timers.size,0);
+ assert.equal(dom('#result-card').hidden,false);
+ assert.deepEqual(dom('#batch-progress-items').children.map(n=>n.dataset.status),['complete','failed','complete']);
+ assert.deepEqual(previews,['run-23','run-23',null,'run-24','run-25','run-25']);
+});

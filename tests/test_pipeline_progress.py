@@ -26,6 +26,24 @@ class ProgressTests(unittest.TestCase):
         self.progress.close()
         self.temp.cleanup()
 
+    def test_next_chamber_prepares_without_the_previous_preview_or_measurements(self):
+        from batch_queue import BatchQueue
+        progress = self.progress
+        queue = progress.batch = BatchQueue(self.base/'batch.json')
+        queue.add_many([dict(self.config, sample='chamber-24', chamber_id=24)], start_samples=['chamber-24'])
+        old_run = progress.snapshot()['preview_run']
+        progress.data.update(status='complete', quality={'needs_review': 1}, phenotypes={'worms': [{}]})
+        progress.bind_server(create_server(progress=progress))
+        self.assertEqual(progress.wait()['chamber_id'], 24)
+        snap = progress.snapshot()
+        self.assertTrue(snap['batch']['running'])
+        self.assertEqual((snap['sample'], snap['status'], snap['elapsed_seconds']), ('chamber-24', 'preparing', 0))
+        for key in ('preview_run', 'quality', 'phenotypes'):
+            self.assertIsNone(snap[key])
+        self.assertFalse(snap['can_edit_preview_masks'])
+        with self.assertRaises(ValueError):
+            progress.preview(old_run)
+
     def test_actual_child_events_and_logs_reach_saved_status(self):
         log = self.base/'child.log'
         self.progress.begin(0, log)

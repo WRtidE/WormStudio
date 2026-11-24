@@ -12,6 +12,7 @@ from body_sequence_solver import solve, VERSION, signature
 from live_preview import report_geometry
 from pipeline_progress import report_progress
 from body_frame_cache import cached_frames
+from platforms.device import selected_device, device_label
 
 
 def run(sample,worm):
@@ -32,10 +33,13 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
     from head_evidence import anchors_in_crop
     manual=anchors_in_crop(config.get('head_annotations',{}).get(str(worm)),config['crop_xyxy'],source['crop_xyxy'])
     guards = load_guards(data,[worm],source['frames'],required=bool(config.get('quality_schema_version') and manual))
+    device='cuda' if selected_device()=='cuda' else 'cpu'
+    device_name=device_label(device)
+    print(f'中线候选与头尾轨迹评分：{device_name}',flush=True)
     lines,facts,audit=solve(masks,gray,source['fps'],manual=manual,
         point_count=config.get('tracking_point_count',13),source_invalid=config.get('source_invalid_frames',()),
         auto_seed=config.get('head_detection','taper_seed') not in ('manual_only','manual_seed'),progress=progress,
-        guards=guards[worm] if guards else None)
+        guards=guards[worm] if guards else None,device=device)
     quality=[]
     for i,f in enumerate(facts):
         valid=f is not None
@@ -54,6 +58,7 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
     (folder/'mask-source.json').write_text(json.dumps(dict(mask_source=str(data.resolve()))),encoding='utf8')
     for name,value in [('quality.json',quality),('sequence-audit.json',audit),('run.json',dict(
         version=VERSION,algorithm_signature=signature(),method='body_sequence',frames=len(lines),worm_id=worm,
+        sequence_device=device,sequence_device_name=device_name,
         tracking_point_count=config.get('tracking_point_count',13),head_annotations=config.get('head_annotations',{}),
         valid_frames=sum(q['centerline_valid'] for q in quality),head_candidate_frames=sum(bool(f and f['head_known']) for f in facts),
         seconds=time.monotonic()-started,mask_source=str(data.resolve()),

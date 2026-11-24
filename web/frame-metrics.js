@@ -34,7 +34,7 @@ const renderFrameMetrics = (() => {
     for (const [originalKey, title, originalUnit] of values) {
       const pixel=row.measurement_mode==='pixels',key=pixel?originalKey.replace('_um','_px'):originalKey,unit=pixel?originalUnit.replace('μm','px'):originalUnit;
       const card = document.createElement('article'); card.className = 'frame-metric'+(row[key] === null?' missing':'');
-      const label = document.createElement('span'); label.textContent = key==='area_um2'&&!row.identity_valid&&!row.quality?.legacy?'匿名轮廓面积':title;
+      const label = document.createElement('span'); label.textContent = key==='area_um2'&&!row.identity_valid&&!row.quality?.legacy?'本帧轮廓面积':title;
       const value = document.createElement('strong'); value.textContent = row[key] === null ? '—' : Number(row[key]).toLocaleString('zh-CN',{maximumFractionDigits:2});
       const suffix = document.createElement('small'); suffix.textContent = unit;
       card.append(label, value, suffix); el('frame-cards').append(card);

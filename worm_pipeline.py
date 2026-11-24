@@ -48,7 +48,7 @@ import re
 import subprocess
 import sys
 import time
-from sam2_models import model_spec, tracking_model_matches
+from sam2_models import input_contrast, model_spec, tracking_model_matches
 from platforms.system import check_memory_pressure, stage_wait_slice, terminate_children
 
 PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'metrics', 'export')
@@ -176,6 +176,8 @@ def validate_config(config, relative_to=ROOT):
     if c.get('sam2_model', 'large') != 'large': raise ValueError('当前方法使用 SAM2 Large')
     if c.get('tracking_point_count', 13) != 13: raise ValueError('当前方法使用 13 个身体跟踪点')
     c['sam2_model'] = model_spec(c.get('sam2_model', 'large'))['size']
+    if 'sam2_input_contrast' in c:
+        input_contrast(c['sam2_input_contrast'])
     from quality_schema import VERSION as QUALITY_VERSION
     from tracking_quality import MAX_AREA_JUMP_FRACTION
     from multiworm_quality import validate_reviews

@@ -5,14 +5,15 @@
 <nav class="workflow" aria-label="处理步骤"><div class="step done"><span class="step-number">✓</span><span><b>准备画面</b></span></div><span class="step-link"></span><div class="step done"><span class="step-number">✓</span><span><b>点选线虫</b></span></div><span class="step-link"></span><div class="step done"><span class="step-number">✓</span><span><b>确认并开始</b></span></div><span class="step-link"></span><div class="step active"><span class="step-number">04</span><span><b>处理进度</b></span></div></nav>
 <main class="processing-content">
 <section class="progress-overview" aria-label="任务进度">
+  <div id="batch-progress" hidden><strong id="batch-progress-count"></strong><ul id="batch-progress-items"></ul></div>
   <div class="progress-overview-heading"><h1 id="progress-title">正在准备处理</h1></div>
   <div id="current-stage" class="current-stage">
     <div class="current-stage-line"><strong id="unit-count">等待启动</strong><span id="stage-elapsed"></span></div>
     <div id="task-bar" class="progress-track task-bar indeterminate" role="progressbar" aria-label="当前阶段进度" aria-valuemin="0" aria-valuemax="100"><i></i></div>
   </div>
-  <div class="progress-overview-values"><span>总进度 <strong id="overall-percent">0%</strong></span>
+  <div class="progress-overview-values"><span><span id="percent-label">总进度</span> <strong id="overall-percent">0%</strong></span>
     <div id="overall-bar" class="progress-track" role="progressbar" aria-label="整体步骤进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
-    <span>总耗时 <strong id="elapsed">—</strong></span>
+    <span><span id="elapsed-label">总耗时</span> <strong id="elapsed">—</strong></span>
   </div>
 <div id="result-card" class="completion-actions" hidden><a class="review-link" href="/studio">查看分析结果 →</a></div>
 </section>
@@ -47,4 +48,4 @@
 <section id="error-card" class="progress-card error-card" hidden><h2>需要检查</h2><pre id="error-text"></pre><p class="help">已完成的结果会保留。你可以选择新视频继续处理；重新标注或修改参数后，程序会自动另存一份结果。</p></section>
 <details class="processing-details"><summary>处理步骤与任务信息</summary><div class="processing-detail-content"><p id="current-detail" class="help"></p><ol id="stage-list" class="stage-list"></ol><dl class="processing-facts"><div><dt>视频帧数</dt><dd id="total-frames">—</dd></div><div><dt>线虫数量</dt><dd id="total-worms">—</dd></div><div><dt>计算设备</dt><dd id="device">—</dd></div><div><dt>样本名称</dt><dd id="sample">—</dd></div><div><dt>保存位置</dt><dd id="output-path">—</dd></div></dl></div></details>
 </main><footer class="processing-footer"><span id="last-update" role="status"></span><details class="processing-actions" hidden><summary>更多操作</summary><div class="footer-actions"><button id="finish-session" class="secondary" hidden>完成并退出 <span>→</span></button><button id="review-video" class="secondary" hidden>重新标注本视频</button><button id="new-video" class="primary" hidden>选择新视频 <span>→</span></button></div></details></footer>
-<script src="/workspace-links.js"></script><script src="/analysis-presentation.js"></script><script src="/result-viewport.js"></script><script src="/live-preview.js"></script><script src="/processing.js"></script></body></html>
+<script src="/workspace-links.js"></script><script src="/analysis-presentation.js"></script><script src="/result-navigation.js"></script><script src="/result-viewport.js"></script><script src="/live-preview.js"></script><script src="/processing.js"></script></body></html>

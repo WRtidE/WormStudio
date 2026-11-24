@@ -16,8 +16,8 @@ body[data-mode=channel] #file-list:not(.is-empty) {display:block!important}
 #count-work {container-type:inline-size;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:12px;overflow:auto;padding:14px;background:#f3f6f3}
 #count-work :is(h2,p,figure) {margin:0}
 #count-work h2 {font-size:15px;font-weight:620}
-#count-work :is(button,a,select,input):focus-visible,#channel-history button:focus-visible {outline:2px solid #327353;outline-offset:-2px}
-#count-work :is(button,select,input[type=range]) {cursor:pointer}
+#count-work :is(button,a,input):focus-visible,#channel-history button:focus-visible {outline:2px solid #327353;outline-offset:-2px}
+#count-work :is(button,input[type=range]) {cursor:pointer}
 #count-work button:disabled {cursor:default}
 #count-work input {accent-color:#367758}
 .cross-panel,#count-layout {background:white;border:1px solid #dce5df;border-radius:9px;min-width:0}
@@ -87,7 +87,7 @@ body[data-mode=channel] #file-list:not(.is-empty) {display:block!important}
 .cross-unmarked :is(.cross-line,#cross-band) {display:none}
 .cross-transport,#cross-controls {margin-top:auto;padding-top:10px;gap:6px}
 .cross-transport button,#cross-controls button {min-width:32px;height:34px;justify-content:center;padding:0;border:0;background:transparent;color:#456452;font-size:20px;line-height:1}
-:is(.cross-transport,#cross-controls) button:enabled:hover,#cross-controls select:hover,#cross-return:hover {background:#edf3ef}
+:is(.cross-transport,#cross-controls) button:enabled:hover,#cross-return:hover {background:#edf3ef}
 :is(.cross-transport,#cross-controls) button:disabled {opacity:.35}
 #cross-seek {flex:1;min-width:24px;appearance:none;height:22px;background:transparent}
 #cross-seek::-webkit-slider-runnable-track {height:4px;border-radius:2px;background:#ccd9d0}
@@ -95,7 +95,7 @@ body[data-mode=channel] #file-list:not(.is-empty) {display:block!important}
 #cross-seek::-moz-range-track {height:4px;border-radius:2px;background:#ccd9d0}
 #cross-seek::-moz-range-thumb {width:14px;height:14px;border:0;border-radius:50%;background:#367758}
 #cross-frame {white-space:nowrap}
-#cross-controls select {min-width:0;max-width:calc(100% - 76px);height:34px;color:inherit;background:transparent;border:0;border-radius:5px;padding:3px 4px;font:inherit;text-overflow:ellipsis}
+#cross-controls select {max-width:calc(100% - 76px);height:34px}
 #cross-prev {margin-left:auto}
 #cross-single {display:flex;align-items:center;min-height:34px;color:#506859}
 #cross-triplet {display:grid;width:100%;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:10px}

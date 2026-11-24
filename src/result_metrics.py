@@ -98,7 +98,7 @@ def present_report(report, rows):
             ('median_midbody_abs_curvature_per_um','中段绝对曲率','μm⁻¹','growth','在体长 40%–60% 处每隔 5% 计算转角绝对值（弧度），除以 5% 弧长，逐帧取均值后取中位数。','缺少中段中心线可靠的姿态帧。'),
             ('mean_width_um','平均体宽','μm','growth','对各有效帧的平均体宽取算术平均。','缺少可测宽度的有效帧。'),
             ('median_length_width_ratio','长宽比','','growth','同一帧的中心线长度除以平均体宽，取有效帧中位数。','缺少同时具有体长和正体宽的帧。'),
-            ('mean_speed_bl_s','体长归一化速度','体长/s','motion','逐帧质心速度除以该虫的中位体长，再取平均。','需要有效速度和中位体长。'),
+            ('mean_speed_bl_s','体长归一化速度','体长/s','motion','平均运动速度除以该虫的中位体长。','需要有效速度和中位体长。'),
             ('segment_net_displacement_sum_um','分段净位移之和','μm','motion','各连续片段首尾质心直线距离之和。每段的净位移见分段净位移 CSV，坐标随画面移动。','缺少连续有效轨迹。'),
             ('moving_duration_s','运动时长','s','motion','按有效状态帧估算移动时间，相邻帧之间在时间中点切换状态。','缺少连续可判定的运动状态。'),
             ('stationary_duration_s','停顿时长','s','motion','质心静止或确认躯干静止的累计观察时间。' if 'head_cycle_amplitude_deg' in row else '质心速度低于本次静止阈值的累计观察时间。','缺少连续可判定的运动状态。'),
@@ -133,7 +133,13 @@ def present_report(report, rows):
         for key,label,unit,group,definition,missing in specs:
             frames = number(row.get(coverage_keys.get(key)))
             duration = None
-            if key in ('path_length_um', 'path_straightness', 'segment_net_displacement_sum_um'):
+            if key in ('mean_speed_um_s','mean_speed_bl_s') and row.get('mean_speed_method') == 'path_over_observed_time':
+                definition = '连续有效轨迹的平滑质心路程之和除以对应的观测秒数。' + (
+                    '再除以该虫的中位体长。' if key == 'mean_speed_bl_s' else '坐标随画面移动。')
+                duration = number(row.get('path_valid_duration_s'))
+                if key == 'mean_speed_um_s' or frames:
+                    frames = number(row.get('path_valid_frames'))
+            elif key in ('path_length_um', 'path_straightness', 'segment_net_displacement_sum_um'):
                 duration = number(row.get('path_valid_duration_s'))
             elif key in ('moving_duration_s', 'stationary_duration_s', 'pause_onset_count'):
                 duration = number(row.get('activity_observed_s'))

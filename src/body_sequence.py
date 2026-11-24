@@ -1,4 +1,5 @@
 """Choose a whole sequence of body paths and end orders using image motion."""
+import cv2
 import numpy as np
 from scipy.ndimage import map_coordinates
 from scipy.ndimage import binary_fill_holes,label
@@ -7,8 +8,8 @@ from head_recovery import tracking_indices, pose_parity
 from motion import lk_step
 
 
-def huber_squared(distance):
-    return np.where(distance<=2,distance**2,4*distance-4)
+def huber_squared(distance,xp=np):
+    return xp.where(distance<=2,distance**2,4*distance-4)
 
 
 def flow_matches(state, target, direction, indices, length):
@@ -24,9 +25,18 @@ def flow_matches(state, target, direction, indices, length):
 
 def persistent_loop_centers(a,b,radius):
     """Find enclosed background shared by two silhouettes around the same pillar."""
-    holes_a=binary_fill_holes(a)&~a
-    holes_b=binary_fill_holes(b)&~b
-    shared,count=label(holes_a&holes_b)
+    same=a is b
+    bounds=cv2.boundingRect(a.view(np.uint8))
+    boxes=[bounds] if same else [bounds,cv2.boundingRect(b.view(np.uint8))]
+    x=min(box[0] for box in boxes);y=min(box[1] for box in boxes)
+    right=max(left+w for left,top,w,h in boxes);bottom=max(top+h for left,top,w,h in boxes)
+    if right<=x or bottom<=y:return []
+    a=a[y:bottom,x:right]
+    holes=binary_fill_holes(a)&~a
+    if not same:
+        b=b[y:bottom,x:right]
+        holes &= binary_fill_holes(b)&~b
+    shared,count=label(holes)
     if not count:
         return []
     sizes=np.bincount(shared.ravel())
@@ -34,8 +44,8 @@ def persistent_loop_centers(a,b,radius):
     for index in np.flatnonzero(sizes>=max(50,radius**2)):
         if index==0:
             continue
-        y,x=np.nonzero(shared==index)
-        centers.append(np.array([x.mean(),y.mean()]))
+        rows,cols=np.nonzero(shared==index)
+        centers.append(np.array([x+cols.mean(),y+rows.mean()]))
     return centers
 
 
@@ -54,54 +64,68 @@ def loop_transition(left,right,center):
     return looped&(np.abs(residual)>np.pi),turn_a,turn_b
 
 
-def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=(),anchor=None,anchors=()):
+def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=(),anchor=None,anchors=(),device='cpu',
+                         flow_cache=None,frame_offset=0):
     """Second-order path search. Both end orders remain states until backtracking.
 
     The first candidate's order supplies the initial marked side. Later clear
     frames constrain geometry and measured motion without assigning a new head.
     """
     indices=tracking_indices(point_count)
+    xp=np
+    if device=='cuda':
+        import torch
+        xp=torch
+    def array(values):
+        return torch.as_tensor(values,device=device) if device=='cuda' else np.asarray(values)
     if len(frames)<2 or len(frames)!=len(gray) or any(not c for c in frames):
         raise ValueError('Body sequence requires an observed candidate in every frame')
     states=[]
     for i,candidates in enumerate(frames):
         state=[]
+        samples=np.stack([c['points'][indices] for c in candidates])
+        def track_at(j):
+            if not 0<=j<len(frames):return None,None
+            key=(frame_offset+i,frame_offset+j)
+            if flow_cache is not None and key in flow_cache:
+                return flow_cache[key]
+            tracked,good,_=lk_step(gray[i],gray[j],samples.reshape(-1,2))
+            good &= map_coordinates(masks[j].view(np.uint8),tracked.T[::-1],order=0,mode='constant')>0
+            result=tracked.reshape(samples.shape),good.reshape(samples.shape[:-1])
+            if flow_cache is not None:
+                flow_cache[key]=result
+            return result
+        forward,good_f=track_at(i+1)
+        backward,good_b=track_at(i-1)
         for k,c in enumerate(candidates):
-            p=c['points'][indices]
-            forward=backward=good_f=good_b=None
-            if i+1<len(frames):
-                forward,good_f,_=lk_step(gray[i],gray[i+1],p)
-                good_f &= map_coordinates(masks[i+1].astype('uint8'),forward.T[::-1],order=0,mode='constant')>0
-            if i>0:
-                backward,good_b,_=lk_step(gray[i],gray[i-1],p)
-                good_b &= map_coordinates(masks[i-1].astype('uint8'),backward.T[::-1],order=0,mode='constant')>0
+            p=samples[k]
             for reverse in (False,True):
                 order=slice(None,None,-1) if reverse else slice(None)
                 state.append(dict(candidate=k,reverse=reverse,points=c['points'][order].copy(),
                     sampled=p[order],unary=.4*c['unary'],
-                    forward=None if forward is None else forward[order],
-                    backward=None if backward is None else backward[order],
-                    good_f=None if good_f is None else good_f[order],
-                    good_b=None if good_b is None else good_b[order]))
+                    forward=None if forward is None else forward[k,order],
+                    backward=None if backward is None else backward[k,order],
+                    good_f=None if good_f is None else good_f[k,order],
+                    good_b=None if good_b is None else good_b[k,order]))
         states.append(state)
-    geometry=[np.array([s['sampled'] for s in group]) for group in states]
+    geometry=[array(np.stack([s['sampled'] for s in group])) for group in states]
     transitions=[];loop_checks=[]
     for i,(left,right) in enumerate(zip(states,states[1:])):
         a,b=geometry[i],geometry[i+1]
-        displacement=np.linalg.norm(a[:,None]-b[None,:],axis=-1)/radius
-        cost=.05*huber_squared(displacement).mean(-1)+.15*huber_squared(displacement[:,:,[0,-1]]).mean(-1)
+        displacement=xp.linalg.norm(a[:,None]-b[None,:],axis=-1)/radius
+        cost=.05*huber_squared(displacement,xp).mean(-1)+.15*huber_squared(displacement[:,:,[0,-1]],xp).mean(-1)
         # Flow supplies observed movement of each body section in BOTH images.
         # Invalid flow contributes no vote, instead of becoming zero movement.
-        for j,s in enumerate(left):
-            use=s['good_f']
-            if use.sum()>=4:
-                error=np.linalg.norm(b[:,use]-s['forward'][use],axis=-1)/radius
-                cost[j]+=1.2*huber_squared(error).mean(-1)
-        for k,s in enumerate(right):
-            use=s['good_b']
-            if use.sum()>=4:
-                error=np.linalg.norm(a[:,use]-s['backward'][use],axis=-1)/radius
-                cost[:,k]+=1.2*huber_squared(error).mean(-1)
+        def motion_cost(group,other,direction,flag):
+            use=array(np.stack([s[flag] for s in group]))
+            predicted=array(np.stack([s[direction] for s in group]))
+            error=xp.linalg.norm(other[None,:]-predicted[:,None],axis=-1)/radius
+            counts=use.sum(-1)[:,None]
+            penalties=xp.where(use[:,None],huber_squared(error,xp),0.).sum(-1)
+            return xp.where(counts>=4,1.2*penalties/xp.where(counts>0,counts,1),0.)
+        cost+=motion_cost(left,b,'forward','good_f')
+        cost+=motion_cost(right,a,'backward','good_b').T
+        if device=='cuda':cost=cost.cpu().numpy()
         # A finite cost is not proof of correspondence. A weak image may use
         # unambiguous geometry; a large motion needs support in both images.
         for j, earlier in enumerate(left):
@@ -135,19 +159,30 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
                 unary[frame][j]=np.inf
         if not np.isfinite(unary[frame]).any():
             raise ValueError('Initial head mark does not match a body endpoint')
-    cost=unary[0][:,None]+unary[1][None,:]+transitions[0]
-    if not np.isfinite(cost).any():
+    cost=array(unary[0][:,None]+unary[1][None,:]+transitions[0])
+    if not xp.isfinite(cost).any():
         raise BodySequenceBreak(1)
     pointers=[]
     for i in range(2,len(states)):
         a,b,c=geometry[i-2],geometry[i-1],geometry[i]
-        acceleration=np.linalg.norm(c[None,None]-2*b[None,:,None]+a[:,None,None],axis=-1)/radius
-        penalty=.08*huber_squared(acceleration).mean(-1)+.3*huber_squared(acceleration[:,:,:,[0,-1]]).mean(-1)
-        combined=cost[:,:,None]+penalty
-        pointers.append(combined.argmin(0))
-        cost=combined.min(0)+transitions[i-1]+unary[i][None,:]
-        if not np.isfinite(cost).any():
+        # Bound transient acceleration tensors for heavily ambiguous frames.
+        chunk=max(1,262144//(len(a)*len(b)*len(indices)))
+        transition=array(transitions[i-1])
+        next_cost=xp.empty_like(transition)
+        ptr=np.empty(transitions[i-1].shape,dtype=np.intp)
+        for start in range(0,len(c),chunk):
+            part=slice(start,start+chunk)
+            acceleration=xp.linalg.norm(c[None,None,part]-2*b[None,:,None]+a[:,None,None],axis=-1)/radius
+            penalty=.08*huber_squared(acceleration,xp).mean(-1)+.3*huber_squared(acceleration[:,:,:,[0,-1]],xp).mean(-1)
+            combined=cost[:,:,None]+penalty
+            chosen=combined.argmin(0)
+            ptr[:,part]=chosen.cpu().numpy() if device=='cuda' else chosen
+            next_cost[:,part]=xp.amin(combined,axis=0)
+        pointers.append(ptr)
+        cost=next_cost+transition+array(unary[i])[None,:]
+        if not xp.isfinite(cost).any():
             raise BodySequenceBreak(i)
+    if device=='cuda':cost=cost.cpu().numpy()
     final_costs=[float(cost[:,np.arange(cost.shape[1])%2==reverse].min()) for reverse in (0,1)]
     a,b=np.unravel_index(cost.argmin(),cost.shape)
     if not np.isfinite(cost[a,b]):

@@ -5,7 +5,49 @@ import unittest
 from unittest.mock import patch
 import weakref
 
-from sam2_frames import init_tracking_state
+from sam2_frames import init_tracking_state, refine_mask_edges, sam2_input_transform
+
+
+class BackgroundInputTests(unittest.TestCase):
+    def test_edge_refinement_reduces_halo_without_erasing_tips_or_border(self):
+        import cv2
+        import numpy as np
+
+        outline = np.zeros((61, 100), np.uint8)
+        cv2.ellipse(outline, (44,30), (30,7), 0, 0, 360, 1, -1)
+        outline[30, :20] = 1
+        image = np.repeat(np.where(outline, 60, 180).astype(np.uint8)[:, :, None], 3, axis=2)
+        mask = cv2.dilate(outline, np.ones((5,5), np.uint8)).astype(bool)
+        refined = refine_mask_edges(image, mask)
+        self.assertLess(np.count_nonzero(refined != outline), np.count_nonzero(mask != outline))
+        self.assertFalse(np.any(refined & ~mask))
+        np.testing.assert_array_equal(refined[:,0], mask[:,0])
+        self.assertTrue(refined[30,:72].all())
+        np.testing.assert_array_equal(refine_mask_edges(np.zeros_like(image), mask), mask)
+
+    def test_moving_body_survives_stationary_chamber_and_nonzero_crop(self):
+        import cv2
+        import numpy as np
+        from unittest.mock import MagicMock
+
+        background = np.full((16, 27, 3), 160, np.uint8)
+        background[:, 8:10] = 110
+        frames = []
+        for x in (5, 8, 11, 14, 17):
+            image = background.copy()
+            image[6:9, x:x+2] -= 40
+            frames.append(image)
+        capture = MagicMock()
+        capture.get.return_value = len(frames)
+        capture.read.side_effect = [(True, image) for image in frames]
+        transform = sam2_input_transform('static_background', capture, [3, 4, 21, 12])
+        original = frames[1][4:12, 3:21]
+        model_input = transform(original)
+        self.assertEqual(model_input.shape, original.shape)
+        self.assertGreater(int(model_input[0, 5, 0]) - int(model_input[3, 5, 0]), 90)
+        self.assertLess(int(model_input[0, 10, 0]) - int(model_input[0, 5, 0]), 25)
+        self.assertEqual(original[3, 5, 0], 70)
+        self.assertEqual(capture.get.call_args.args, (cv2.CAP_PROP_FRAME_COUNT,))
 
 
 @unittest.skipUnless(importlib.util.find_spec('sam2'), 'SAM2 not installed')

@@ -19,24 +19,29 @@ def resample(p, count=101):
     return np.column_stack([np.interp(np.linspace(0,s[-1],count),s[keep],p[keep,k]) for k in (0,1)])
 
 
-def geometry_quality(p):
+def geometry_quality(p, device='cpu'):
     p=resample(np.asarray(p,float))
     v=np.diff(p,axis=0);theta=np.arctan2(v[:,1],v[:,0])
     turn=(np.diff(theta)+np.pi)%(2*np.pi)-np.pi
     sums=np.convolve(turn,np.ones(5),mode='valid')
     k=int(np.argmax(np.abs(sums)))
     peak=float(np.degrees(abs(sums[k])))
-    intersections=[]
-    # Strict segment intersection; adjacent segments are deliberately excluded.
-    for i in range(len(v)):
-        j=np.arange(i+3,len(v));a=v[i];b=v[j];c=p[j]-p[i]
-        cross=a[0]*b[:,1]-a[1]*b[:,0]
-        valid=np.abs(cross)>1e-7
-        den=np.where(valid,cross,1)
-        t=(c[:,0]*b[:,1]-c[:,1]*b[:,0])/den
-        u=(c[:,0]*a[1]-c[:,1]*a[0])/den
-        for z in np.flatnonzero(valid&(t>0)&(t<1)&(u>0)&(u<1)):
-            intersections.append([int(i),int(j[z])])
+    # Check non-neighbouring segments together, preserving row-major pair order.
+    xp=np
+    if device=='cuda':
+        import torch
+        xp=torch
+        p=torch.as_tensor(p,device=device)
+        v=torch.as_tensor(v,device=device)
+    a,b=v[:,None],v[None,:]
+    c=p[None,:-1]-p[:-1,None]
+    cross=a[...,0]*b[...,1]-a[...,1]*b[...,0]
+    valid=abs(cross)>1e-7
+    den=xp.where(valid,cross,1.)
+    t=(c[...,0]*b[...,1]-c[...,1]*b[...,0])/den
+    u=(c[...,0]*a[...,1]-c[...,1]*a[...,0])/den
+    hit=xp.triu(valid&(t>0)&(t<1)&(u>0)&(u<1),3)
+    intersections=xp.argwhere(hit).tolist()
     return dict(max_turn_5pct_deg=peak,max_turn_start_fraction=k/100,
                 local_hairpin=peak>150,projection_crossings=len(intersections),
                 crossing_segments=intersections)

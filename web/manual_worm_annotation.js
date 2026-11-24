@@ -204,28 +204,104 @@ $('#remove-sampled-head').onclick=()=>{
  remember();active().headPoints=active().headPoints.slice(0,-1);refresh();
 };
 function changed(o){o.headPoint=null;o.confirmed=false;o.token=null;o.candidates=[];o.area=area(o.mask);refresh();draw()}
-function frameMetricsContext(){return JSON.stringify([state?.frame,selected,roi,$('#pixel-mode').checked,$('#scale').value,calibrationPending]);}
-function currentFrameMetrics(){const o=active();return o?.confirmed&&o.frameMetricsContext===frameMetricsContext()?o.frameMetrics:null;}
+function frameMetricsRoi(id){return state.chamber_mode?objects.get(id).roi:roi;}
+function frameMetricsContext(id){return JSON.stringify([state.frame,id,frameMetricsRoi(id),$('#pixel-mode').checked,$('#scale').value,calibrationPending]);}
+function currentFrameMetrics(id=selected){
+ const o=objects.get(id);
+ return o?.confirmed&&o.frameMetricsContext===frameMetricsContext(id)?o.frameMetrics:null;
+}
+function frameMetricsIds(){
+ if(step===3&&state.chamber_mode)return [...objects.keys()].sort((a,b)=>a-b);
+ return objects.has(selected)?[selected]:[];
+}
+function visibleFrameMetricsIds(ids=frameMetricsIds()){
+ const choice=$('#annotation-metrics-chamber').value;
+ if(ids.length<2||choice==='all')return ids;
+ const id=Number(choice);
+ return [ids.includes(id)?id:selected];
+}
+function frameMetricsScaleReady(){return $('#pixel-mode').checked||(!calibrationPending&&Number($('#scale').value)>0);}
+function metricCell(tag,text,scope){
+ const cell=document.createElement(tag);cell.textContent=text;
+ if(scope)cell.scope=scope;
+ return cell;
+}
 function refreshFrameMetrics(){
- const o=active(),panel=$('#annotation-metrics-panel'),data=currentFrameMetrics();
- panel.hidden=step===1;$('#annotation-metrics-frame').textContent=state?`F${state.frame} · 线虫 ${selected}`:'';
- const scaleReady=$('#pixel-mode').checked||(!calibrationPending&&Number($('#scale').value)>0);
- $('#calculate-frame-metrics').disabled=busy||saved||!o?.confirmed||!scaleReady||!!poly.length;
- $('#calculate-frame-metrics').textContent=data?'重新计算当前帧指标':'计算当前帧指标';
- $('#annotation-metrics-table').hidden=!data;const table=$('#annotation-metrics-values');table.replaceChildren();
- $('#annotation-metrics-status').textContent=data?(data.note||'已按当前轮廓计算，白线为本帧中线。'):busy?'正在处理，请稍候…':!o?.confirmed?'确认虫体轮廓后自动计算。':!scaleReady?'请先完成尺寸标定，或选择像素单位。':'轮廓、区域或单位改变后，请重新计算。';
- if(data)for(const metric of data.metrics){const tr=document.createElement('tr'),name=document.createElement('th'),value=document.createElement('td');name.textContent=metric.label.replace('当前帧','');const valid=typeof metric.value==='number'&&Number.isFinite(metric.value);value.textContent=(valid?metric.value.toLocaleString('zh-CN',{maximumFractionDigits:3}):'—')+(valid&&metric.unit?' '+metric.unit:'');value.title=metric.note||'';tr.append(name,value);table.append(tr);}
+ $('#annotation-metrics-panel').hidden=step===1;
+ if(step===1)return;
+ const chambers=frameMetricsIds(),ids=visibleFrameMetricsIds(chambers),compare=ids.length>1;
+ const picker=$('#annotation-metrics-chamber'),canChoose=chambers.length>1;
+ $('#annotation-metrics-picker').hidden=!canChoose;
+ if(canChoose){
+  if(picker.options.length!==chambers.length+1||chambers.some((id,i)=>picker.options[i].value!==String(id))){
+   const options=chambers.map(id=>new Option('槽 '+id,String(id)));
+   picker.replaceChildren(...options,new Option('全部槽对比','all'));
+  }
+  picker.value=compare?'all':String(ids[0]);
+ }
+ $('#annotation-metrics-frame').textContent=canChoose?`F${state.frame}`:`F${state.frame} · ${chamberLabel(selected)}`;
+ const results=ids.map(id=>currentFrameMetrics(id));
+ const available=results.filter(Boolean),schema=available[0]?.metrics||[];
+ const canMeasure=ids.some(id=>objects.get(id).confirmed);
+ const button=$('#calculate-frame-metrics');
+ button.disabled=busy||saved||!canMeasure||!frameMetricsScaleReady()||!!poly.length;
+ button.textContent=(available.length?'重新计算':'计算')+(compare?'各槽指标':canChoose?'本槽指标':'当前帧指标');
+ const header=$('#annotation-metrics-columns'),body=$('#annotation-metrics-values');
+ header.replaceChildren();body.replaceChildren();
+ $('#annotation-metrics-table').hidden=!schema.length;
+ if(compare&&schema.length){
+  const row=document.createElement('tr');row.append(metricCell('th','指标','col'));
+  for(const id of ids)row.append(metricCell('th','槽 '+id,'col'));
+  header.append(row);
+ }
+ for(const metric of schema){
+  const row=document.createElement('tr'),label=metric.label.replace('当前帧','');
+  const name=metricCell('th',label,'row');
+  if(compare&&metric.unit)name.append(metricCell('small',metric.unit));
+  row.append(name);
+  for(const result of results){
+   const item=result?.metrics.find(entry=>entry.key===metric.key);
+   const valid=Number.isFinite(item?.value);
+   const number=valid?item.value.toLocaleString('zh-CN',{maximumFractionDigits:3}):'—';
+   const cell=metricCell('td',number+(valid&&!compare&&item.unit?' '+item.unit:''));
+   cell.title=item?.note||'';row.append(cell);
+  }
+  body.append(row);
+ }
+ const notes=[];
+ for(const [index,id] of ids.entries()){
+  const o=objects.get(id);
+  const error=o.frameMetricsContext===frameMetricsContext(id)?o.frameMetricsError:'';
+  const note=!o.confirmed?'轮廓待确认':error||results[index]?.note;
+  if(note)notes.push((compare?'槽 '+id+' · ':'')+note);
+ }
+ const status=$('#annotation-metrics-status');
+ status.textContent=notes.join('\n')||(!canMeasure?'确认虫体轮廓后自动计算。':!frameMetricsScaleReady()?'请先完成尺寸标定，或选择像素单位。':busy&&available.length<ids.length?'正在计算标注帧指标…':compare?`${available.length} / ${ids.length} 个槽已有测量值`:available.length?'白线为本帧中线。':'请计算当前帧指标。');
 }
-async function calculateFrameMetrics(){
- if(busy||saved||!active()?.confirmed||poly.length)return;
- const o=active(),context=frameMetricsContext();o.frameMetrics=null;setBusy(true);refreshFrameMetrics();
+async function calculateFrameMetrics({missingOnly=false}={}){
+ if(busy||saved||poly.length||!frameMetricsScaleReady())return;
+ const ids=visibleFrameMetricsIds().filter(id=>objects.get(id).confirmed&&(!missingOnly||!currentFrameMetrics(id)));
+ if(!ids.length)return;
+ setBusy(true);
  try{
-  const data=await annotationPost('/api/annotation-metrics',{frame:state.frame,worm_id:selected,confirmed:true,mask:o.mask.toDataURL('image/png'),roi,measurement_mode:$('#pixel-mode').checked?'pixels':'physical',scale_um_per_px:$('#pixel-mode').checked?null:Number($('#scale').value)});
-  if(active()===o&&frameMetricsContext()===context){o.frameMetrics=data;o.frameMetricsContext=context;say(data.pose_available?'当前标注帧指标已计算，可直接查看。':'当前帧面积已计算；中线相关指标需要更清晰的姿态。');}
-  return data;
- }catch(error){say(`当前帧指标计算失败：${error.message}`,'error');return null;}
- finally{setBusy(false);refreshFrameMetrics();draw();}
+  for(const id of ids){
+   const o=objects.get(id),context=frameMetricsContext(id),pixels=$('#pixel-mode').checked;
+   let data=null,error='';
+   try{
+    data=await annotationPost('/api/annotation-metrics',{frame:state.frame,worm_id:id,confirmed:true,
+     mask:o.mask.toDataURL('image/png'),roi:frameMetricsRoi(id),measurement_mode:pixels?'pixels':'physical',
+     scale_um_per_px:pixels?null:Number($('#scale').value)});
+   }catch(e){error=e.message;}
+   if(objects.get(id)!==o||!o.confirmed||frameMetricsContext(id)!==context)continue;
+   Object.assign(o,{frameMetrics:data,frameMetricsContext:context,frameMetricsError:error});
+   refreshFrameMetrics();draw();
+  }
+ }finally{setBusy(false);}
 }
+$('#annotation-metrics-chamber').onchange=()=>{
+ refreshFrameMetrics();draw();
+ return calculateFrameMetrics({missingOnly:true});
+};
 $('#calculate-frame-metrics').onclick=calculateFrameMetrics;
 function area(c){let n=0;const a=c.getContext('2d').getImageData(0,0,W,H).data;for(let i=3;i<a.length;i+=4)if(a[i]>0)n++;return n}
 function loadImage(im,url){return new Promise((resolve,reject)=>{im.onload=()=>resolve();im.onerror=()=>reject(Error('图像加载失败，请刷新页面重试'));im.src=url;if(im.complete&&im.naturalWidth)resolve()})}
@@ -285,6 +361,7 @@ function canReturnToSetup(){
 function showStep(value){
  if(busy||saved)return;
  if(state?.mask_correction&&value===1)value=2;
+ if(value===3&&step!==3)$('#annotation-metrics-chamber').value=String(selected);
  step=value;
  WorkspaceLinks.setPanelOpen($('.sidebar'),true);
  $$('[data-panel]').forEach(e=>e.hidden=+e.dataset.panel!==step);
@@ -301,6 +378,7 @@ function showStep(value){
  setMode(step===2?(state.chamber_mode&&!roi?'roi':'sam_positive'):step===1&&!$('#pixel-mode').checked?'scale_auto':'view');
  ($('.sidebar>.floating-content')||$('.sidebar')).scrollTop=0;
  refresh();draw();
+ if(step===3&&state.chamber_mode)void calculateFrameMetrics({missingOnly:true});
  if(matchMedia('(max-width:760px)').matches){
   if(step===3)$('.sidebar').scrollIntoView({block:'start'});
   else $('.workspace').scrollTop=0;
@@ -310,6 +388,7 @@ function refresh(){
  document.body.classList.toggle('pixel-units',$('#pixel-mode').checked);
  $('#physical-mode').checked=!$('#pixel-mode').checked;
  if(!state)return;
+ $('#tracking-contrast').disabled=busy||saved||!!state.mask_correction;
  if(!busy&&!saved)draftSaver?.mark();
  $('#chamber-number-field').hidden=!state.chamber_mode;chamberNumber.disabled=busy||saved;
  if(document.activeElement!==chamberNumber)chamberNumber.value=selected;
@@ -401,8 +480,14 @@ function render(){
  ctx.clearRect(0,0,W,H);const tmp=scratch.getContext('2d');
  if($('#show-mask').checked)for(const [id,o] of objects){tmp.clearRect(0,0,W,H);tmp.globalCompositeOperation='source-over';tmp.drawImage(o.mask,0,0);tmp.globalCompositeOperation='source-in';tmp.fillStyle=color(id);tmp.fillRect(0,0,W,H);tmp.globalCompositeOperation='source-over';ctx.globalAlpha=+$('#opacity').value/100*(step===2&&id!==selected ? .65 : 1);ctx.drawImage(scratch,0,0)}
  ctx.globalAlpha=1;const z=Math.max(.08,zoom);ctx.lineWidth=1.5/z;
- const measurement=currentFrameMetrics();
- if(measurement?.centerline?.length&&step!==1){ctx.beginPath();ctx.moveTo(...measurement.centerline[0]);for(const point of measurement.centerline.slice(1))ctx.lineTo(...point);ctx.strokeStyle='#fff';ctx.lineWidth=1.5/z;ctx.stroke();if(measurement.body_center){ctx.beginPath();ctx.arc(...measurement.body_center,3/z,0,Math.PI*2);ctx.fillStyle='#ffd06a';ctx.fill();}}
+ if(step!==1)for(const id of visibleFrameMetricsIds()){
+  const measurement=currentFrameMetrics(id);
+  if(!measurement?.centerline?.length)continue;
+  ctx.beginPath();ctx.moveTo(...measurement.centerline[0]);
+  for(const point of measurement.centerline.slice(1))ctx.lineTo(...point);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1.5/z;ctx.stroke();
+  if(measurement.body_center){ctx.beginPath();ctx.arc(...measurement.body_center,3/z,0,Math.PI*2);ctx.fillStyle='#ffd06a';ctx.fill();}
+ }
  if(state.chamber_mode){
   ctx.font=`bold ${13/z}px sans-serif`;
   ctx.textAlign='left';ctx.textBaseline='top';
@@ -454,7 +539,7 @@ async function predict(){
  const token=state.token, signal=keyListeners.signal;
  try{
   const {job}=await annotationPost('/api/prediction',{
-   worm_id:selected,roi,points:o.points,box:o.box,prediction_token:o.token,previous_candidate:o.candidate
+   worm_id:selected,roi,sam2_input_contrast:$('#tracking-contrast').value,points:o.points,box:o.box,prediction_token:o.token,previous_candidate:o.candidate
   });
   const url='/api/prediction?job='+encodeURIComponent(job);
   while(!signal.aborted){
@@ -512,7 +597,7 @@ $('#next').onclick=()=>{if(busy||saved||$('#next').disabled)return;const target=
 $('#confirm-worm').onclick=async()=>{
  if(busy||saved||active().area<20)return;
  if(state.sequence_total && poly.length){say('请先闭合或取消多边形。','error');return;}
- active().confirmed=true;refresh();
+ active().frameMetricsContext=null;active().confirmed=true;refresh();
  await calculateFrameMetrics();
  if(state.chamber_mode){
    say(`培养槽 ${selected} 已确认。可添加下一个槽，或点下一步提交。`);
@@ -536,7 +621,7 @@ $('#scale-length').onfocus=()=>{if(step===1&&!busy&&!saved&&!isScaleTool(mode))s
 $('#scale').oninput=()=>{calibration=null;calibrationPending=false;scalePoints=[];$('#calibration-info').textContent='当前使用手动填写的比例。如需测量，请重新选取标尺两端。';if(isScaleTool(mode))setMode('view');refresh();draw()};$('#scale-length').oninput=()=>{if(scalePoints.length||calibrationPending)updateCalibration()};
 
 $('#save').onclick=saveAnnotation;
-async function saveAnnotation(){if(busy||saved)return;const check=readiness();if(!check.ready){refresh();resolveBlocker(check.blockers[0]);return}if(poly.length){say('请先闭合或取消多边形。','error');return}setBusy(true);say(state.batch_deferred?'正在保存标注并加入队列…':'正在保存标注并准备分析…','working');try{await draftSaver?.flush();const method=analysisMethod();const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({[state.chamber_mode?'chambers':'worms']:[...objects].map(([id,o])=>({id,roi:o.roi,mask:o.mask.toDataURL('image/png'),head_point:o.headPoint||null,head_points:o.headPoints||[]})),roi,measurement_mode:$('#pixel-mode').checked?'pixels':'physical',scale_um_per_px:$('#pixel-mode').checked?null:+$('#scale').value,calibration,analysis_profile:'current',centerline_method:method,head_detection:CURRENT_HEAD_DETECTION,provenance:'User-clicked SAM2 masks, individually reviewed and optionally brush-edited in Worm Studio'})});const data=await response.json();if(!response.ok)throw Error(data.error);saved=true;draftSaver?.stop();if(data.next_annotation){allowLeave=true;window.location.replace('/');return}if(data.queued){if(window.parent!==window){window.parent.postMessage({type:'annotation-queued'},location.origin);say('标注已加入队列，请选择下一个视频继续标定。');}else{location.assign('/studio');}return}if(data.progress_url){window.location.assign('/progress');return}$('#success-summary').textContent=`${data.worm_count} 条线虫 · 自动分析`;$('#saved-path').textContent=data.path;$('#success').hidden=false;$('#save-state').style.background='#35ac87';say(`已保存 ${data.worm_count} 条虫，正在准备分析。`);$('#close-success').focus()}catch(e){say(`保存失败：${e.message}`,'error')}finally{setBusy(false)}};
+async function saveAnnotation(){if(busy||saved)return;const check=readiness();if(!check.ready){refresh();resolveBlocker(check.blockers[0]);return}if(poly.length){say('请先闭合或取消多边形。','error');return}setBusy(true);say(state.batch_deferred?'正在保存标注并加入队列…':'正在保存标注并准备分析…','working');try{await draftSaver?.flush();const method=analysisMethod();const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({[state.chamber_mode?'chambers':'worms']:[...objects].map(([id,o])=>({id,roi:o.roi,mask:o.mask.toDataURL('image/png'),head_point:o.headPoint||null,head_points:o.headPoints||[]})),roi,sam2_input_contrast:$('#tracking-contrast').value,measurement_mode:$('#pixel-mode').checked?'pixels':'physical',scale_um_per_px:$('#pixel-mode').checked?null:+$('#scale').value,calibration,analysis_profile:'current',centerline_method:method,head_detection:CURRENT_HEAD_DETECTION,provenance:'User-clicked SAM2 masks, individually reviewed and optionally brush-edited in Worm Studio'})});const data=await response.json();if(!response.ok)throw Error(data.error);saved=true;draftSaver?.stop();if(data.next_annotation){allowLeave=true;window.location.replace('/');return}if(data.queued){if(window.parent!==window){window.parent.postMessage({type:'annotation-queued'},location.origin);say('标注已加入队列，请选择下一个视频继续标定。');}else{location.assign('/studio');}return}if(data.progress_url){window.location.assign('/progress');return}$('#success-summary').textContent=`${data.worm_count} 条线虫 · 自动分析`;$('#saved-path').textContent=data.path;$('#success').hidden=false;$('#save-state').style.background='#35ac87';say(`已保存 ${data.worm_count} 条虫，正在准备分析。`);$('#close-success').focus()}catch(e){say(`保存失败：${e.message}`,'error')}finally{setBusy(false)}};
 $('#close-success').onclick=()=>$('#success').hidden=true;
 document.addEventListener('keydown',e=>{if($('#head-sampler').open||e.target.matches('input,select,textarea')||busy||saved)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();void undo()}else if(step===2&&['1','2','3'].includes(e.key)){e.preventDefault();setMode({'1':'sam_positive','2':'sam_negative','3':'erase'}[e.key])}else if(e.key==='Escape'){poly=[];setMode('view');draftSaver?.mark()}});
 new ResizeObserver(fit).observe(viewport);
@@ -551,11 +636,12 @@ async function init(){try{const response=await fetch('/state');if(!response.ok)t
   $('#worm-list').setAttribute('aria-label','培养槽列表');
  }
  const previous=state.previous;
+ $('#tracking-contrast').value=previous?.sam2_input_contrast||state.sam2_input_contrast||'none';
  if(previous){$('#pixel-mode').checked=previous.measurement_mode==='pixels';roi=previous.roi;$('#scale').value=previous.scale_um_per_px;calibration=previous.calibration||null;if(calibration){scalePoints=structuredClone(calibration.points);scalePointMethod=calibration.method||'manual';$('#scale-length').value=calibration.length_um;$('#calibration-info').textContent=calibrationText(measureCalibration(scalePoints,calibration.length_um))}for(const w of previous.worms)objects.set(w.id,{mask:await decode(w.mask),points:[],box:null,token:null,candidate:0,candidates:[],confirmed:w.confirmed!==false,area:w.area_px,headPoint:w.head_point||null,headPoints:w.head_points||[]});selected=objects.keys().next().value;state.centerline_method=previous.centerline_method;state.head_detection=previous.head_detection}else add(false);
  $('#loading').hidden=true;showStep(state.mask_correction?2:1);fit();say(state.mask_correction?`已载入源帧 ${state.frame} 的最新已保存掩膜。修正并确认后重新处理，原结果保留。`:previous?'已载入上次保存的掩膜与方法，可以继续检查或修改。':'设置分析区域与尺寸，随后点选每条线虫。');
  if(state.mask_correction){document.body.classList.add("mask-correction");$(".manual-tools").open=true;setMode("paint");$("#save").innerHTML="保存修正并重新处理 <span>→</span>";}
  await initDrafts();
- if(active()?.confirmed){await calculateFrameMetrics();if(step!==1)$('#annotation-metrics-panel').scrollIntoView({block:'nearest'});}
+ if(active()?.confirmed&&!(state.chamber_mode&&step===3)){await calculateFrameMetrics({missingOnly:true});if(step!==1)$('#annotation-metrics-panel').scrollIntoView({block:'nearest'});}
  }catch(e){$('#loading').hidden=true;say(`加载失败：${e.message}`,'error')}}
 async function checkOptionalMethods(retry=false){
  try{
@@ -582,7 +668,7 @@ async function annotationPost(path, body) {
  const d=await r.json();if(!r.ok)throw Error(d.error||'请求失败');return d;
 }
 function draftBody() {
- return {roi,selected,step,mode,poly,pixelMode:$('#pixel-mode').checked,scale:$('#scale').value,
+ return {roi,selected,step,mode,poly,trackingContrast:$('#tracking-contrast').value,pixelMode:$('#pixel-mode').checked,scale:$('#scale').value,
   calibration,calibrationPending,scalePoints,scalePointMethod,scaleLength:$('#scale-length').value,
   method:analysisMethod(),autoHead:true,headInitMethod:CURRENT_HEAD_DETECTION,
   objects:[...objects].map(([id,o])=>[id,{roi:o.roi,mask:o.mask.toDataURL(),points:o.points,box:o.box,confirmed:o.confirmed,area:o.area,headPoint:o.headPoint,headPoints:o.headPoints||[]}])};
@@ -591,6 +677,7 @@ async function restoreDraft(d) {
  const restored=await Promise.all(d.objects.map(async([id,o])=>[id,{...o,mask:await decode(o.mask),token:null,candidate:0,candidates:[]}]));
  objects=new Map(restored);selected=objects.has(d.selected)?d.selected:objects.keys().next().value;
  roi=d.roi;calibration=d.calibration;scalePointMethod=d.scalePointMethod||calibration?.method||'manual';scalePoints=d.scalePoints||[];calibrationPending=!!d.calibrationPending;
+ if(d.trackingContrast&&!state.mask_correction)$('#tracking-contrast').value=d.trackingContrast;
  $('#pixel-mode').checked=d.pixelMode;$('#scale').value=d.scale;$('#scale-length').value=d.scaleLength||d.calibration?.length_um||'';
  // Old drafts restore geometry and units; new analyses always use the current profile.
  showStep([1,2,3].includes(d.step)?d.step:1);if(modes[d.mode])setMode(d.mode);poly=d.poly||[];
@@ -631,6 +718,7 @@ window.addEventListener('beforeunload',event=>{
  if(window.AnnotationDraft.dirty()){event.preventDefault();event.returnValue='';}
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&!busy)void saveDraft().catch(()=>{});});
+$('#tracking-contrast').onchange=()=>{draftSaver?.mark();say('已更改跟踪画面。使用“重新预测”可按新设置生成轮廓。')};
 $('#save-draft').onclick=()=>{draftSaver?.mark();saveDraft().then(()=>say('草稿已保存到本机。')).catch(e=>say(e.message,'error'));};
 $('#load-anchor').onclick=async()=>{
  if(busy||saved)return;

@@ -11,6 +11,10 @@ function fixture() {
   const worm = {points: [{label: 1}], mask: 'previous', token: 'prior', candidate: 2};
   const context = vm.createContext({
     busy: false, saved: false, active: () => worm, selected: 1, roi: null,
+    $(selector) {
+      assert.equal(selector, '#tracking-contrast');
+      return {value: 'edge_refine'};
+    },
     state: {token: 'frame'}, keyListeners: new AbortController(), draw() {}, say() {},
     setBusy(value) { context.busy = value; },
     setTimeout: callback => setImmediate(callback),
@@ -18,6 +22,7 @@ function fixture() {
       assert.equal(url, '/api/prediction');
       assert.equal(body.prediction_token, 'prior');
       assert.equal(body.previous_candidate, 2);
+      assert.equal(body.sam2_input_contrast, 'edge_refine');
       return {job: 'work'};
     },
     decode: async mask => mask

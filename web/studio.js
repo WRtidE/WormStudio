@@ -339,11 +339,11 @@
     $('[data-view="progress"]').disabled = !connected || !analysisId || isAnnotation;
     $('[data-view="results"]').disabled = !connected || (progress?.status !== 'complete' && !ResultNavigation.group(progress).length && !historyGroup);
     $('[data-view="evaluation"]').disabled = localFile;
-    $('#eval-return').textContent = progress?.status === 'complete' ? '返回分析结果' : analysisId ? '返回当前分析' : '返回文件预览';
+    $('#eval-return').textContent = AnalysisPresentation.sessionView(progress)==='results' ? '返回分析结果' : analysisId ? '返回当前分析' : '返回文件预览';
     renderLinkedRuns();
     renderBatch();
     renderResultNavigation();
-    $('#session-badge').textContent = localFile ? '文件预览模式' : {ready:'本地工作区',preparing:'正在标注',running:'分析进行中',complete:'分析已完成',failed:'需要检查',cancelled:'已中断'}[progress?.status] || '连接中';
+    $('#session-badge').textContent = localFile ? '文件预览模式' : progress?.batch?.running ? '批处理中' : {ready:'本地工作区',preparing:'正在标注',running:'分析进行中',complete:'分析已完成',failed:'需要检查',cancelled:'已中断'}[progress?.status] || '连接中';
   }
   async function batchAction(action,id,group) {
     try {
@@ -758,7 +758,7 @@
       if (!initialized) {
         initialized = true;
         if (analysisId) {
-          showView(data.status === 'ready' && !data.batch?.running ? 'preview' : data.status === 'preparing' && !data.batch?.running ? 'annotation' : data.status === 'complete' ? 'results' : 'progress');
+          showView(AnalysisPresentation.sessionView(data));
         }
         if (view !== 'progress') status(analysisId ? '已恢复当前分析会话' : '工作台已就绪 · 导入视频即可开始');
       }
@@ -771,11 +771,11 @@
           showView('results');status(finishedChambers?'已显示本批次结果':'分析完成 · 已显示线虫指标');
         }
         if (data.status === 'ready' && !data.batch?.running && view === 'annotation') { showView('preview'); preview(selected()); status('标注已加入队列，可继续标定下一个视频'); }
-        if (data.status === 'running' && view === 'annotation') showView('progress');
+        if ((data.status === 'running'||data.batch?.running) && view === 'annotation') showView('progress');
         if (data.status === 'failed' || data.status === 'cancelled') {
           status(data.error || '处理已停止，请查看处理进度。', true);
           if (view === 'annotation') showView('progress');
-        } else if (data.status === 'complete' && view !== 'progress') status('分析完成 · 可查看逐帧指标并导出结果');
+        } else if (data.status === 'complete' && !data.batch?.running && view !== 'progress') status('分析完成 · 可查看逐帧指标并导出结果');
       }
       if (data.status === 'preparing' && !data.batch?.running) status('正在标注 · 草稿自动保存到本机');
       if (data.status === 'running' && view !== 'progress') status(`正在处理 ${data.video_name}`);
@@ -851,7 +851,7 @@
   $('#current-analysis').onclick = () => {
     if(editingSetup()){resumeAnnotationSetup().catch(error=>status(error.message,true));return;}
     selectedId=files.some(f=>f.id===analysisId)?analysisId:null;renderFiles();
-    showView(progress.status === 'preparing' ? 'annotation' : progress.status === 'complete' ? 'results' : 'progress');
+    showView(AnalysisPresentation.sessionView(progress));
   };
   $('#result-summary').onclick = () => $('#result-summary-panel').scrollIntoView({block:'start',behavior:'smooth'});
   const resultMenus=[...document.querySelectorAll('.result-action-menu')];
@@ -859,7 +859,7 @@
   document.addEventListener('click',event=>resultMenus.forEach(menu=>{if(!menu.contains(event.target))menu.open=false;}));
   document.addEventListener('keydown',event=>{if(event.key==='Escape')resultMenus.forEach(menu=>{if(menu.open){menu.open=false;menu.querySelector('summary').focus();}});});
   $('#eval-return').onclick = () => {
-    const target = progress?.status === 'complete' ? 'results' : analysisId ? (progress?.status === 'preparing' ? 'annotation' : 'progress') : 'preview';
+    const target = analysisId ? AnalysisPresentation.sessionView(progress) : 'preview';
     showView(target); if (target === 'preview') preview(selected());
   };
   $('#result-reannotate').onclick = () => {

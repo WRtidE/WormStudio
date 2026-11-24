@@ -6,14 +6,14 @@ import cv2
 import numpy as np
 from scipy import ndimage
 
-VERSION = 'annotation-frame-metrics-v1'
+VERSION = 'annotation-frame-metrics-v2'
 
 
 def measure_mask(mask, *, frame, worm_id, measurement_mode, scale_um_per_px=None, origin=(0, 0)):
     from measurement_units import validate_scale
     from framewise_pose import observed_pose, arc_midpoint
     from centerline_topology import geometry_quality
-    from skeleton_geometry import frustum_volume
+    from skeleton_geometry import silhouette_dimensions
     from phenotype_statistics import measure_posture
 
     units = dict(measurement_mode=measurement_mode, scale_um_per_px=scale_um_per_px)
@@ -53,19 +53,16 @@ def measure_mask(mask, *, frame, worm_id, measurement_mode, scale_um_per_px=None
                 reason = f'中线按主体提取；另有 {ignored} 个离散像素，面积仍包含全部标注轮廓。'
     center = None
     if line is not None:
-        # Same clear-frame path and native-mask radius definition as the video analysis.
-        x, y, w, h = cv2.boundingRect(pose_mask.astype(np.uint8))
-        local = np.pad(pose_mask[y:y+h, x:x+w], 2)
-        radius = ndimage.map_coordinates(ndimage.distance_transform_edt(local),
-                                        (line - [x-2, y-2]).T[::-1], order=1, mode='constant')
+        bounds = cv2.boundingRect(pose_mask.view(np.uint8))
+        width_px, volume_px3 = silhouette_dimensions(pose_mask, line, bounds)
         length = float(np.linalg.norm(np.diff(line, axis=0), axis=1).sum() * scale)
-        width = float(2 * radius.mean() * scale)
+        width = width_px * scale
         row.update(length_um=length, mean_width_um=width)
         measure_posture(row, line, scale)
         center = arc_midpoint(line)
         values.update(length=length, width=width, extension=row['body_extension'],
                       ratio=length / width if width > 0 else None,
-                      volume=frustum_volume(line, radius) * scale ** 3)
+                      volume=volume_px3 * scale ** 3)
     specs = [('length', '当前帧体长', unit), ('width', '当前帧平均体宽', unit),
              ('area', '当前帧面积', unit+'²'), ('extension', '当前帧身体伸展度', ''),
              ('ratio', '当前帧长宽比', ''), ('volume', '当前帧体积估算', unit+'³')]

@@ -190,7 +190,7 @@ window.StudioResults = (() => {
     renderAnchors();
     el('identity-open').disabled=!(identityReport.edges||[]).some(e=>e.worm_id===worm&&e.reference_end_frame!==null);
     el('identity-open').hidden=el('identity-open').disabled;
-    if(audit?.tracklet_pose_valid!==undefined) el('result-gate-audit').textContent+=` 匿名片段姿态 ${audit.tracklet_pose_valid} 帧，额外提供 ${audit.tracklet_additional_pose} 帧局部结果；不合并为已确认个体。`;
+    if(audit?.tracklet_pose_valid!==undefined) el('result-gate-audit').textContent+=` 连续跟踪片段中有 ${audit.tracklet_pose_valid} 帧可测量姿态，其中 ${audit.tracklet_additional_pose} 帧仅提供片段内的测量值。`;
     if(audit?.identity_auto_reassociated!==undefined) el('result-gate-audit').textContent+=` 自动关联 ${audit.identity_auto_reassociated} 帧；人工确认 ${audit.identity_human_confirmed} 帧。`;
     const legacy = row.quality?.legacy;
     const identity = row.quality?.dimensions.identity;
@@ -200,26 +200,21 @@ window.StudioResults = (() => {
     el('result-identity').classList.toggle('needs-review', unverified);
     text('result-identity-title', legacy ? '身份尚未评估' : excluded ? '源帧无效，身份不作判断' : unverified ? (row.tracklet_status==='stable_anonymous'?'局部片段可用 · 跨段身份未确认':'身份待复核') : statuses[identity?.status] || '身份状态已记录');
     text('result-identity-note', legacy ? '此结果未按新质量规则评估。请重新运行后再作质量判断。' : excluded ? '本帧不用于测量；已有的身份复核状态继续保留。' : row.identity_note);
-    text('result-metric-note', legacy ? '旧版指标 · 质量尚未重新评估' : unverified ? '个体指标暂停 · 可用面积仅作匿名参考' : '仅显示通过质量规则的测量值');
+    text('result-metric-note', legacy ? '旧版指标 · 质量尚未重新评估' : unverified ? '个体身份待复核，面积仅供本帧参考' : '仅显示通过质量规则的测量值');
     el('studio-metric-cards').replaceChildren();el('studio-extra-metrics').replaceChildren();
     for (const [metric, label, unit] of metrics) {
       const pixel = row.measurement_mode === 'pixels';
       const value = row[pixel ? metric.replace('_um','_px') : metric], available = typeof value === 'number' && Number.isFinite(value);
       const card = document.createElement('article'); card.className = 'studio-metric' + (available ? '' : ' missing');
       const name = document.createElement('span');
-      name.textContent = metric === 'area_um2' && unverified && !legacy ? '匿名轮廓面积' : label;
+      name.textContent = metric === 'area_um2' && unverified && !legacy ? '本帧轮廓面积' : label;
       const number = document.createElement('strong'); number.textContent = available ? value.toLocaleString('zh-CN', {maximumFractionDigits:metric==='midbody_abs_curvature_per_um'?6:2}) : '—';
       const suffix = document.createElement('small'); suffix.textContent = pixel ? unit.replace('μm','px') : unit;
       card.append(name, number, suffix); el(['volume_um3','mean_width_um','body_extension','midbody_abs_curvature_per_um','length_width_ratio','speed_bl_s'].includes(metric)?'studio-extra-metrics':'studio-metric-cards').append(card);
     }
-    if(row.tracklet_status==='stable_anonymous') {
-      for(const [field,label,unit] of [['tracklet_length_px','片段局部体长','px'],['tracklet_speed_px_s','片段局部速度','px/s']]) {
-        const card=document.createElement('article');card.className='studio-metric';
-        const labelNode=document.createElement('span'),valueNode=document.createElement('strong'),note=document.createElement('small');
-        labelNode.textContent=label;valueNode.textContent=Number.isFinite(row[field])?row[field].toFixed(2):'—';
-        note.textContent=`${unit} · ${row.tracklet_id} · 匿名`;card.append(labelNode,valueNode,note);el('studio-extra-metrics').append(card);
-      }
-    }
+    el('tracklet-metrics').hidden = row.tracklet_status !== 'stable_anonymous';
+    text('tracklet-length', Number.isFinite(row.tracklet_length_px) ? row.tracklet_length_px.toFixed(2) : '—');
+    text('tracklet-speed', Number.isFinite(row.tracklet_speed_px_s) ? row.tracklet_speed_px_s.toFixed(2) : '—');
     // Keep expanded evidence open while stepping through the same worm.
     const open = new Set([...el('result-dimensions').querySelectorAll('details[open]')].map(item => item.dataset.dimension));
     el('result-dimensions').replaceChildren();
@@ -435,6 +430,7 @@ window.StudioResults = (() => {
     controls.forEach(id => el(id).disabled = true);
     ['studio-metric-cards','studio-extra-metrics','studio-extra-artifacts','result-dimensions','result-quality-track','result-worm','studio-artifacts'].forEach(id => el(id).replaceChildren());
     text('result-frame-label', '正在读取结果…'); text('result-identity-title', '正在读取质量记录');
+    el('tracklet-metrics').hidden = true;
     text('result-identity-note', '逐帧指标与质量状态使用同一份记录。');
     text('result-quality-badge', '逐帧检查'); text('result-issue-count', '—');
     text('result-worm-count', ''); el('result-identity').classList.remove('needs-review');
@@ -448,7 +444,7 @@ window.StudioResults = (() => {
     el('result-more').hidden = !data.can_reannotate;
     el('result-export-empty').hidden = !!data.artifacts?.length;
     el('result-worm-picker').hidden = true;
-    text('result-review-hint', data.can_reannotate ? '重新标注会创建新结果，保留已有记录。身份确认需要独立复核证据。' : '身份存疑时，面积仅作为匿名轮廓参考。');
+    text('result-review-hint', data.can_reannotate ? '重新标注会创建新结果，保留已有记录。身份确认需要独立复核证据。' : '个体身份待复核时，面积仅供本帧参考。');
     for (const artifact of data.artifacts || []) {
       const link = document.createElement('a');
       link.href = artifactUrl(data,artifact.key);

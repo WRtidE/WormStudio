@@ -51,3 +51,8 @@ ol.calibration-guide{padding-left:20px}
 #sample-view {position:relative; height:min(65dvh,680px); margin:10px 0; overflow:hidden; border-radius:8px; background:#20242e; touch-action:none; user-select:none; cursor:crosshair}
 #sample-view.dragging {cursor:grabbing}
 #sample-canvas {position:absolute; top:0; left:0; transform-origin:top left; pointer-events:none; max-width:none; max-height:none}
+#annotation-metrics-picker:not([hidden]) {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; color:var(--ink); font-size:12px;
+}
+#annotation-metrics-chamber { width:min(10em,65%); min-height:32px; }

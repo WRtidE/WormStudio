@@ -1,6 +1,12 @@
 """Shared SAM2 model selection for annotation, tracking and cache checks."""
 
 
+def input_contrast(value):
+    if value not in ('none', 'clahe', 'static_background', 'edge_refine'):
+        raise ValueError('SAM2 跟踪输入设置无效')
+    return value
+
+
 def model_spec(size='large'):
     if size not in ('large', 'tiny'):
         raise ValueError('sam2_model 必须是 large 或 tiny')

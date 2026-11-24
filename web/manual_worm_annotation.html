@@ -30,6 +30,9 @@
 <p class="eyebrow">SEGMENT &amp; REVIEW</p><div class="section-title"><h1 id="slot-heading">逐条点选线虫</h1><span id="worm-count" class="count-badge">0</span></div><p class="intro" id="slot-intro">每次分析一条线虫。在虫体内部点击，检查轮廓后确认。</p>
 <label id="chamber-number-field" hidden>当前培养槽编号 <input id="chamber-number" type="number" min="1" max="10000" step="1" aria-label="芯片上的培养槽编号" style="width:6em"></label><div id="worm-list" class="worm-list" aria-label="线虫列表"></div><button id="add" class="wide add-button">＋ 添加一条线虫</button>
 <div class="divider"></div><div class="section-title"><h2>分割工具</h2><span id="model-label" class="tag">智能分割</span></div>
+<div class="review-card"><label for="tracking-contrast">分割与跟踪画面</label>
+<select id="tracking-contrast"><option value="none">原图</option><option value="edge_refine">按原图边缘细化</option><option value="static_background">抑制固定背景</option><option value="clahe">局部对比度增强</option></select>
+<p class="help">轮廓偏宽时可尝试边缘细化。固定机位下，活动虫体粘连培养柱时可尝试抑制固定背景。</p></div>
 <div class="tool-grid">
 <button data-mode="sam_positive" class="tool active"><span class="tool-icon positive">＋</span><b>点选虫体</b><small>添加属于这条虫的点</small></button>
 <button data-mode="sam_negative" class="tool"><span class="tool-icon negative">−</span><b>排除提示</b><small>提示模型排除此处</small></button>
@@ -53,13 +56,15 @@
 <h1>确认并开始</h1><p class="intro">自动完成虫体跟踪、姿态分析和指标计算。</p>
 <div class="analysis-preparation"><p id="analysis-status" role="status" tabindex="-1">正在检查分析准备…</p><button id="retry-analysis" class="wide secondary" hidden>重新检查</button></div>
 <div class="review-card"><h2>头尾识别</h2><p id="review-heads" class="detail-line"></p></div>
+
 <div class="review-card"><h2>处理前确认</h2><dl><div><dt>线虫掩膜</dt><dd id="review-worms">—</dd></div><div><dt>分析尺寸</dt><dd id="review-roi">—</dd></div><div><dt>像素比例</dt><dd id="review-scale">—</dd></div><div><dt>中线显示</dt><dd><i class="line-swatch"></i>绿色轮廓 · 白色中线</dd></div></dl></div>
 </section>
 <section id="annotation-metrics-panel" class="annotation-metrics-panel" aria-label="标注帧指标" hidden>
 <div class="section-title"><h2>标注帧指标</h2><span id="annotation-metrics-frame" class="tag"></span></div>
+<label id="annotation-metrics-picker" for="annotation-metrics-chamber" hidden>查看培养槽<select id="annotation-metrics-chamber"></select></label>
 <button id="calculate-frame-metrics" class="wide secondary" type="button">计算当前帧指标</button>
 <p id="annotation-metrics-status" class="help" role="status">确认虫体轮廓后自动计算。</p>
-<table id="annotation-metrics-table" class="annotation-metrics-table" hidden><tbody id="annotation-metrics-values"></tbody></table>
+<div class="annotation-metrics-scroll"><table id="annotation-metrics-table" class="annotation-metrics-table" aria-label="标注帧指标" hidden><thead id="annotation-metrics-columns"></thead><tbody id="annotation-metrics-values"></tbody></table></div>
 <p class="help">仅测量当前标注帧。速度、摆动频率等需在整段分析后查看；体积为估算。</p>
 </section>
 </aside>

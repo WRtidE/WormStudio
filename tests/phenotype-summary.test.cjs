@@ -46,11 +46,16 @@ test('default rendering keeps definitions in details and shows grouped compact r
  const button=nodes.get('summary-core').children[0].children[0];assert.equal(button.textContent,'中位体长');assert.match(button.title,/100 \/ 120/);
  button.onclick();assert.equal(nodes.get('metric-detail-dialog').open,true);assert.equal(nodes.get('metric-detail-definition').textContent,'有效帧中位数');
  assert.equal(nodes.get('summary-trends').open,false);
+ assert.equal(nodes.get('summary-trends').hidden,false);
+ vm.runInContext('renderPhenotypes(null,"sample")',context);
+ assert.equal(nodes.get('summary-trends').hidden,true);
 });
 test('result HTML is metric-first with optional video/review and no provisional A/B/C category',()=>{
  const html=fs.readFileSync(path.join(__dirname,'../web/studio.html'),'utf8');
  assert.ok(html.indexOf('id="summary-core"')<html.indexOf('id="studio-result-video"'));
  assert.match(html,/<section id="result-summary-panel"/);
+ assert.ok(html.indexOf('id="result-video-details"')<html.indexOf('id="summary-trends"'));
+ assert.ok(html.indexOf('id="summary-trends"')<html.indexOf('id="result-analysis-details"'));
  assert.match(html,/<details id="result-video-details"/);assert.match(html,/<details id="result-analysis-details"/);
  assert.doesNotMatch(html,/id="activity-result"|运动分类 A \/ B \/ C/);
 });

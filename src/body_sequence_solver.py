@@ -76,14 +76,14 @@ def visible_pillars(gray,masks,radius):
     return result
 
 
-def candidates_for(mask,reference,observed):
+def candidates_for(mask,reference,observed,device='cpu'):
     if not mask.any():return [],1.
     field,origin=local_field(mask)
     radius=max(1.,float(np.median(field[field>0]))*1.5)
     def keep(candidates):
         out=[]
         for c in candidates:
-            candidate_score(c,mask,field,origin,reference,radius,None)
+            candidate_score(c,mask,field,origin,reference,radius,None,device=device)
             if (c['inside_fraction']<.97 or c['reconstruction_iou']<.55 or c['local_hairpin']
                     or not MIN_LENGTH_FRACTION*reference-2*radius <= c['length_px'] <= 1.15*reference+2*radius):continue
             if any(min(np.linalg.norm(c['points']-v['points'],axis=1).mean(),
@@ -111,7 +111,7 @@ def candidates_for(mask,reference,observed):
     return keep(raw),radius
 
 
-def recover_short_observations(frames, observed, masks, reference, fps):
+def recover_short_observations(frames, observed, masks, reference, fps, device='cpu'):
     """Reconsider a short projected length only between two measured, separated poses."""
     reliable = [i for i, choices in enumerate(frames)
                 if choices and choices[0]['name'] == 'clear_observation']
@@ -144,7 +144,7 @@ def recover_short_observations(frames, observed, masks, reference, fps):
             radius = max(1., float(np.median(field[field > 0])) * 1.5)
             candidate = dict(points=points, name='short_observation', connection_cost=0.,
                              endpoint_observed=[True, True])
-            candidate_score(candidate, masks[i], field, origin, reference, radius, None)
+            candidate_score(candidate, masks[i], field, origin, reference, radius, None, device=device)
             if (.65 * reference <= candidate['length_px'] < MIN_LENGTH_FRACTION * reference - 2 * radius
                     and candidate['length_px'] >= .85 * length
                     and np.linalg.norm(points[0] - points[-1]) >= .45 * length
@@ -223,7 +223,7 @@ def flow_supports_order(gray, masks, start, stop, earlier, later, indices):
             and matches[indices <= 25].any() and matches[indices >= 75].any())
 
 
-def recover_native_observations(frames, observed, masks, gray, reference, fps, excluded, point_count):
+def recover_native_observations(frames, observed, masks, gray, reference, fps, excluded, point_count, device='cpu'):
     """Retry short missing paths at native resolution, verified from both sides.
 
     Only the current silhouette supplies recovered geometry. Neighbours and
@@ -245,7 +245,7 @@ def recover_native_observations(frames, observed, masks, gray, reference, fps, e
             if p is None:
                 attempt['reason'] = reason
                 continue
-            choices, _ = candidates_for(masks[i], reference, p)
+            choices, _ = candidates_for(masks[i], reference, p, device=device)
             candidate = next((c for c in choices if c['name']=='clear_observation'), None)
             if candidate is None:
                 attempt['reason'] = 'native_geometry_rejected'
@@ -264,7 +264,7 @@ def recover_native_observations(frames, observed, masks, gray, reference, fps, e
     return attempts
 
 
-def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None,guards=None):
+def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None,guards=None,device='cpu'):
     """Return 101-point geometry, per-frame endpoint evidence and sequence audit.
 
     Manual points are crop-local. Explicitly excluded source frames break both
@@ -285,11 +285,11 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
     reference=float(np.median(lengths))
     frames=[];radii=[]
     for i,(mask,p) in enumerate(zip(masks,observed)):
-        cs,radius=([],1.) if i in excluded else candidates_for(mask,reference,p)
+        cs,radius=([],1.) if i in excluded else candidates_for(mask,reference,p,device=device)
         frames.append(cs);radii.append(radius)
         if progress:progress(i+1,n,'生成完整虫体与交叉支路候选',.15+.4*(i+1)/max(n,1))
-    recover_short_observations(frames, observed, masks, reference, fps)
-    recovery = recover_native_observations(frames,observed,masks,gray,reference,fps,excluded,point_count)
+    recover_short_observations(frames, observed, masks, reference, fps, device=device)
+    recovery = recover_native_observations(frames,observed,masks,gray,reference,fps,excluded,point_count,device=device)
     marks=[dict(a) for a in normalize_anchors(manual,n)]
     for a in marks:a['human']=True
     if not marks and auto_seed:
@@ -301,6 +301,9 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                 break
     idx=np.array([i for i,c in enumerate(frames) if c],int)
     queue=[list(a) for a in np.split(idx,np.where(np.diff(idx)>1)[0]+1) if len(a)]
+    # Candidates and samples are fixed now. Splitting a window or verifying a
+    # second mark reuses the same image motion, independent of radius and marks.
+    flow_cache={}
     while queue:
         group=queue.pop(0);lo,hi=int(group[0]),int(group[-1])
         local=[a for a in marks if lo<=a['frame']<=hi]
@@ -324,7 +327,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                     # Check marks against an independently oriented body path.
                     # A contradictory mark must not manufacture an endpoint swap.
                     unmarked,_=select_body_sequence(frames[lo:hi+1],gray[lo:hi+1],masks[lo:hi+1],radius,
-                        point_count=point_count,pillar_centers=pillars)
+                        point_count=point_count,pillar_centers=pillars,device=device,flow_cache=flow_cache,frame_offset=lo)
                     votes=[]
                     for a in local:
                         p=unmarked[a['frame']-lo]['points']
@@ -334,7 +337,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                         raise ValueError('Conflicting head marks on a continuous body path')
                 chosen,evidence=select_body_sequence(frames[lo:hi+1],gray[lo:hi+1],masks[lo:hi+1],radius,
                     point_count=point_count,pillar_centers=pillars,
-                    anchors=[(a['frame']-lo,a['point']) for a in local])
+                    anchors=[(a['frame']-lo,a['point']) for a in local],device=device,flow_cache=flow_cache,frame_offset=lo)
             except BodySequenceBreak as exc:
                 cut=lo+exc.index
                 queue[:0]=[list(range(lo,cut)),list(range(cut,hi+1))]
@@ -344,7 +347,7 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
                 if not local:raise
                 linked=False;conflict=True
                 chosen,evidence=select_body_sequence(frames[lo:hi+1],gray[lo:hi+1],masks[lo:hi+1],radius,
-                    point_count=point_count,pillar_centers=pillars)
+                    point_count=point_count,pillar_centers=pillars,device=device,flow_cache=flow_cache,frame_offset=lo)
                 evidence['head_anchor_rejected']=str(exc)
         for state,i in zip(chosen,group):
             c=frames[i][state['candidate']]

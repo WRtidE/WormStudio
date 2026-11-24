@@ -7,7 +7,19 @@ import numpy as np
 from quality_schema import flag, permissions
 
 
-VERSION = 'wormstudio-phenotypes-v6'
+VERSION = 'wormstudio-phenotypes-v7'
+
+
+def angular_half_span(angles):
+    """Central 90% half-span about the circular mean, across the ±180° seam."""
+    if not len(angles):
+        return None
+    direction = np.exp(1j*np.deg2rad(angles)).mean()
+    if abs(direction) < 1e-12:
+        return None
+    offsets = (angles - np.rad2deg(np.angle(direction)) + 180) % 360 - 180
+    low, high = np.percentile(offsets, [5, 95])
+    return float((high - low) / 2)
 
 
 def measure_posture(row, points, scale):
@@ -62,6 +74,8 @@ def trajectory_statistics(smoothed, times, trajectory_runs):
         frames += len(indices)
     return dict(trajectory_segments=segments, segment_net_displacement_sum_um=displacement if frames else None,
                 path_length_um=distance if frames else None,
+                mean_speed_um_s=distance / duration if duration > 0 else None,
+                mean_speed_method='path_over_observed_time',
                 path_straightness=min(1., displacement / distance) if distance > 0 else None,
                 path_valid_frames=frames, path_valid_duration_s=duration)
 

@@ -184,9 +184,9 @@ class PipelineProgress:
                        ('quality', '逐帧质量与证据 JSON', result/'quality.json', 'metrics'),
                        ('quality-audit', '质量门控汇总 JSON', result/'quality-audit.json', 'metrics'),
                        ('quality-gates', '逐帧门控与触发位置 CSV', result/'quality-gates.csv', 'metrics'),
-                       ('tracklets', '匿名连续片段与边界 JSON', result/'tracklets.json', 'metrics'),
+                       ('tracklets', '连续跟踪片段及起止帧 JSON', result/'tracklets.json', 'metrics'),
                        ('identity-links', '片段身份关联、图像依据与复核 JSON', result/'identity-links.json', 'metrics'),
-                       ('tracklet-metrics', '片段局部指标 CSV（非确认个体轨迹）', result/'tracklet-metrics.csv', 'metrics'),
+                       ('tracklet-metrics', '连续跟踪片段的逐帧指标 CSV', result/'tracklet-metrics.csv', 'metrics'),
                        ('frame-json', '逐帧指标 JSON', result/'per_frame_metrics.json', 'metrics'),
                        ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
                        ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
@@ -238,6 +238,19 @@ class PipelineProgress:
             return dict(self.frame_metrics, sample=sample, crop_xyxy=self.frame_metrics.get('crop_xyxy') or (self.config.get('crop_xyxy') if self.config else None),
                         head_detection_mode=self.config.get('head_detection','twardis') if self.config else None)
 
+    def _prepare_sample(self, settings, frames, detail):
+        self.path = self.event_path = self.log_path = None
+        self.started = self.ended = self.active_started = None
+        self.run_id = secrets.token_hex(8)
+        self.artifacts = {}
+        self.frame_metrics = self.preview_dir = None
+        self.config = copy.deepcopy(settings)
+        self.data.update(status='preparing', sample=settings['sample'], video_name=Path(settings['video']).name,
+                         history_reopened=False, saved_elapsed_seconds=None, saved_finished_at=None,
+                         stages=[], active=None, error=None, artifacts=[], results=[], quality=None, phenotypes=None,
+                         frames=frames, fps=None, worm_count=0, device='', method='', output_dir='', logs='', notice='',
+                         detail=detail)
+
     def queue_video(self, annotation, deferred=False):
         """Accept a validated next video while keeping the local server alive."""
         with self.lock:
@@ -245,17 +258,7 @@ class PipelineProgress:
                 raise ValueError('请先等待批处理完成或停止批处理')
             if self.data['status'] not in ('ready', 'complete', 'failed', 'cancelled') or self.next_ready.is_set():
                 raise ValueError('当前处理尚未结束，请等待完成后选择新视频')
-            self.path = self.event_path = self.log_path = None
-            self.started = self.ended = None
-            self.run_id = secrets.token_hex(8)
-            self.artifacts = {}
-            self.frame_metrics = None
-            self.preview_dir = None
-            self.config = copy.deepcopy(annotation.settings)
-            self.data.update(status='preparing', sample=annotation.settings['sample'], video_name=Path(annotation.video).name,
-                             history_reopened=False, saved_elapsed_seconds=None, saved_finished_at=None,
-                             stages=[], active=None, error=None, artifacts=[], results=[], quality=None, phenotypes=None, logs='', notice='',
-                             frames=annotation.n, worm_count=0, output_dir='', detail='请完成新视频的标注')
+            self._prepare_sample(annotation.settings, annotation.n, '请完成新视频的标注')
             self.server.annotation = annotation
             annotation.batch_deferred = deferred
             self.cancel_requested.clear()
@@ -322,13 +325,9 @@ class PipelineProgress:
                     if self.batch and self.batch.running and not self.next_ready.is_set():
                         settings = self.batch.take()
                         if settings:
-                            self.path = None
                             self.server.annotation = None
                             self.cancel_requested.clear()
-                            self.config = copy.deepcopy(settings)
-                            self.data.update(status='preparing', sample=settings['sample'],
-                                video_name=Path(settings['video']).name, active=None, stages=[], error=None,
-                                detail='正在启动队列任务')
+                            self._prepare_sample(settings, 0, '正在启动队列任务')
                             return settings
                 if self.next_ready.is_set():
                     settings = self.next_settings
