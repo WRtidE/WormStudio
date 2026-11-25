@@ -18,13 +18,12 @@ uv 已安装固定提交的 SAM2，此时可以修改、启动和检查界面。
 uv run --no-sync tools/download_models.py --model all --output models
 uv pip check
 WORMSTUDIO_DEVICE=cpu uv run --no-sync tools/check_environment.py
-uv run --no-sync python -c "from tools.create_practice_video import create; create('input_videos/practice')"
 uv run --no-sync tools/macos/run_dev.py
 ```
 
 开发入口和 Finder 桌面应用默认自动选择计算设备。在 Apple 芯片 Mac 上，PyTorch 能使用 MPS 时，SAM2 会使用 Apple GPU，否则使用 CPU。进度页会显示本次选择的设备。桌面入口允许个别缺少 MPS 实现的算子回到 CPU；骨架、时序融合、指标和视频导出继续使用原有实现。需要整段使用 CPU 时，在源码目录运行 `WORMSTUDIO_DEVICE=cpu .venv/bin/python tools/macos/run_dev.py`。
 
-用文件导入选择 `input_videos/practice/practice.avi`；选择完整画面和像素单位，在深色虫体内点一下，确认轮廓并开始处理。重复开发时直接运行 `uv run --no-sync tools/macos/run_dev.py`，不要重复生成同名练习视频。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
+将两段示例放在工作区的 `examples/` 目录。在工作台左侧选择项目，再从文件栏的「示例视频」文件夹打开对应短片，文件名分别为 `表征识别.mp4` 和 `通道计数.mp4`。开发版的数据写在仓库的 `input_videos/`、`outputs/`、`config/*.local.json`；已安装的应用则保存在用户的 Application Support 目录。
 
 | 要改的部分 | 入口 |
 | --- | --- |
@@ -51,7 +50,7 @@ git -C resources/sam2 checkout 2b90b9f5ceec907a1c18123530e92e794ad901a4
 curl -fL --retry 3 'https://github.com/electron/electron/releases/download/v45.3.0/electron-v45.3.0-darwin-arm64.zip' -o .mac-build/electron/electron-v45.3.0.zip
 curl -fL --retry 3 'https://github.com/astral-sh/python-build-standalone/releases/download/20260325/cpython-3.11.15%2B20260325-aarch64-apple-darwin-install_only_stripped.tar.gz' -o .mac-build/python.tar.gz
 uv run --no-sync tools/macos/fetch_wheels.py tools/macos/pins.txt .mac-build/wheels
-uv run --no-sync tools/macos/package_app.py .mac-build models resources/sam2 input_videos/practice/practice.avi dist/WormStudio-Mac-arm64.zip
+uv run --no-sync tools/macos/package_app.py .mac-build models resources/sam2 examples dist/WormStudio-Mac-arm64.zip
 ```
 
 解压后将 `WormStudio.app` 放入应用程序并打开；第一次使用时离线安装组件。关闭后重新打开，检查同一视频、标注和结果仍可访问。试用包尚未签名或公证。打包器不会覆盖已有输出；重新构建时指定新的 ZIP 文件名。

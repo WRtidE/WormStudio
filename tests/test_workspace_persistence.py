@@ -21,6 +21,36 @@ class WorkspacePersistenceTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_project_examples_use_bundled_paths_and_respect_removal(self):
+        folder = self.root/'examples'
+        folder.mkdir()
+        for name in ('表征识别.mp4', '通道计数.mp4'):
+            (folder/name).touch()
+        imported = self.root/'通道计数.mp4'
+        imported.touch()
+        other_id = library.register(self.root, imported)['id']
+        selected = library.register(self.root, folder/'通道计数.mp4')['id']
+        library.select(self.root, selected)
+        view = library.listing(self.root)
+        self.assertEqual(view['selected'], selected)
+        ids = view['examples']
+        self.assertEqual(ids['channel'], selected)
+        example_folder, = view['folders']
+        self.assertEqual(example_folder['name'], '示例视频')
+        self.assertFalse(example_folder['collapsed'])
+        parents = {item['id']: item['parent'] for item in view['files']}
+        self.assertEqual(parents, {other_id: None, **dict.fromkeys(ids.values(), example_folder['id'])})
+        self.assertEqual(library.media(self.root, ids['channel']), folder/'通道计数.mp4')
+        self.assertEqual(library.media(self.root, ids['phenotype']), folder/'表征识别.mp4')
+        library.organize(self.root, {'op':'collapse', 'id':example_folder['id'], 'collapsed':True})
+        self.assertTrue(library.listing(self.root)['folders'][0]['collapsed'])
+        moved = library.organize(self.root, {'op':'move', 'id':ids['phenotype'], 'parent':None})
+        self.assertIsNone(next(f['parent'] for f in moved['files'] if f['id'] == ids['phenotype']))
+        library.organize(self.root, {'op':'remove','ids':[ids['channel']]})
+        self.assertEqual(library.listing(self.root)['examples'], {'phenotype':ids['phenotype']})
+        library.organize(self.root, {'op':'remove', 'id':example_folder['id']})
+        self.assertEqual(library.listing(self.root)['folders'], [])
+
     def test_upload_survives_restart_and_selection_is_persistent(self):
         item=library.upload(self.root,io.BytesIO(b'a,b\n1,2'),7,'data.csv','experiment/data.csv','signature')
         library.select(self.root,item['id'])
@@ -56,6 +86,18 @@ class WorkspacePersistenceTests(unittest.TestCase):
         folder=self.root/'config';folder.mkdir();index=folder/'workspace.local.json';index.write_text('{broken')
         with self.assertRaises(ValueError): library.upload(self.root,io.BytesIO(b'x'),1,'a.txt')
         self.assertEqual(index.read_text(),'{broken')
+
+    def test_file_records_extend_beyond_recent_history(self):
+        from workspace_sessions import catalog
+        video = self.root/'sample.mp4'
+        video.touch()
+        for i in range(101):
+            folder = self.root/'outputs'/str(i)
+            folder.mkdir(parents=True)
+            (folder/'pipeline-config.json').write_text(json.dumps(dict(video=str(video),sample=str(i))))
+        data = catalog(self.root)
+        self.assertEqual({r['sample'] for r in data['runs']}, {str(i) for i in range(101)})
+        self.assertEqual(len(data['history']), 100)
 
     def test_remove_history_only_hides_the_selected_row_after_refresh(self):
         from workspace_sessions import catalog, remove_history_entry

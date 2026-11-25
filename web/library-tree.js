@@ -194,13 +194,15 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
     selectionChanged?.(visibleFiles.filter(id=>picked.has(id)));
     return visible;
   }
-  const preview=document.querySelector('.preview-main');
+  const preview=document.querySelector('.preview-main'), channel=document.getElementById('channel-workspace');
+  const dropCanvas=()=>document.body.dataset.mode==='channel' ? channel : preview;
   let press=null, frame=0, blockClick=false;
   function trackTarget(){
     const {x,y}=press;
     const hit=document.elementFromPoint(x,y);
-    const queue=preview.contains(hit)&&press.video;
-    preview.classList.toggle('queue-hover',queue);
+    const canvas=dropCanvas();
+    const queue=canvas.contains(hit)&&press.video;
+    canvas.classList.toggle('queue-hover',queue);
     if(host.contains(hit)){
       const entry=hit.closest('.tree-entry')||blankDrop(y);
       if(!entry){mark(host,'inside');return;}
@@ -246,13 +248,13 @@ window.LibraryTree = {create({getState, mutate, select, stageVideos, importFolde
       if(commit){
         press.x=event.clientX;press.y=event.clientY;trackTarget();
         if(marker)internalDrop(dragged,marker.dataset.node?node(marker.dataset.node):null,marker.dataset.drop);
-        else if(preview.classList.contains('queue-hover'))stageVideos(dragged);
+        else if(dropCanvas().classList.contains('queue-hover'))stageVideos(dragged);
       }
       blockClick=true;
       press.row.parentElement?.classList.remove('tree-dragging');
       if(press.row.hasPointerCapture(press.id))press.row.releasePointerCapture(press.id);
       cancelAnimationFrame(frame);
-      preview.classList.remove('queue-hover');
+      dropCanvas().classList.remove('queue-hover');
       mark(null);dragged=null;
     }
     press=null;

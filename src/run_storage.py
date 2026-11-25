@@ -138,6 +138,35 @@ def result_video_files(base, config):
             ('source-video', '原始视频（只读）', Path(config['video']), 'metrics')]
 
 
+def result_artifacts(base, config, finished):
+    from centerline_methods import method_source
+    result = base / ('phenotypes-' + method_source(config['centerline_method']))
+    outputs = result_video_files(base, config) + [
+               ('metrics', '逐帧指标 CSV', result/'per_frame_metrics.csv', 'metrics'),
+               ('summary', '线虫汇总 CSV', result/'worm_summary.csv', 'metrics'),
+               ('behavior-events', '停顿与倒退事件 CSV', result/'behavior_events.csv', 'metrics'),
+               ('trajectory-segments', '分段净位移 CSV', result/'trajectory_segments.csv', 'metrics'),
+               ('events', '单向摆动事件 CSV', result/'bend_events.csv', 'metrics'),
+               ('plots', '指标与质心轨迹 PNG', result/'phenotype-plots.png', 'metrics'),
+               ('lines', '正式中线 NPZ', result/'centerlines.npz', 'metrics'),
+               ('display-lines', '显示中线 NPZ（含待复核候选）', result/'display-centerlines.npz', 'metrics'),
+               ('report', '分析报告', result/'报告.md', 'metrics'),
+               ('quality', '逐帧质量与证据 JSON', result/'quality.json', 'metrics'),
+               ('quality-audit', '质量门控汇总 JSON', result/'quality-audit.json', 'metrics'),
+               ('quality-gates', '逐帧门控与触发位置 CSV', result/'quality-gates.csv', 'metrics'),
+               ('tracklets', '连续跟踪片段及起止帧 JSON', result/'tracklets.json', 'metrics'),
+               ('identity-links', '片段身份关联、图像依据与复核 JSON', result/'identity-links.json', 'metrics'),
+               ('tracklet-metrics', '连续跟踪片段的逐帧指标 CSV', result/'tracklet-metrics.csv', 'metrics'),
+               ('frame-json', '逐帧指标 JSON', result/'per_frame_metrics.json', 'metrics'),
+               ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
+               ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
+    if config.get('centerline_method')=='self_contact':
+        from tracking_data import RECOVERY_FOLDER as FOLDER
+        outputs.append(('crop-recovery','触边扩框复核记录 JSON',base/'sam2-tracking'/FOLDER/'summary.json','quality'))
+    return {key: (label, path) for key, label, path, phase in outputs
+            if phase in finished and path.is_file()}
+
+
 def saved_videos(base, config):
     stages = json.loads((base / 'pipeline-state.json').read_text(encoding='utf-8')).get('stages', {})
     return {key: (label, path) for key, label, path, stage in result_video_files(base, config)

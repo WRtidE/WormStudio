@@ -6,17 +6,14 @@ operational quality check, not a biological ground-truth probability.
 import cv2
 import numpy as np
 from scipy import ndimage as ndi
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import dijkstra
+from typing import NamedTuple
+from skeleton_geometry import resample as sample_arc, skeleton_path
 from scipy.signal import savgol_filter
 from skimage.morphology import skeletonize
 
 
 def resample(p, count=101):
-    s=np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
-    keep=np.r_[True,np.diff(s)>1e-7]
-    if s[-1]<1:raise ValueError('Degenerate path')
-    return np.column_stack([np.interp(np.linspace(0,s[-1],count),s[keep],p[keep,k]) for k in (0,1)])
+    return sample_arc(p, count, tolerance=1e-7, error='Degenerate path')
 
 
 def geometry_quality(p, device='cpu'):
@@ -48,25 +45,8 @@ def geometry_quality(p, device='cpu'):
 
 
 def longest_chain(sk):
-    coords=np.argwhere(sk);lookup=np.full(sk.shape,-1,int);lookup[sk]=np.arange(len(coords))
-    row=[];col=[];weight=[]
-    for dy,dx in [(0,1),(1,-1),(1,0),(1,1)]:
-        q=coords+[dy,dx]
-        valid=(q[:,0]>=0)&(q[:,0]<sk.shape[0])&(q[:,1]>=0)&(q[:,1]<sk.shape[1])
-        a=np.flatnonzero(valid);b=lookup[q[valid,0],q[valid,1]];ok=b>=0;a=a[ok];b=b[ok]
-        row.extend(a);col.extend(b);weight.extend([np.hypot(dx,dy)]*len(a))
-        row.extend(b);col.extend(a);weight.extend([np.hypot(dx,dy)]*len(a))
-    graph=coo_matrix((weight,(row,col)),shape=(len(coords),len(coords))).tocsr()
-    ends=np.flatnonzero(np.diff(graph.indptr)==1)
-    if len(ends)<2:raise ValueError('No open chain')
-    distances,pred=dijkstra(graph,indices=ends,return_predecessors=True)
-    d=distances[:,ends];d[~np.isfinite(d)]=-1
-    a,b=np.unravel_index(d.argmax(),d.shape);node=int(ends[b]);route=[node]
-    while node!=ends[a]:
-        node=int(pred[a,node])
-        if node<0:raise ValueError('Disconnected')
-        route.append(node)
-    return coords[route][:,::-1].astype(float),len(route)/len(coords)
+    path, coverage, _ = skeleton_path(sk, no_ends='No open chain', disconnected='Disconnected')
+    return path, coverage
 
 
 def smooth_chain(p):
@@ -123,17 +103,40 @@ def prune_short_spurs(sk,radius):
     return sk
 
 
-def topology_candidates(mask,prune=False,contact_radius_fraction=1.25):
-    """Return native-pixel candidates, contact region, and observable topology."""
+class MaskTopology(NamedTuple):
+    local: np.ndarray
+    skeleton: np.ndarray
+    degree: np.ndarray
+    radius: float
+    origin: np.ndarray
+
+
+def prepare_topology(mask, prune):
     ys,xs=np.nonzero(mask)
-    if len(xs)<30:return [],np.zeros_like(mask),dict(kind='empty')
+    if len(xs)<30:return None
     x0=max(0,xs.min()-4);y0=max(0,ys.min()-4)
     local=mask[y0:ys.max()+5,x0:xs.max()+5]
     sk=skeletonize(local);dt=ndi.distance_transform_edt(local)
     if prune:sk=prune_short_spurs(sk,float(np.median(dt[sk])))
     degree=ndi.convolve(sk.astype(int),np.ones((3,3)),mode='constant')-sk
-    endpoints=np.argwhere(sk&(degree==1));branches=sk&(degree>2)
-    radius=float(np.median(dt[sk]));offset=np.array([x0,y0])
+    return MaskTopology(local, sk, degree, float(np.median(dt[sk])), np.array([x0, y0]))
+
+
+def topology_candidates(mask, prune=False, contact_radius_fraction=1.25):
+    topology = prepare_topology(mask, prune)
+    if topology is None:
+        return [], np.zeros_like(mask), dict(kind='empty')
+    candidates, zone, info = junction_candidates(topology, contact_radius_fraction)
+    fullzone = np.zeros_like(mask)
+    x, y = topology.origin
+    fullzone[y:y+zone.shape[0], x:x+zone.shape[1]] = zone > 0
+    return candidates, fullzone, info
+
+
+def junction_candidates(topology, contact_radius_fraction):
+    local, sk, degree, radius, offset = topology
+    endpoints = np.argwhere(sk & (degree == 1))
+    branches = sk & (degree > 2)
     info=dict(kind='simple',skeleton_endpoints=len(endpoints),radius_px=radius)
     zone=np.zeros_like(local,np.uint8);candidates=[]
     if not branches.any() and len(endpoints)==2:
@@ -171,8 +174,7 @@ def topology_candidates(mask,prune=False,contact_radius_fraction=1.25):
                     p=np.vstack([a,bridge1[1:-1],middle,bridge2[1:-1],b])
                     candidates.append(dict(points=resample(p)+offset,name=f'junction_pairing_{int(reverse)}',connection_cost=cost1+cost2))
                 info['kind']='paired_contact'
-    fullzone=np.zeros_like(mask);fullzone[y0:y0+zone.shape[0],x0:x0+zone.shape[1]]=zone>0
-    return candidates,fullzone,info
+    return candidates, zone, info
 
 
 def hidden_tip_candidates(mask,length_ref):
@@ -181,15 +183,14 @@ def hidden_tip_candidates(mask,length_ref):
     These are temporal hypotheses, never sufficient on their own to assert the
     location of an occluded endpoint. Keep the unobserved endpoint provenance.
     """
-    ys,xs=np.nonzero(mask)
-    if len(xs)<30:return []
-    x0=max(0,xs.min()-4);y0=max(0,ys.min()-4)
-    local=mask[y0:ys.max()+5,x0:xs.max()+5];sk=skeletonize(local)
-    dt=ndi.distance_transform_edt(local);sk=prune_short_spurs(sk,float(np.median(dt[sk])))
-    degree=ndi.convolve(sk.astype(int),np.ones((3,3)),mode='constant')-sk
+    topology = prepare_topology(mask, prune=True)
+    return hidden_loop_candidates(topology, length_ref) if topology is not None else []
+
+
+def hidden_loop_candidates(topology, length_ref):
+    local, sk, degree, radius, (x0, y0) = topology
     branches=sk&(degree>2);ends=sk&(degree==1)
     if ends.sum()!=1 or not branches.any():return []
-    radius=float(np.median(dt[sk]))
     labels,n=ndi.label(branches,np.ones((3,3)))
     centers=np.array([np.argwhere(labels==i).mean(0)[::-1] for i in range(1,n+1)])
     if len(centers)>3 or np.ptp(centers,axis=0).max()>8*radius:return []

@@ -63,7 +63,12 @@ def run(folder, backend='cpu', component_directory=None):
             '--only-binary=:all:','--require-hashes','--ignore-installed','--find-links',str(res/'wheels'),'--target',str(site),'-r',str(res/'requirements.lock')],check=True)
         paths.insert(0,str(site))
     env['PYTHONPATH']=os.pathsep.join(paths)
-    video=work/'examples/practice.avi'
+    # The fixed pixel prompts below describe the five-frame synthetic fixture.
+    # Generate it with the packaged OpenCV rather than sampling one of the project videos.
+    video=work/'smoke-fixture/practice.avi'
+    tools=Path(__file__).resolve().parents[1]/'tools'
+    subprocess.run([str(py),'-c','import sys; sys.path.insert(0,sys.argv[1]); from create_practice_video import create; create(sys.argv[2])',
+                    str(tools), str(video.parent)], env=env,check=True)
     cfg=dict(video=str(video),sample='practice-release',measurement_mode='pixels',sam2_model='large',
              centerline_method='body_sequence',head_detection='taper_seed',crop_xyxy=[0,0,256,256],
              groups=[dict(name='practice',crop_xyxy=[0,0,256,256],anchor_frame=0,

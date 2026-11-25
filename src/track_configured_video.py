@@ -1,9 +1,12 @@
 """Track configured objects from separated anchor frames, on CUDA in both directions."""
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import argparse
 from compute_device import selected_device, inference_context, device_label, release_device_cache
 from resource_paths import sam2_checkpoint
 from pipeline_progress import report_progress
-from live_preview import PreviewCrop, report_tracking
+from live_preview import PreviewCrop, enabled as preview_enabled, report_tracking
 import csv
 import gc
 import json
@@ -20,6 +23,29 @@ from image_io import read_image, write_png
 from worm_colors import worm_color
 from sam2_models import model_spec, tracking_model_matches
 from sam2_frames import init_tracking_state, propagate_frames, refine_mask_edges, sam2_input_transform
+
+
+def write_input_frame(path, image):
+    ok, encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 94])
+    if not ok:
+        raise ValueError(f'无法编码跟踪输入帧 {path.name}')
+    path.write_bytes(encoded.tobytes())
+
+
+class ImageWrites:
+    """FIFO submission preserves repeated anchor writes during reverse propagation."""
+    def __init__(self, pool):
+        self.pool = pool
+        self.pending = deque()
+
+    def submit(self, write, path, pixels):
+        if len(self.pending) == 2:
+            self.pending.popleft().result()
+        self.pending.append(self.pool.submit(write, path, pixels))
+
+    def finish(self):
+        while self.pending:
+            self.pending.popleft().result()
 
 
 def guided_mask(mask,prompt):
@@ -47,132 +73,142 @@ def main():
             raise ValueError('输入对比度设置已改变，请重新跟踪全部分组')
         if not tracking_model_matches(prior,spec['size']):
             raise ValueError('跟踪模型已改变，请使用新样本运行全部分组，避免混用 Tiny 和 Large 结果')
-    capture=cv2.VideoCapture(config['video']);n=int(capture.get(cv2.CAP_PROP_FRAME_COUNT));fps=capture.get(cv2.CAP_PROP_FPS)
-    cx,cy,ex,ey=config['crop_xyxy'];rows=[];ids=[w['id'] for g in config['groups'] for w in g['worms']]
-    if args.group and not args.seeds_only:
-        changed={w['id'] for g in config['groups'] if g['name']==args.group for w in g['worms']}
-        with (out/'frame_metrics.csv').open() as handle:
-            for row in csv.DictReader(handle):
-                for k in ('frame','worm_id','area_px','ambiguous_overlap_px'):row[k]=int(row[k])
-                if row['worm_id'] not in changed:rows.append(row)
-    device=selected_device()
-    checkpoint=sam2_checkpoint(spec['checkpoint'])
-    print(f'视频跟踪模型：{spec["label"]}；权重：{checkpoint.name}；设备：{device_label(device)}',flush=True)
-    model=build_sam2_video_predictor(spec['config'],str(checkpoint),device=device,
-        hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
-    amp_dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
-    colors={w:worm_color(w) for w in ids}
-    preview_crop = PreviewCrop(config)
-    for group_index,group in enumerate(config['groups']):
-        report_progress(detail=f'准备分组 {group_index+1}/{len(config["groups"])} 的跟踪数据',force=True)
-        if args.group and group['name']!=args.group:continue
-        x,y,x1,y1=group['crop_xyxy'];anchor=group['anchor_frame'];initial={};extra_masks={}
-        reviewed = {}
-        prepare_input = sam2_input_transform(contrast, capture, group['crop_xyxy'])
-        capture.set(cv2.CAP_PROP_POS_FRAMES,anchor);ok,frame=capture.read()
-        if not ok:raise RuntimeError('Missing anchor frame')
-        im=frame[y:y1,x:x1];image_predictor=SAM2ImagePredictor(model)
-        with torch.inference_mode(),inference_context(device):
-            if any('mask_path' not in worm for worm in group['worms']):
-                image_predictor.set_image(cv2.cvtColor(prepare_input(im),cv2.COLOR_BGR2RGB))
-            for worm in group['worms']:
-                w=worm['id']
-                if 'mask_path' in worm:
-                    initial[w]=read_image(Path(worm['mask_path']),True)>0
-                    if initial[w].shape!=im.shape[:2]:raise ValueError('Manual mask dimensions mismatch')
-                    reviewed.setdefault(anchor, {})[w] = initial[w]
-                    write_png(out/f'initial-worm-{w}.png',initial[w].astype(np.uint8)*255)
-                    print('manual seed',w,'area',int(initial[w].sum()),flush=True)
-                    continue
-                masks,scores,_=image_predictor.predict(point_coords=np.asarray(worm['points'],np.float32),
-                    point_labels=np.asarray(worm['labels'],np.int32),box=np.asarray(worm['box'],np.float32),multimask_output=True)
-                chosen=worm.get('mask_index',int(np.argmax(scores)))
-                initial[w]=guided_mask(masks[chosen].astype(bool),worm)
-                for k,mask in enumerate(masks):
-                    mask=mask.astype(bool)
-                    preview=im.copy();preview[mask]=(.6*preview[mask]+.4*np.array(colors[w])).astype(np.uint8)
-                    cv2.putText(preview,f'Worm {w} option {k} score={scores[k]:.3f}',(10,28),0,.7,(0,0,255),2)
-                    write_png(out/f'seed-w{w}-option-{k}.png',preview)
-                write_png(out/f'initial-worm-{w}.png',initial[w].astype(np.uint8)*255)
-                print('seed',w,'chosen',chosen,'scores',scores.tolist(),'area',int(initial[w].sum()),flush=True)
-            for extra in group.get('additional_anchors',[]):
-                capture.set(cv2.CAP_PROP_POS_FRAMES,extra['frame']);ok,frame=capture.read()
-                if not ok:raise RuntimeError('Missing extra anchor')
-                im=frame[y:y1,x:x1]
-                if any('mask_path' not in worm for worm in extra['worms']):
+    with ExitStack() as resources:
+        capture = cv2.VideoCapture(config['video'])
+        resources.callback(capture.release)
+        preview_crop = resources.enter_context(PreviewCrop(config))
+        writes = ImageWrites(resources.enter_context(ThreadPoolExecutor(max_workers=1, thread_name_prefix='tracking-encode')))
+        live = preview_enabled()
+        n = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        cx,cy,ex,ey=config['crop_xyxy'];rows=[];ids=[w['id'] for g in config['groups'] for w in g['worms']]
+        if args.group and not args.seeds_only:
+            changed={w['id'] for g in config['groups'] if g['name']==args.group for w in g['worms']}
+            with (out/'frame_metrics.csv').open() as handle:
+                for row in csv.DictReader(handle):
+                    for k in ('frame','worm_id','area_px','ambiguous_overlap_px'):row[k]=int(row[k])
+                    if row['worm_id'] not in changed:rows.append(row)
+        device=selected_device()
+        checkpoint=sam2_checkpoint(spec['checkpoint'])
+        print(f'视频跟踪模型：{spec["label"]}；权重：{checkpoint.name}；设备：{device_label(device)}',flush=True)
+        model=build_sam2_video_predictor(spec['config'],str(checkpoint),device=device,
+            hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
+        amp_dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
+        colors={w:worm_color(w) for w in ids}
+        for group_index,group in enumerate(config['groups']):
+            report_progress(detail=f'准备分组 {group_index+1}/{len(config["groups"])} 的跟踪数据',force=True)
+            if args.group and group['name']!=args.group:continue
+            x,y,x1,y1=group['crop_xyxy'];anchor=group['anchor_frame'];initial={};extra_masks={}
+            reviewed = {}
+            prepare_input = sam2_input_transform(contrast, capture, group['crop_xyxy'])
+            capture.set(cv2.CAP_PROP_POS_FRAMES,anchor);ok,frame=capture.read()
+            if not ok:raise RuntimeError('Missing anchor frame')
+            im=frame[y:y1,x:x1];image_predictor=SAM2ImagePredictor(model)
+            with torch.inference_mode(),inference_context(device):
+                if any('mask_path' not in worm for worm in group['worms']):
                     image_predictor.set_image(cv2.cvtColor(prepare_input(im),cv2.COLOR_BGR2RGB))
-                extra_masks[extra['frame']]={}
-                for worm in extra['worms']:
+                for worm in group['worms']:
+                    w=worm['id']
                     if 'mask_path' in worm:
-                        mask=read_image(Path(worm['mask_path']),True)>0
-                        if mask.shape!=im.shape[:2]:raise ValueError('Manual anchor mask dimensions mismatch')
-                        extra_masks[extra['frame']][worm['id']]=mask
-                        reviewed.setdefault(extra['frame'], {})[worm['id']] = mask
+                        initial[w]=read_image(Path(worm['mask_path']),True)>0
+                        if initial[w].shape!=im.shape[:2]:raise ValueError('Manual mask dimensions mismatch')
+                        reviewed.setdefault(anchor, {})[w] = initial[w]
+                        write_png(out/f'initial-worm-{w}.png',initial[w].astype(np.uint8)*255)
+                        print('manual seed',w,'area',int(initial[w].sum()),flush=True)
                         continue
-                    w=worm['id'];masks,scores,_=image_predictor.predict(point_coords=np.asarray(worm['points'],np.float32),
+                    masks,scores,_=image_predictor.predict(point_coords=np.asarray(worm['points'],np.float32),
                         point_labels=np.asarray(worm['labels'],np.int32),box=np.asarray(worm['box'],np.float32),multimask_output=True)
-                    k=worm.get('mask_index',int(np.argmax(scores)));mask=guided_mask(masks[k].astype(bool),worm);extra_masks[extra['frame']][w]=mask
-                    preview=im.copy();preview[mask]=(.6*preview[mask]+.4*np.array(colors[w])).astype(np.uint8)
-                    write_png(out/f'extra-seed-w{w}-f{extra["frame"]}.png',preview)
-                    print('extra seed',w,extra['frame'],'chosen',k,'area',int(mask.sum()),flush=True)
-        del image_predictor;release_device_cache(device)
-        if args.seeds_only:continue
-        frames=out/f'frames-{group["name"]}-{n}';frames.mkdir(exist_ok=True)
-        capture.set(cv2.CAP_PROP_POS_FRAMES,0)
-        for f in range(n):
-            report_progress(f,n,'正在提取视频帧',fraction=(group_index+.15*f/n)/len(config['groups']))
-            ok,frame=capture.read()
-            if not ok:raise RuntimeError('Truncated video')
-            path=frames/f'{f:06d}.jpg'
-            path.write_bytes(cv2.imencode('.jpg',prepare_input(frame[y:y1,x:x1]),[cv2.IMWRITE_JPEG_QUALITY,94])[1].tobytes())
-        report_progress(detail='视频帧准备完成，正在初始化 SAM2',fraction=(group_index+.15)/len(config['groups']),force=True)
-        predictions={}
-        with torch.inference_mode(),inference_context(device):
-            state=init_tracking_state(model,frames,n,object_count=len(initial))
-            for w,mask in initial.items():model.add_new_mask(state,frame_idx=anchor,obj_id=w,mask=mask)
-            for f,objects in extra_masks.items():
-                for w,mask in objects.items():model.add_new_mask(state,frame_idx=f,obj_id=w,mask=mask)
-            start=group.get('propagate_from',anchor)
-            for reverse in ([False,True] if start else [False]):
-                for f,object_ids,logits in propagate_frames(model, state,start_frame_idx=start,reverse=reverse):
-                    current={int(w):mask for w,mask in zip(object_ids,(logits[:,0]>0).cpu().numpy())}
-                    # Keep separate visible body pieces; discard only tiny speckles.
-                    for w,mask in current.items():
-                        bx,by,bw,bh=cv2.boundingRect(mask.view(np.uint8))
-                        if bw:
-                            region=mask[by:by+bh,bx:bx+bw]
-                            labels,_=ndi.label(region,np.ones((3,3)))
-                            keep=np.bincount(labels.ravel())>=20
-                            keep[0]=False
-                            region[:]=keep[labels]
-                    if contrast == 'edge_refine':
-                        confirmed = reviewed.get(f, {})
-                        inferred = current.keys() - confirmed.keys()
-                        if inferred:
-                            image = read_image(frames/f'{f:06d}.jpg')
-                            for w in inferred:
-                                current[w] = refine_mask_edges(image, current[w])
-                        current.update(confirmed)
-                    predictions[f]={}
-                    for w,mask in current.items():
-                        full=np.zeros((ey-cy,ex-cx),bool);full[y-cy:y1-cy,x-cx:x1-cx]=mask
-                        dest=out/'masks'/f'worm-{w}';dest.mkdir(parents=True,exist_ok=True)
-                        write_png(dest/f'{f:06d}.png',full.astype(np.uint8)*255)
-                        yy,xx=np.nonzero(mask)
-                        overlap=0 if len(current)==1 else int((mask & np.any([m for v,m in current.items() if v!=w],axis=0)).sum())
-                        predictions[f][w]=dict(frame=f,worm_id=w,area_px=len(xx),
-                            centroid_x_px=float(xx.mean()+x-cx) if len(xx) else None,
-                            centroid_y_px=float(yy.mean()+y-cy) if len(yy) else None,
-                            ambiguous_overlap_px=overlap)
-                    detail=f'分组 {group_index+1}/{len(config["groups"])} · '+('反向跟踪' if reverse else '正向跟踪')
-                    report_tracking(frames/f'{f:06d}.jpg',current,f,n,detail,
-                        reader=preview_crop if group['crop_xyxy'] != config['crop_xyxy'] else None, offset=(x-cx,y-cy))
-                    report_progress(len(predictions),n,detail,fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
-            del state
-        for f in sorted(predictions):rows.extend(predictions[f].values())
-        gc.collect();release_device_cache(device)
-        print('completed group',group['name'],flush=True)
-    capture.release()
+                    chosen=worm.get('mask_index',int(np.argmax(scores)))
+                    initial[w]=guided_mask(masks[chosen].astype(bool),worm)
+                    for k,mask in enumerate(masks):
+                        mask=mask.astype(bool)
+                        preview=im.copy();preview[mask]=(.6*preview[mask]+.4*np.array(colors[w])).astype(np.uint8)
+                        cv2.putText(preview,f'Worm {w} option {k} score={scores[k]:.3f}',(10,28),0,.7,(0,0,255),2)
+                        write_png(out/f'seed-w{w}-option-{k}.png',preview)
+                    write_png(out/f'initial-worm-{w}.png',initial[w].astype(np.uint8)*255)
+                    print('seed',w,'chosen',chosen,'scores',scores.tolist(),'area',int(initial[w].sum()),flush=True)
+                for extra in group.get('additional_anchors',[]):
+                    capture.set(cv2.CAP_PROP_POS_FRAMES,extra['frame']);ok,frame=capture.read()
+                    if not ok:raise RuntimeError('Missing extra anchor')
+                    im=frame[y:y1,x:x1]
+                    if any('mask_path' not in worm for worm in extra['worms']):
+                        image_predictor.set_image(cv2.cvtColor(prepare_input(im),cv2.COLOR_BGR2RGB))
+                    extra_masks[extra['frame']]={}
+                    for worm in extra['worms']:
+                        if 'mask_path' in worm:
+                            mask=read_image(Path(worm['mask_path']),True)>0
+                            if mask.shape!=im.shape[:2]:raise ValueError('Manual anchor mask dimensions mismatch')
+                            extra_masks[extra['frame']][worm['id']]=mask
+                            reviewed.setdefault(extra['frame'], {})[worm['id']] = mask
+                            continue
+                        w=worm['id'];masks,scores,_=image_predictor.predict(point_coords=np.asarray(worm['points'],np.float32),
+                            point_labels=np.asarray(worm['labels'],np.int32),box=np.asarray(worm['box'],np.float32),multimask_output=True)
+                        k=worm.get('mask_index',int(np.argmax(scores)));mask=guided_mask(masks[k].astype(bool),worm);extra_masks[extra['frame']][w]=mask
+                        preview=im.copy();preview[mask]=(.6*preview[mask]+.4*np.array(colors[w])).astype(np.uint8)
+                        write_png(out/f'extra-seed-w{w}-f{extra["frame"]}.png',preview)
+                        print('extra seed',w,extra['frame'],'chosen',k,'area',int(mask.sum()),flush=True)
+            del image_predictor;release_device_cache(device)
+            if args.seeds_only:continue
+            frames=out/f'frames-{group["name"]}-{n}';frames.mkdir(exist_ok=True)
+            capture.set(cv2.CAP_PROP_POS_FRAMES,0)
+            for f in range(n):
+                report_progress(f,n,'正在提取视频帧',fraction=(group_index+.15*f/n)/len(config['groups']))
+                ok,frame=capture.read()
+                if not ok:raise RuntimeError('Truncated video')
+                path=frames/f'{f:06d}.jpg'
+                writes.submit(write_input_frame, path, prepare_input(frame[y:y1, x:x1]))
+            writes.finish()
+            report_progress(detail='视频帧准备完成，正在初始化 SAM2',fraction=(group_index+.15)/len(config['groups']),force=True)
+            predictions={}
+            with torch.inference_mode(),inference_context(device):
+                state=init_tracking_state(model,frames,n,object_count=len(initial))
+                for w,mask in initial.items():model.add_new_mask(state,frame_idx=anchor,obj_id=w,mask=mask)
+                for f,objects in extra_masks.items():
+                    for w,mask in objects.items():model.add_new_mask(state,frame_idx=f,obj_id=w,mask=mask)
+                start=group.get('propagate_from',anchor)
+                for reverse in ([False,True] if start else [False]):
+                    for f,object_ids,logits in propagate_frames(model, state,start_frame_idx=start,reverse=reverse):
+                        current={int(w):mask for w,mask in zip(object_ids,(logits[:,0]>0).cpu().numpy())}
+                        # Keep separate visible body pieces; discard only tiny speckles.
+                        for w,mask in current.items():
+                            bx,by,bw,bh=cv2.boundingRect(mask.view(np.uint8))
+                            if bw:
+                                region=mask[by:by+bh,bx:bx+bw]
+                                labels,_=ndi.label(region,np.ones((3,3)))
+                                keep=np.bincount(labels.ravel())>=20
+                                keep[0]=False
+                                region[:]=keep[labels]
+                        decoded = None
+                        if contrast == 'edge_refine':
+                            confirmed = reviewed.get(f, {})
+                            inferred = current.keys() - confirmed.keys()
+                            if inferred:
+                                decoded = read_image(frames/f'{f:06d}.jpg')
+                                for w in inferred:
+                                    current[w] = refine_mask_edges(decoded, current[w])
+                            current.update(confirmed)
+                        predictions[f]={}
+                        for w,mask in current.items():
+                            full=np.zeros((ey-cy,ex-cx),bool);full[y-cy:y1-cy,x-cx:x1-cx]=mask
+                            dest=out/'masks'/f'worm-{w}';dest.mkdir(parents=True,exist_ok=True)
+                            writes.submit(write_png, dest/f'{f:06d}.png', full.astype(np.uint8)*255)
+                            yy,xx=np.nonzero(mask)
+                            overlap=0 if len(current)==1 else int((mask & np.any([m for v,m in current.items() if v!=w],axis=0)).sum())
+                            predictions[f][w]=dict(frame=f,worm_id=w,area_px=len(xx),
+                                centroid_x_px=float(xx.mean()+x-cx) if len(xx) else None,
+                                centroid_y_px=float(yy.mean()+y-cy) if len(yy) else None,
+                                ambiguous_overlap_px=overlap)
+                        detail=f'分组 {group_index+1}/{len(config["groups"])} · '+('反向跟踪' if reverse else '正向跟踪')
+                        if live:
+                            writes.finish()  # Published frames must already have editable masks.
+                            report_tracking(frames/f'{f:06d}.jpg',current,f,n,detail,
+                                reader=preview_crop if group['crop_xyxy'] != config['crop_xyxy'] else None, offset=(x-cx,y-cy), image=decoded)
+                        report_progress(len(predictions),n,detail,fraction=(group_index+.15+.8*len(predictions)/n)/len(config['groups']))
+                del state
+            writes.finish()
+            for f in sorted(predictions):rows.extend(predictions[f].values())
+            gc.collect();release_device_cache(device)
+            print('completed group',group['name'],flush=True)
     if args.seeds_only:return
     rows.sort(key=lambda row:(row['frame'],row['worm_id']))
     from tracking_quality import mark_quality

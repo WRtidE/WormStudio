@@ -23,8 +23,8 @@ def flow_matches(state, target, direction, indices, length):
     return (not contradicts.any() and matches.sum() >= 3
             and matches[indices <= 25].any() and matches[indices >= 75].any())
 
-def persistent_loop_centers(a,b,radius):
-    """Find enclosed background shared by two silhouettes around the same pillar."""
+def enclosed_holes(a, b, minimum=50):
+    """Measure the area and source-coordinate center of shared enclosed background."""
     same=a is b
     bounds=cv2.boundingRect(a.view(np.uint8))
     boxes=[bounds] if same else [bounds,cv2.boundingRect(b.view(np.uint8))]
@@ -41,12 +41,16 @@ def persistent_loop_centers(a,b,radius):
         return []
     sizes=np.bincount(shared.ravel())
     centers=[]
-    for index in np.flatnonzero(sizes>=max(50,radius**2)):
+    for index in np.flatnonzero(sizes >= minimum):
         if index==0:
             continue
         rows,cols=np.nonzero(shared==index)
-        centers.append(np.array([x+cols.mean(),y+rows.mean()]))
+        centers.append((sizes[index], np.array([x+cols.mean(), y+rows.mean()])))
     return centers
+
+
+def persistent_loop_centers(a, b, radius):
+    return [center for _, center in enclosed_holes(a, b, max(50, radius**2))]
 
 
 def loop_transition(left,right,center):

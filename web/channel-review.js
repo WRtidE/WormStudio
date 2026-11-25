@@ -1,5 +1,10 @@
 'use strict';
 
+// Saved channel events count the first decoded frame as 1. Show source indices in both workspaces.
+function channelFrameLabel(number, fps) {
+  return '第 ' + (number - 1) + ' 帧' + (fps > 0 ? ' · ' + ((number - 1) / fps).toFixed(3) + ' s' : '');
+}
+
 // Both channel viewers read small windows from one sequential video decoder.
 window.createChannelFrames = function ({request, route, run}) {
   const cache = new Map(), batchSize = 6;
@@ -50,10 +55,72 @@ window.createChannelFrames = function ({request, route, run}) {
 
 window.createChannelReview = function ({request, route}) {
   const el = id => document.getElementById('cross-' + id);
-  const stage = el('photo').parentElement;
+  const layer = el('photo'), full = el('full'), detail = el('detail'), zoomTools = el('zoom-tools');
+  const stage = layer.parentElement;
   let task, channel, available, records = [], event = null, eventPhoto = null;
   let wantedFrame = 1, displayedFrame = 0, selectedId = null, eventRequest, frameSource;
   let navigationRevision = 0, reading = false, jumpToTarget = false;
+  let drag = null, detailUrl = null, detailTimer, sourceSize;
+  const viewport = window.ResultViewport.bindZoom({stage, controls:zoomTools, onZoom:updateDetail,
+    paint({w, h, transform:{s, x, y}}) {
+      layer.style.width = w*s + 'px';
+      layer.style.height = h*s + 'px';
+      layer.style.transform = `translate(${x}px, ${y}px)`;
+    }});
+
+  function setDetail(url) {
+    if (url === detailUrl) return;
+    clearTimeout(detailTimer);
+    detailUrl = url;
+    detail.hidden = true;
+    detail.removeAttribute('src');
+    notice('detail-note', '');
+    // Scrubbing past a frame should not start a full-resolution decode.
+    if (url) detailTimer = setTimeout(() => { detail.src = url; }, 120);
+  }
+  function updateDetail() {
+    const view = viewport.view;
+    const needsDetail = !layer.hidden && available && viewport.zoomed && full.complete &&
+      full.naturalWidth > 0 && full.naturalWidth < view.w &&
+      view.w * view.transform.s * window.devicePixelRatio > full.naturalWidth;
+    setDetail(needsDetail ? route('frame-image', {run:task.id, frame:displayedFrame}) : null);
+  }
+  full.onload = updateDetail;
+  detail.onload = () => { detail.hidden = !detailUrl || detail.getAttribute('src') !== detailUrl; };
+  detail.onerror = () => {
+    if (detailUrl && detail.getAttribute('src') === detailUrl) notice('detail-note','原分辨率画面读取失败，现显示预览');
+  };
+  new ResizeObserver(() => {
+    if (layer.hidden || !sourceSize) return;
+    viewport.layout(sourceSize.width, sourceSize.height);
+    updateDetail();
+  }).observe(stage);
+
+  stage.ondblclick = viewport.fit;
+  stage.onpointerdown = e => {
+    if (layer.hidden || !viewport.zoomed || !e.isPrimary || e.button !== 0) return;
+    drag = {id:e.pointerId, x:e.clientX, y:e.clientY};
+    stage.setPointerCapture(e.pointerId);
+    stage.classList.add('is-panning');
+  };
+  stage.onpointermove = e => {
+    if (drag?.id !== e.pointerId) return;
+    viewport.pan(e.clientX - drag.x, e.clientY - drag.y);
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+  };
+  function stopPan() {
+    drag = null;
+    stage.classList.remove('is-panning');
+  }
+  stage.onpointerup = stage.onpointercancel = stage.onlostpointercapture = e => {
+    if (drag?.id === e.pointerId) stopPan();
+  };
+  function hidePhoto() {
+    layer.hidden = zoomTools.hidden = true;
+    setDetail(null);
+    stopPan();
+  }
 
   function notice(id, text) {
     el(id).textContent = text;
@@ -62,17 +129,24 @@ window.createChannelReview = function ({request, route}) {
 
   function showPhoto(photo, bounds, line, number) {
     displayedFrame = number;
-    el('photo').hidden = false;
-    el('full').src = photo.image;
-    el('photo').style.aspectRatio = photo.width + ' / ' + photo.height;
-    el('photo').style.maxWidth = photo.width / photo.height * 49 + 'vh';
+    for (const button of el('triplet').querySelectorAll('button[data-frame]')) {
+      button.setAttribute('aria-pressed', String(Number(button.dataset.frame) === number));
+    }
+    layer.hidden = zoomTools.hidden = false;
+    full.src = photo.image;
+    if (!viewport.view || sourceSize?.width !== photo.width || sourceSize.height !== photo.height) {
+      sourceSize = {width:photo.width, height:photo.height};
+      stage.style.aspectRatio = photo.width + ' / ' + photo.height;
+      viewport.layout(photo.width, photo.height);
+    }
+    updateDetail();
     el('band').hidden = !bounds;
     if (bounds) {
       el('band').style.left = 100 * bounds[0] / photo.width + '%';
       el('band').style.width = 100 * (bounds[1] - bounds[0]) / photo.width + '%';
     }
     el('line').style.top = 100 * line / photo.height + '%';
-    el('frame').textContent = number + ' / ' + task.frame + ' 帧';
+    el('frame').textContent = channelFrameLabel(number,task.fps) + ' / 共 ' + task.frame + ' 帧';
     stage.setAttribute('aria-busy','false');
     notice('photo-status', '');
   }
@@ -86,8 +160,14 @@ window.createChannelReview = function ({request, route}) {
       const source = photo.frames.find(item => item.frame === number);
       const figure = document.createElement('figure'), caption = document.createElement('figcaption');
       if (source) {
-        const box = document.createElement('div'), image = new Image(), line = document.createElement('i');
-        image.alt = '通道 ' + event.channel + '，第 ' + number + ' 帧';
+        const box = document.createElement('button'), image = new Image(), line = document.createElement('i');
+        box.type = 'button';
+        box.dataset.frame = number;
+        box.setAttribute('aria-pressed', String(number === displayedFrame && !el('photo').hidden));
+        box.setAttribute('aria-label', '在完整视野查看' + label + '，' + channelFrameLabel(number,task.fps));
+        box.title = box.getAttribute('aria-label');
+        box.onclick = () => seek(number,true);
+        image.alt = '';
         image.src = source.image;
         box.style.aspectRatio = (photo.crop[2] - photo.crop[0]) + ' / ' + (photo.crop[3] - photo.crop[1]);
         line.className = 'cross-line';
@@ -96,11 +176,7 @@ window.createChannelReview = function ({request, route}) {
         figure.append(box);
       }
       figure.classList.toggle('cross-center', number === event.frame);
-      caption.textContent = source ? label : '无' + label;
-      if (source && (number === event.frame || (number === previous && previous !== event.frame - 1))) {
-        caption.textContent += ' · ' + number;
-      }
-      if (source) figure.title = label + ' · 第 ' + number + ' 帧';
+      caption.textContent = source ? label + ' · ' + (number-1) : '无' + label;
       figure.append(caption);
       fragment.append(figure);
     }
@@ -109,8 +185,8 @@ window.createChannelReview = function ({request, route}) {
 
   function frameControls(number) {
     wantedFrame = number;
-    el('seek').value = number;
-    el('seek').setAttribute('aria-valuetext', '第 ' + number + ' 帧');
+    el('seek').value = number-1;
+    el('seek').setAttribute('aria-valuetext', channelFrameLabel(number,task.fps));
     el('seek').disabled = !available || task.frame <= 1;
     el('before').disabled = !available || number <= 1;
     el('after').disabled = !available || number >= task.frame;
@@ -176,10 +252,8 @@ window.createChannelReview = function ({request, route}) {
     event = chosen;
     eventPhoto = keepPhoto || null;
     el('choose').value = position;
-    if (event) {
-      selectedId = event.id;
-      el('choose').title = '第 ' + (position+1) + ' 条，共 ' + records.length + ' 条';
-    }
+    if (event) selectedId = event.id;
+    el('record-position').textContent = event ? '第 ' + (position+1) + ' / ' + records.length + ' 条' : '';
     el('prev').disabled = position <= 0;
     el('next').disabled = position + 1 >= records.length;
     el('controls').hidden = !event;
@@ -187,7 +261,7 @@ window.createChannelReview = function ({request, route}) {
       el('return').hidden = true;
       eventRequest = null;
       el('triplet').replaceChildren();
-      el('photo').hidden = true;
+      hidePhoto();
       el('frame').textContent = '';
       notice('status', task.events == null ? '旧记录仅有汇总。重新计数可生成越线明细。' :
         channel ? '通道 ' + String(channel).padStart(2, '0') + ' 没有越线记录。' : '本次没有越线记录。');
@@ -202,7 +276,7 @@ window.createChannelReview = function ({request, route}) {
       return;
     }
     el('triplet').replaceChildren();
-    el('photo').hidden = true;
+    hidePhoto();
     el('frame').textContent = '';
     stage.setAttribute('aria-busy',String(!!available));
     notice('photo-status','');
@@ -231,7 +305,7 @@ window.createChannelReview = function ({request, route}) {
   el('choose').onchange = () => select(el('choose').selectedIndex);
   el('prev').onclick = () => stepEvent(-1);
   el('next').onclick = () => stepEvent(1);
-  el('seek').oninput = () => seek(Number(el('seek').value),true);
+  el('seek').oninput = () => seek(Number(el('seek').value)+1,true);
   el('before').onclick = () => seek(wantedFrame - 1);
   el('after').onclick = () => seek(wantedFrame + 1);
   stage.onkeydown = el('seek').onkeydown = e => {
@@ -247,6 +321,7 @@ window.createChannelReview = function ({request, route}) {
     const pane = el('results');
     if (!result) {
       if (!pane.hidden) {
+        hidePhoto();
         cancelFrame();
         frameSource?.close(); frameSource=null;
         eventRequest?.abort();
@@ -260,21 +335,21 @@ window.createChannelReview = function ({request, route}) {
       frameSource?.close();
       frameSource=window.createChannelFrames({request,route,run:result.id});
     }
-    if (!same) { event = null; eventPhoto = null; selectedId = null; }
+    if (!same) {
+      event = null; eventPhoto = null; selectedId = null;
+      viewport.clear();
+      stage.style.aspectRatio = result.picture ? result.picture.width + ' / ' + result.picture.height : '';
+    }
     available = file.available;
     pane.hidden = false;
     task = result;
     channel = filter;
-    el('seek').max = task.frame;
-    if (task.picture) {
-      const {width, height} = task.picture;
-      el('results').style.setProperty('--overview-ratio', width + ' / ' + height);
-    }
+    el('seek').max = task.frame-1;
     const events = task.events || [];
     records = channel == null ? events : events.filter(item => item.channel === channel);
     const options = document.createDocumentFragment();
     records.forEach((item, i) => {
-      const when = item.time_s == null ? '第 ' + item.frame + ' 帧' : item.time_s.toFixed(2) + ' 秒';
+      const when = item.time_s == null ? channelFrameLabel(item.frame,task.fps) : `第 ${item.frame-1} 帧 · ${item.time_s.toFixed(3)} s`;
       const label = '#' + item.id + ' · 通道 ' + String(item.channel).padStart(2, '0') + ' · ' + when;
       options.append(new Option(label,i));
     });

@@ -67,8 +67,8 @@ def validate_config(config, relative_to=ROOT):
     import cv2
     c = json.loads(json.dumps(config))
     name = c.get('sample', '')
-    reserved = {'all', 'con', 'prn', 'aux', 'nul'} | {f'{p}{i}' for p in ('com', 'lpt') for i in range(1, 10)}
-    if not re.fullmatch(r'[\w][\w.-]{0,79}', name) or name.endswith('.') or name.split('.')[0].lower() in reserved:
+    from input_validation import valid_sample_name
+    if not valid_sample_name(name):
         raise ValueError('sample 必须是安全的文件夹名，例如 experiment_01，不能含路径分隔符')
     path = Path(c.get('video', ''))
     path = path if path.is_absolute() else relative_to / path

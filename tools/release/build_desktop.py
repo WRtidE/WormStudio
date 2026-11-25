@@ -51,9 +51,11 @@ def verify(file, expected):
         if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
             raise ValueError(f'Checksum mismatch: {file}')
 
-def build(system, source, cache, sam, weights, example, stage):
+def build(system, source, cache, sam, weights, examples, stage):
     sys.path.insert(0, str(source/'src'))
     from electron_desktop import verified_archive
+    from resource_paths import release_examples
+    videos = release_examples(examples)
     archive = cache/f'electron-{system}.zip'
     mac = system == 'mac'
     verified_archive(archive, 'darwin-arm64' if mac else 'win32-x64')
@@ -128,7 +130,8 @@ def build(system, source, cache, sam, weights, example, stage):
             (code/rel).parent.mkdir(exist_ok=True,parents=True)
             shutil.copy2(source/rel,code/rel)
     (code/'examples').mkdir()
-    shutil.copy2(example,code/'examples/practice.avi')
+    for video in videos:
+        shutil.copy2(video, code/'examples'/video.name)
     samroot = payload/'sam2'
     shutil.copytree(sam/'sam2',samroot/'sam2',ignore=shutil.ignore_patterns('__pycache__','*.pyc','*.so','*.pyd'))
     for licensefile in sam.glob('LICENSE*'):
@@ -145,6 +148,6 @@ def build(system, source, cache, sam, weights, example, stage):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('system', choices=['mac','win'])
-    for key in ('source','cache','sam','weights','example','stage'):
+    for key in ('source','cache','sam','weights','examples','stage'):
         parser.add_argument(key, type=lambda s:Path(s).resolve())
     build(**vars(parser.parse_args()))

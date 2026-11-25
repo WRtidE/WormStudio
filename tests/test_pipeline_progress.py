@@ -44,6 +44,21 @@ class ProgressTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             progress.preview(old_run)
 
+    def test_idle_revision_skips_snapshot_and_tracks_queue_and_exports(self):
+        from batch_queue import BatchQueue
+        p = self.progress
+        p.batch = BatchQueue(self.base/'batch.json')
+        initial = p.progress_response(None, [])
+        with patch.object(p, 'snapshot', side_effect=AssertionError('unexpected full snapshot')):
+            self.assertTrue(p.progress_response(initial['revision'], [])['unchanged'])
+        p.batch.add(self.config)
+        queued = p.progress_response(initial['revision'], [])
+        self.assertEqual(len(queued['batch']['items']), 1)
+        jobs = [dict(group='a', status='complete')]
+        self.assertEqual(p.progress_response(queued['revision'], jobs)['chamber_videos'], jobs)
+        p.fail('stopped')
+        self.assertEqual(p.progress_response(queued['revision'], [])['status'], 'failed')
+
     def test_actual_child_events_and_logs_reach_saved_status(self):
         log = self.base/'child.log'
         self.progress.begin(0, log)

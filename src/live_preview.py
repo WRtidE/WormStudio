@@ -23,6 +23,18 @@ class PreviewCrop:
         self.capture = None
         self.next_frame = None
 
+    def close(self):
+        if self.capture is not None:
+            self.capture.release()
+            self.capture = None
+            self.next_frame = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     def read(self, frame):
         import cv2
         if self.capture is None:
@@ -35,6 +47,20 @@ class PreviewCrop:
             raise ValueError('无法读取预览源帧')
         x, y, right, bottom = self.crop
         return image[y:bottom, x:right]
+
+
+def discard_preview(folder):
+    """Remove generated frames owned by a finished workspace session."""
+    import re
+    if folder is None or not folder.is_dir() or folder.is_symlink():
+        return
+    try:
+        for item in folder.iterdir():
+            if re.fullmatch(r'(?:\d{9,}(?:\.focus)?\.(?:jpg|json|tmp)|latest\.(?:json|tmp))', item.name):
+                item.unlink(missing_ok=True)
+        folder.rmdir()
+    except OSError:
+        pass  # Cleanup of optional previews must not prevent the next analysis.
 
 
 def focus_patch(raw, masks):
@@ -158,7 +184,7 @@ def preview_batch(folder, after, limit=12):
     return dict(latest=count, frames=items)
 
 
-def report_tracking(path, masks, frame, total, detail, *, reader=None, offset=(0, 0)):
+def report_tracking(path, masks, frame, total, detail, *, reader=None, offset=(0, 0), image=None):
     if not enabled():
         return False
     try:
@@ -166,7 +192,7 @@ def report_tracking(path, masks, frame, total, detail, *, reader=None, offset=(0
         import numpy as np
         from worm_colors import worm_color
         if reader is None:
-            raw = cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), cv2.IMREAD_COLOR)
+            raw = image if image is not None else cv2.imdecode(np.frombuffer(Path(path).read_bytes(), np.uint8), cv2.IMREAD_COLOR)
         else:
             raw = reader.read(frame)
             x, y = offset

@@ -3,6 +3,7 @@ const {app, BrowserWindow, Menu, dialog, shell, ipcMain, net} = require('electro
 const {pathToFileURL} = require('node:url');
 const {Updates} = require('./updates.cjs');
 const appUpdate = require('../../src/platforms/app_update.cjs');
+const {DesktopShortcut} = require('../../src/platforms/desktop_shortcut.cjs');
 const {execFile, spawn} = require('node:child_process');
 const execFileAsync = require('node:util').promisify(execFile);
 const {createWriteStream, mkdirSync} = require('node:fs');
@@ -238,8 +239,34 @@ function launch() {
     pendingUpdate?.(true);
   });
   initUpdates();
+  const supportsDesktopShortcut = process.platform === 'win32' && !viewer;
+  async function desktopShortcut(firstUse) {
+    try {
+      const shortcut = new DesktopShortcut({shell, desktop:app.getPath('desktop'), profile:app.getPath('userData'),
+        packaged:app.isPackaged, executable:process.execPath, workspace, icon:windowIcon});
+      if (firstUse) {
+        await shortcut.offer(async () => {
+          const {response} = await dialog.showMessageBox(win, {
+            type:'question', title:'WormStudio', message:'在桌面创建 WormStudio 快捷方式？',
+            detail:'以后可以直接从桌面打开工作台。也可以稍后在 WormStudio 菜单中创建。',
+            buttons:['创建快捷方式', '跳过'], defaultId:0, cancelId:1
+          });
+          return response === 0;
+        });
+      } else {
+        shell.showItemInFolder(shortcut.create());
+      }
+    } catch (error) {
+      if (win && !closing) await dialog.showMessageBox(win, {
+        type:'warning', title:'WormStudio', message:'桌面快捷方式设置未完成', detail:error.message
+      });
+    }
+  }
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {label: 'WormStudio', submenu: [{label:'设置…', accelerator:'CmdOrCtrl+,', click:openSettings}, {type:'separator'}, {role: 'hide'}, {role: 'quit', label: '退出 WormStudio'}]},
+    {label: 'WormStudio', submenu: [
+      {label:'设置…', accelerator:'CmdOrCtrl+,', click:openSettings},
+      ...(supportsDesktopShortcut ? [{label:'创建桌面快捷方式', click:() => desktopShortcut(false)}] : []),
+      {type:'separator'}, {role: 'hide'}, {role: 'quit', label: '退出 WormStudio'}]},
     {label: '编辑', submenu: [{role: 'undo'}, {role: 'redo'}, {type: 'separator'},
       {role: 'cut'}, {role: 'copy'}, {role: 'paste'}, {role: 'selectAll'}]},
     {label: '工作区', submenu: [
@@ -283,7 +310,11 @@ function launch() {
     const match = /^Worm Studio: (http:\/\/127\.0\.0\.1:\d+\/studio)$/.exec(line);
     if (!match || origin || closing) return;
     origin = new URL(match[1]).origin;
-    win.loadURL(match[1]).then(() => { if (win) win.show(); }, fail);
+    win.loadURL(match[1]).then(() => {
+      if (!win || closing) return;
+      win.show();
+      if (supportsDesktopShortcut) void desktopShortcut(true);
+    }, fail);
   });
 }
 

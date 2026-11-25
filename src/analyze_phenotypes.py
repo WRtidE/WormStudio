@@ -282,6 +282,12 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         fit_quality=json.loads(quality_path.read_text(encoding='utf-8')) if fitted is not None and quality_path.exists() else None
         if fit_quality is not None and (len(fit_quality)!=n or any(q['frame']!=i for i,q in enumerate(fit_quality))):
             raise ValueError('Centerline quality frame mismatch')
+        angle_evidence = None
+        if method == 'body_sequence':
+            from body_sequence_solver import head_results
+            heads = head_results(fit_quality)
+            if len(ids) == 1:
+                angle_evidence = np.full((n, 4), np.nan)
         rows=[];previous=None;previous_center=None
         radius_profiles=None if method=='body_sequence' else np.full((n,101),np.nan)
         head_point=config.get('head_points_crop_xy',{}).get(f'{sample}:{worm}')
@@ -410,6 +416,14 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
             row['centerline_valid']=not reasons
             row['valid_for_summary']=not reasons
             row['quality_reason']=';'.join(dict.fromkeys(reasons))
+            # The body solver stores confirmed lines in head-first order. Retain four
+            # measurements while this mask is decoded; final quality gates run below.
+            if (angle_evidence is not None and not reasons and heads[frame]['head_identity_confirmed']
+                    and not row.get('endpoint_a_inferred') and row.get('centerline_topology', 'simple') == 'simple'
+                    and not row.get('contact_bridge')):
+                geometry = local_angle(lines[(worm, frame)], mask)
+                if geometry is not None:
+                    angle_evidence[frame] = geometry
             rows.append(row)
         valid=np.array([r['centerline_valid'] for r in rows])
         lengths=np.array([r['length_um'] for r in rows]);median_length=pose_length_reference(rows)
@@ -425,10 +439,7 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         for i,row in enumerate(rows):row['valid_for_summary']=bool(valid[i])
         median_length=finite_stat(lengths[valid])
         seed_mode = video_config.get('head_detection','twardis') in ('taper_seed','manual_seed')
-        if method=='body_sequence':
-            from body_sequence_solver import head_results
-            heads=head_results(fit_quality)
-        else:
+        if method != 'body_sequence':
             # Archived/baseline callers still compute their own endpoint order.
             # The current solver already saved that evidence; do not decode the
             # video a second time for appearance profiles it will never consume.
@@ -544,7 +555,6 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
         allowed_head=valid & np.array([permissions(r)['head'] for r in rows])
         angles[~allowed_head]=np.nan
         if method=='body_sequence' and len(ids)==1:
-            evidence=np.full((n,4),np.nan)
             for i in np.flatnonzero(np.isfinite(angles)):
                 row=rows[i]
                 ranges=json.loads(row['uncertain_point_ranges']) if row.get('uncertain_point_ranges') else []
@@ -552,9 +562,8 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
                         or row.get('contact_bridge') or any(lo<=30 and hi>=0 for lo,hi in ranges)):
                     angles[i]=np.nan
                     continue
-                geometry=local_angle(lines[(worm,i)],get_mask(worm,i))
-                if geometry is not None:evidence[i]=geometry
-            angles,angle_methods=supported_angles(angles,evidence,head_blocks,times)
+            angle_evidence[~np.isfinite(angles)] = np.nan
+            angles,angle_methods=supported_angles(angles,angle_evidence,head_blocks,times)
             for row,angle,angle_method,block in zip(rows,angles,angle_methods,head_blocks):
                 row['head_candidate_angle_deg']=float(angle)
                 row['head_angle_method']=angle_method

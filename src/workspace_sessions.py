@@ -25,15 +25,17 @@ def catalog(root):
         except (OSError,ValueError,KeyError): continue
     targets_path=root/'config/target_videos.json'
     targets=json.loads(targets_path.read_text(encoding='utf-8')) if targets_path.exists() else []
-    from workspace_library import read, register
-    hidden = set(read(root).get('hidden_history', []))
+    from workspace_library import load_index, register_many
+    index = load_index(root)
+    hidden = set(index[0].get('hidden_history', []))
+    files = register_many(root, (run['video'] for run in runs), index=index)
     for run in runs:
-        try: run['file']=register(root,run['video'],auto=True)
-        except (ValueError,OSError): pass  # Saved results remain available if a source was moved.
+        if run['video'] in files:
+            run['file'] = files[run['video']]
     runs.sort(key=lambda r:r['updated'], reverse=True)
     history = [dict(sample=r['sample'], complete=r['complete'], has_metrics=r['has_metrics'])
                for r in runs if r['sample'] not in hidden][:100]
-    return dict(runs=runs[:100], history=history, targets=targets)
+    return dict(runs=runs, history=history, targets=targets)
 
 
 def remove_history_entry(root, sample):
@@ -64,8 +66,6 @@ def confirm_head(root, sample, worm, frame, endpoint):
     """User review creates a derived run; segmentation and pose stay unchanged."""
     import numpy as np
     from centerline_methods import method_source
-    from run_storage import fresh_sample, input_identity
-    from worm_pipeline import complete, build_stages, validate_config
     old,config=load_config(root,sample)
     if type(worm) is not int or type(frame) is not int or type(endpoint) is not int or endpoint not in (0,1):
         raise ValueError('头部复核需要有效的虫编号、帧号和A/B端点')
@@ -274,6 +274,27 @@ def saved_timeline(root, sample, *, trend_only=True):
     return dict(load_frame_metrics(folder/'per_frame_metrics.csv', summary['fps'],
                                    summary['worms'][0]['frames'], trend_only=trend_only), sample=sample,
                 crop_xyxy=summary.get('crop_xyxy') or config.get('crop_xyxy'))
+
+
+def archived_run(root, sample):
+    base, config = load_config(root, sample)
+    state = json.loads((base/'pipeline-state.json').read_text(encoding='utf-8'))
+    finished = {name for name, stage in state['stages'].items() if stage.get('status') in ('complete', 'reused')}
+    if 'metrics' not in finished:
+        raise ValueError('指标阶段尚未完成')
+    return base, config, finished
+
+
+def archived_result(base, config, finished):
+    from centerline_methods import method_source
+    from result_metrics import phenotype_results
+    from run_storage import result_artifacts
+    report = phenotype_results(base / ('phenotypes-' + method_source(config['centerline_method'])))
+    report['chamber_id'] = config.get('chamber_id')
+    artifacts = result_artifacts(base, config, finished)
+    return dict(status='complete', read_only=True, sample=config['sample'], video_path=config['video'],
+                video_name=Path(config['video']).name, phenotypes=report,
+                artifacts=[dict(key=k, label=label, filename=path.name) for k, (label, path) in artifacts.items()])
 
 
 def reopen(progress,root,sample):

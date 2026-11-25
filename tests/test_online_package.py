@@ -76,7 +76,12 @@ class OnlinePackageTests(unittest.TestCase):
                 file.write_text(content, encoding='utf-8')
             records = {name: hashlib.sha256((source/name).read_bytes()).hexdigest() for name in sources}
             (source/'SOURCE_MANIFEST.json').write_text(json.dumps({'files': records}))
-            manifest = build(source, desktop, output, 'https://example.org/v1')
+            examples = root/'examples'
+            examples.mkdir()
+            videos = {'表征识别.mp4': b'phenotype example', '通道计数.mp4': b'channel example'}
+            for name, content in videos.items():
+                (examples/name).write_bytes(content)
+            manifest = build(source, desktop, output, 'https://example.org/v1', examples=examples)
             members = {}
             for kind, assets in [('common', manifest['common']), ('cpu', manifest['backends']['cpu'])]:
                 with tarfile.open(output/'components'/assets[0]['url'].rsplit('/', 1)[1]) as archive:
@@ -95,6 +100,8 @@ class OnlinePackageTests(unittest.TestCase):
             with ZipFile(output/'WormStudio-Windows-x64.zip') as archive:
                 self.assertIsNone(archive.testzip())
                 self.assertIn('WormStudio/resources/analysis/code/src/example.py', archive.namelist())
+                for name, content in videos.items():
+                    self.assertEqual(archive.read('WormStudio/resources/analysis/code/examples/'+name), content)
                 self.assertFalse(any('/analysis/python/' in name for name in archive.namelist()))
             reused = build(source, output/'WormStudio', root/'update', 'https://example.org/v2',
                            reuse_components=output/'WormStudio/resources/analysis/online-manifest.json')

@@ -61,8 +61,7 @@ class ResultSessionTests(unittest.TestCase):
 
     def test_long_revision_uses_the_same_short_video_for_export_and_playback(self):
         from centerline_methods import method_source
-        from run_storage import annotated_video_path, fresh_sample
-        from run_storage import result_video_files, annotated_video_path
+        from run_storage import annotated_video_path, fresh_sample, result_video_files
         from worm_pipeline import build_stages
         sample = '222324-槽1-20261120-153720-0b55-20261120-160055-088-20261120-160719-64d0'
         outputs = self.root/('a'*32)/'outputs'
@@ -199,10 +198,11 @@ class ResultSessionTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError): self.post('/api/new-video',{'video_path':str(self.video)},False)
         with self.assertRaises(urllib.error.HTTPError): self.post('/api/new-video',{'video_path':str(self.root/'missing.mp4')})
         self.assertEqual(self.progress.snapshot()['status'], 'failed')
-        with self.post('/api/new-video',{'video_path':str(self.video)}) as response:
+        with self.post('/api/new-video',{'video_path':str(self.video),'preview_seconds':.25}) as response:
             self.assertEqual(json.load(response)['annotation_url'], '/')
         annotation = self.progress.server.annotation
         self.assertEqual(annotation.n, 6)
+        self.assertEqual(annotation.frame, 3)
         self.assertEqual(annotation.crop,[0,0,128,80])
         self.assertIsNone(annotation.settings['scale_um_per_px'])
         self.assertEqual(self.progress.wait()['video'],str(self.video.resolve()))
@@ -327,6 +327,28 @@ class ResultSessionTests(unittest.TestCase):
         self.assertEqual(row['valid_frames'],0)
         self.assertIsNone(row['median_length_um'])
         self.assertIsNone(row['mean_speed_um_s'])
+
+    def test_read_only_history_while_another_video_is_running(self):
+        base = self.root/'outputs'/'older'
+        folder = base/'phenotypes-centerlines-body-sequence'
+        folder.mkdir(parents=True)
+        (base/'pipeline-config.json').write_text(json.dumps(dict(sample='older',video=str(self.video),centerline_method='body_sequence')))
+        (base/'pipeline-state.json').write_text(json.dumps(dict(stages={'metrics':{'status':'complete'}})))
+        (folder/'summary.json').write_text(json.dumps(dict(fps=12, worms=[dict(worm_id=1, frames=1, valid_frames=1)])))
+        csv_bytes = b'frame,worm_id\n0,1\n'
+        (folder/'per_frame_metrics.csv').write_bytes(csv_bytes)
+        self.progress.data.update(sample='current',status='running')
+        before = self.progress.run_id
+        with urllib.request.urlopen(self.url+'/api/history-result?run=older') as response:
+            result = json.load(response)
+        self.assertTrue(result['read_only'])
+        self.assertEqual(result['video_path'], str(self.video))
+        with urllib.request.urlopen(self.url+'/artifact?history=1&run=older&key=metrics') as response:
+            self.assertEqual(response.read(), csv_bytes)
+        with urllib.request.urlopen(self.url+'/api/saved-timeline?history=1&detail=1&run=older') as response:
+            self.assertEqual(json.load(response)['frame_count'], 1)
+        self.assertEqual((self.progress.run_id,self.progress.data['sample'],self.progress.data['status']), (before,'current','running'))
+        self.assertIsNone(self.progress.server.annotation)
 
     def test_reopened_result_uses_saved_duration_without_changing_history(self):
         from workspace_sessions import reopen

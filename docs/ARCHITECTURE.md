@@ -8,7 +8,10 @@
 |---|---|
 |Electron 窗口与运行时|`tools/electron/main.cjs`、`src/electron_desktop.py`|
 |应用与批处理入口|`studio.py`、`worm_pipeline.py`|
-|本地HTTP、交互标注、任务调度|`src/manual_worm_annotation.py`、`pipeline_progress.py`、`workspace_sessions.py`|
+|标注兼容入口、推理与会话|`src/manual_worm_annotation.py`、`sam2_mask_predictor.py`、`annotation_session.py`|
+|本地 HTTP、任务调度|`workspace_http.py`、`server_routes.py`、`pipeline_progress.py`、`workspace_sessions.py`|
+|通道计数与批次队列|`src/channel_counts.py` 管理单视频计数与逐帧复核，`src/wormtracker/` 实现检测与越线判定，`src/channel_runs.py` 保存批次及其执行顺序|
+|通道工作台界面|`web/channel-counts.js` 管理设置与预览，`channel-batch.js` 管理逐视频确认，`channel-review.js` 和 `channel-comparison.js` 分别负责越线复核和跨视频对照|
 |分割与方法适配|`track_configured_video.py`、`extract_body_sequence.py`|
 |共享图像、跟踪记录与序列化|`image_io.py`、`tracking_data.py`、`serialization.py`；计算模块直接使用这些数据接口|
 |共享骨架几何与头尾证据|`skeleton_geometry.py`、`head_evidence.py`；不依赖分析入口或界面控制器|
@@ -58,11 +61,13 @@ Windows 选择 CUDA 时，单虫求解器在 GPU 上检查候选中线的自交�
 
 复核派生任务通过 `run_storage.copy_tracking_snapshot()` 共享 `sam2-tracking/masks/` 下的 PNG 数据块，其它文件独立复制。所有程序内掩膜改写都通过 `write_png()` 调用 `replace_bytes()` 替换已有文件，使写入只影响当前任务；新的输出文件走普通写入路径。不支持硬链接时退回完整复制。后续新增掩膜写入入口也必须使用该替换函数，不能原地修改共享文件；对原始 PNG 的外部手工编辑不受程序的写入隔离保护。
 
-历史中线方法的实现已移除，旧结果只能以只读方式查看；`centerline_methods.py` 保留其名称映射用来定位历史结果目录。发布不包含历史模型缓存、示例研究视频或开发报告。
+历史中线方法的实现已移除，旧结果只能以只读方式查看；`centerline_methods.py` 保留其名称映射用来定位历史结果目录。纯源码导出排除历史模型缓存、视频和开发报告。桌面构建从单独的素材目录打包表征识别与通道计数两段示例，工作台按项目打开对应原片。
 
 Electron 主进程启动本地 Python 服务，并在 Chromium 窗口中载入工作台。页面使用原生 JavaScript 和 Canvas，渲染进程启用沙箱并关闭 Node 集成。Node 运行时随 Electron 一起分发。GPU 模型按任务加载。
 
 本地 HTTP 服务并发接收连接，工作区命令通过同一把锁顺序更新状态。传输文件内容期间，其他请求仍可进入；上传完成后重新检查目标文件夹或当前视频会话。标注页通过 `POST /api/prediction` 提交预测，用标注令牌和返回的任务 ID 查询结果。每次只执行一个预测，切换标注帧或模式会使旧结果失效。原有 `POST /predict` 仍直接返回预测结果。
+
+工作台在请求入口校验本机地址与实际监听端口。帧预览使用独立加锁的单视频解码器，静态文件、抽帧和已保存时间线的读取可与进度轮询并行。进度页与工作台携带上一份进度的版本；阶段、队列和导出状态相同时仅返回计时。预览按序保留，以支持暂停和修正当前帧；切换到下一次计算或关闭会话时清理本会话生成的旧预览。历史结果索引在一次目录扫描中批量更新。
 
 在线发行包在 Python 启动前由 `tools/electron/online-setup.cjs` 准备运行组件。`component-download.cjs` 负责 HTTP 续传、长度与哈希校验；本地准备页面通过受限 IPC 交换状态与操作。硬件检测、归档解压和原生运算验证位于 `src/platforms/online.cjs`。清单由 `tools/release/build_online.py` 在构建时生成并内置于首包。模型和环境分别按内容标识保存在用户目录，只有通过验证的临时环境才会启用，软件更新复用兼容组件，旧环境与实验结果继续保留。
 

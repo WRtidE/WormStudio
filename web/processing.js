@@ -1,4 +1,4 @@
-'use strict';
+import {fetchProgress} from './progress-poll.js';
 const $=s=>document.querySelector(s);
 let latest=null, stopped=false, renderedRows='', renderedBatch='';
 const terminal=new Set(['complete','failed','cancelled']);
@@ -76,7 +76,20 @@ function draw(data){
 }
 async function poll(){
  if(stopped)return;const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),6000);
- try{const response=await fetch('/api/progress',{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('进度暂不可用');const data=await response.json();draw(data);document.body.classList.remove('offline');$('#offline-notice').hidden=true;stopped=sessionFinished(data);text('#connection-state',stopped?'记录已加载':'实时同步');text('#last-update',data.history_reopened?'历史结果':'')}
+ try {
+  const data = await fetchProgress(latest?.revision, controller.signal);
+  if (data.unchanged) {
+   text('#elapsed', duration(data.elapsed_seconds));
+   if (data.stage_seconds != null) text('#stage-elapsed', '本步耗时 ' + duration(data.stage_seconds));
+  } else {
+   draw(data);
+   stopped = sessionFinished(data);
+   text('#last-update', data.history_reopened ? '历史结果' : '');
+  }
+  document.body.classList.remove('offline');
+  $('#offline-notice').hidden = true;
+  text('#connection-state', stopped ? '记录已加载' : '实时同步');
+ }
  catch(error){document.body.classList.add('offline');$('#offline-notice').hidden=false;text('#connection-state','连接中断')}
  finally{clearTimeout(timeout);if(!stopped)setTimeout(poll,1000)}
 }

@@ -17,6 +17,15 @@ from worm_pipeline import validate_config
 
 
 class ManualAnnotationTests(unittest.TestCase):
+    def test_preview_timestamp_selects_the_displayed_variable_duration_frame(self):
+        from annotation_session import preview_frame_at
+        capture = MagicMock()
+        times = [0, 100, 500, 600, 650, 700, 750, 800]
+        capture.get.side_effect = lambda prop: times[capture.set.call_args.args[1]]
+        for seconds, expected in ((.49,1), (.5,2), (.65,4), (.79,6), (2.,7)):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(preview_frame_at(capture,seconds,len(times),10), expected)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='manual-worm-test-')
         self.root = Path(self.temp.name)
@@ -124,6 +133,47 @@ class ManualAnnotationTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 400)
         finally:
             server.shutdown(); server.server_close(); thread.join()
+
+    def test_slow_preview_allows_progress_poll_and_rejects_stale_frame(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from pipeline_progress import PipelineProgress
+        annotation = manual.Annotation(self.settings)
+        progress = PipelineProgress()
+        server = manual.create_server(annotation, progress)
+        progress.bind_server(server)
+        url = progress.url.removesuffix('/progress')
+        entered, resume = threading.Event(), threading.Event()
+
+        def slow_read(video, frame):
+            entered.set()
+            if not resume.wait(5):
+                raise RuntimeError('progress poll blocked by decoder')
+            return annotation.image
+
+        request = urllib.request.Request(url+'/api/head-preview?frame=0',
+                                         headers={'X-Annotation-Token': annotation.token})
+        try:
+            with patch.object(server.preview_reader, 'read', slow_read), ThreadPoolExecutor(1) as pool:
+                future = pool.submit(urllib.request.urlopen, request)
+                self.assertTrue(entered.wait(3))
+                try:
+                    with urllib.request.urlopen(url+'/api/progress', timeout=2) as response:
+                        self.assertEqual(json.load(response)['token'], progress.token)
+                    with server.control:
+                        annotation.token = 'next-frame'
+                finally:
+                    resume.set()
+                with self.assertRaises(urllib.error.HTTPError) as stale:
+                    future.result()
+                self.assertEqual(stale.exception.code, 409)
+            for method in ('GET', 'POST', 'HEAD'):
+                request = urllib.request.Request(url+'/state', method=method, headers={'Host': 'other.invalid'})
+                with self.assertRaises(urllib.error.HTTPError) as rejected:
+                    urllib.request.urlopen(request)
+                self.assertEqual(rejected.exception.code, 403)
+        finally:
+            resume.set()
+            progress.close()
 
     def test_empty_mask_and_wrong_crop_are_rejected(self):
         annotation = manual.Annotation(self.settings)

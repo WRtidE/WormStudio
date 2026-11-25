@@ -1,19 +1,17 @@
 """Independent WormTracker tasks indexed by workspace file ID."""
 import base64
 import io
-import json
 import math
 import re
 import threading
 import time
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from workspace_library import VIDEO, media
+from channel_runs import ChannelBatch, new_run, read, save
+from workspace_library import VIDEO, media, load_index
 from wormtracker.config import WormTrackerConfig
 from wormtracker.core.grid import get_interpolated_grid
 from wormtracker.core.grid_reference import ChannelGridReference
@@ -36,17 +34,6 @@ def settings(data):
     if not all(type(v) in (int, float) for v in ratios) or not 0 <= ratios[0] < ratios[1] < ratios[2] <= 1:
         raise ValueError('检测线应位于两条检测边界之间')
     return result
-
-
-def read(path):
-    return json.loads(path.read_text(encoding='utf-8'))
-
-
-def save(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
-    temp.replace(path)
 
 
 def grid_for(frame, config):
@@ -231,6 +218,7 @@ class ChannelCounts:
         self.closed = False
         self.frame_reader = ChannelFrameReader()
         self.reader_lock = threading.Lock()
+        self.batch = ChannelBatch(self, DEFAULTS)
 
     def folder(self, file):
         if not isinstance(file, str) or not re.fullmatch('[0-9a-f]{32}', file):
@@ -273,29 +261,132 @@ class ChannelCounts:
         finally:
             cap.release()
 
+    @staticmethod
+    def record_path(folder, run):
+        if not isinstance(run, str) or not re.fullmatch(r'[0-9]{20}-[a-f0-9]{8}', run):
+            raise ValueError('任务编号无效')
+        path = folder/run/'state.json'
+        if not path.is_file():
+            raise ValueError('计数记录不存在')
+        return path
+
+    @staticmethod
+    def hidden_history(folder):
+        path = folder/'hidden-history.json'
+        hidden = read(path) if path.exists() else []
+        if not isinstance(hidden, list) or not all(isinstance(run, str) for run in hidden):
+            raise ValueError('计数记录列表格式无效')
+        return set(hidden)
+
     def state(self, file, run=None, include_history=True):
         folder = self.folder(file)
         with self.condition:
-            history = sorted(folder.glob('*/state.json'), reverse=True)
-            if run is not None and (not isinstance(run, str) or not re.fullmatch(r'[0-9]{20}-[a-f0-9]{8}', run)):
-                raise ValueError('任务编号无效')
-            path = folder/run/'state.json' if run else history[0] if history else None
-            if run and not path.is_file():
-                raise ValueError('计数记录不存在')
+            job = self.jobs.get(file)
+            active_run = job['state']['id'] if job else None
+            if include_history or run is None:
+                hidden = self.hidden_history(folder)
+                hidden.discard(active_run)
+                history = sorted((p for p in folder.glob('*/state.json') if p.parent.name not in hidden), reverse=True)
+            path = self.record_path(folder, run) if run is not None else next(iter(history), None)
             task = read(path) if path else None
-            if task and task['status'] in ('running','paused') and self.jobs.get(file, {}).get('state', {}).get('id') != task['id']:
+            if task and task['status'] in ('running','paused') and active_run != task['id']:
                 task.update(status='interrupted', error='上次计数中断，可继续计数')
             result = dict(task=task)
             if include_history:
                 draft = folder/'draft.json'
-                job = self.jobs.get(file)
                 result.update(draft=read(draft) if draft.exists() else DEFAULTS, history=[p.parent.name for p in history],
-                              active_run=job['state']['id'] if job else None)
+                              active_run=active_run)
             return result
+
+    def prepare_batch(self, body):
+        files = body.get('files')
+        if not isinstance(files, list) or not files or not all(isinstance(f, str) for f in files):
+            raise ValueError('请选择已保存的视频')
+        shared = settings(body['settings']) if body.get('settings') is not None else None
+        confirmed = body.get('settings_by_file')
+        if 'settings_by_file' in body and (not isinstance(confirmed, dict) or set(confirmed) != set(files)
+                or any(not isinstance(value, dict) or not DEFAULTS.keys() <= value.keys() for value in confirmed.values())):
+            raise ValueError('请逐个确认全部视频的检测线')
+        library = {f['id']: f for f in load_index(self.root)[0]['files'] if not f.get('removed')}
+        rows = []
+        for file in dict.fromkeys(files):
+            draft = self.folder(file)/'draft.json'
+            entry = library.get(file)
+            if not entry or entry['kind'] != 'video':
+                raise ValueError('批次包含未保存或已移除的视频')
+            if file in self.jobs:
+                raise ValueError(entry['name']+' 正在计数，请稍后再加入批次')
+            path = Path(entry['path'])
+            if not path.is_file():
+                raise ValueError(entry['name']+' 的原视频不可用')
+            stat = path.stat()
+            if confirmed is not None:
+                params = settings(confirmed[file])
+            else:
+                params = shared.copy() if shared is not None else settings(read(draft) if draft.exists() else DEFAULTS)
+            rows.append(dict(file=file, name=entry.get('relativePath') or entry['name'], run=new_run(), settings=params,
+                             source_stamp=[stat.st_size, stat.st_mtime_ns], status='pending', total=None, error=''))
+        return rows
+
+    def start_run(self, file, path, run, params):
+        stat = path.stat()
+        state = dict(source_stamp=[stat.st_size, stat.st_mtime_ns], id=run, file=file, name=path.name,
+                     settings=params, status='running', frame=0, frames=0, counts=[0]*params['num_channels'], events=[])
+        folder = self.folder(file)/run
+        save(folder/'state.json', state)
+        self.launch(path, folder, state)
+
+    def resume_run(self, path, state):
+        stat = path.stat()
+        if state.get('source_stamp') != [stat.st_size, stat.st_mtime_ns]:
+            raise ValueError('原视频已改变，请重新开始计数')
+        state.update(status='running', error=None)
+        folder = self.folder(state['file'])/state['id']
+        save(folder/'state.json', state)
+        self.launch(path, folder, state)
+
+    def launch_batch_item(self, item):
+        file, run = item['file'], item['run']
+        if file in self.jobs:
+            raise ValueError('这个视频正在执行另一次计数，请稍后重试')
+        path = self.source(file)
+        stat = path.stat()
+        if [stat.st_size, stat.st_mtime_ns] != item['source_stamp']:
+            raise ValueError('原视频已改变，请重新确认视频并建立新批次')
+        if (self.folder(file)/run/'state.json').is_file():
+            state = self.state(file, run, False)['task']
+            if state.get('id') != run or state.get('file') != file or state.get('settings') != item['settings']:
+                raise ValueError('计数检查点与批次记录不一致')
+            if state['status'] != 'interrupted':
+                raise ValueError('这条计数记录无法继续')
+            self.resume_run(path, state)
+        else:
+            self.start_run(file, path, run, settings(item['settings']))
 
     def action(self, file, action, body):
         folder = self.folder(file)
         with self.condition:
+            if action in ('remove-comparison', 'restore-comparison'):
+                path = self.record_path(folder, body.get('run'))
+                if read(path).get('status') != 'complete':
+                    raise ValueError('只能整理已完成的计数结果')
+                marker = path.with_name('comparison-hidden')
+                if action == 'remove-comparison':
+                    marker.touch()
+                else:
+                    marker.unlink(missing_ok=True)
+                return {'removed': action == 'remove-comparison'}
+            if action == 'remove-history':
+                run = body.get('run')
+                self.record_path(folder, run)
+                job = self.jobs.get(file)
+                if job and job['state']['id'] == run:
+                    raise ValueError('计数结束后才能移除这条记录')
+                hidden = self.hidden_history(folder)
+                if run not in hidden:
+                    hidden.add(run)
+                    save(folder/'hidden-history.json', sorted(hidden))
+                return {'removed': run}
             if action == 'draft':
                 save(folder/'draft.json', settings(body.get('settings')))
             elif action == 'start':
@@ -303,24 +394,17 @@ class ChannelCounts:
                     raise ValueError('这个视频正在计数')
                 path = self.source(file)
                 params = settings(body.get('settings'))
-                run = datetime.now().strftime('%Y%m%d%H%M%S%f')+'-'+uuid.uuid4().hex[:8]
-                stat = path.stat()
-                state = dict(source_stamp=[stat.st_size, stat.st_mtime_ns], id=run, file=file, name=path.name, settings=params, status='running',
-                             frame=0, frames=0, counts=[0]*params['num_channels'], events=[])
+                if self.batch.reserved(file):
+                    raise ValueError('这个视频已在计数批次中')
                 save(folder/'draft.json', params)
-                save(folder/run/'state.json', state)
-                self.launch(path, folder/run, state)
+                self.start_run(file, path, new_run(), params)
             elif action == 'resume' and file not in self.jobs:
                 state = self.state(file, body.get('run'), False)['task']
                 if not state or state['status'] != 'interrupted':
                     raise ValueError('这条记录无法继续计数')
-                path = self.source(file)
-                stat = path.stat()
-                if state.get('source_stamp') != [stat.st_size, stat.st_mtime_ns]:
-                    raise ValueError('原视频已改变，请重新开始计数')
-                state.update(status='running', error=None)
-                save(folder/state['id']/'state.json', state)
-                self.launch(path, folder/state['id'], state)
+                if self.batch.reserved(file):
+                    raise ValueError('请在批量计数中继续这一批视频')
+                self.resume_run(self.source(file), state)
             elif action in ('pause','resume'):
                 job = self.jobs.get(file)
                 if not job or job['state']['id'] != body.get('run'):
@@ -338,14 +422,15 @@ class ChannelCounts:
         job = dict(paused=False, state=state)
         job['thread'] = threading.Thread(target=self.process, args=(path, folder, job), daemon=True)
         self.jobs[state['file']] = job
-        job['thread'].start()
+        try:
+            job['thread'].start()
+        except RuntimeError:
+            self.jobs.pop(state['file'])
+            raise
 
     def process(self, source, folder, job):
         state = job['state']
-        config = WormTrackerConfig.from_dict(dict(BASE.to_dict(), **state['settings']))
-        counts = {i:0 for i in range(1,config.num_channels+1)}
-        engine = MOG2Engine(config, retain_masks=False)
-        cap = cv2.VideoCapture(str(source))
+        cap = None
         idx, cooldown, valid = 0, 0, 0
         checkpoint = state['frame']
         grid = None
@@ -353,6 +438,10 @@ class ChannelCounts:
         debounce = {}
         events = []
         try:
+            config = WormTrackerConfig.from_dict(dict(BASE.to_dict(), **state['settings']))
+            counts = {i:0 for i in range(1,config.num_channels+1)}
+            engine = MOG2Engine(config, retain_masks=False)
+            cap = cv2.VideoCapture(str(source))
             if not cap.isOpened():
                 raise ValueError('无法打开视频')
             length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -425,13 +514,18 @@ class ChannelCounts:
         except Exception as exc:
             final = dict(status='failed', error=str(exc))
         finally:
-            cap.release()
+            if cap is not None:
+                cap.release()
         with self.condition:
             try:
                 state.update(final)
                 save(folder/'state.json', state)
+            except OSError as exc:
+                state.update(status='failed', error='计数结果保存失败：'+str(exc))
+                raise
             finally:
                 self.jobs.pop(state['file'], None)
+                self.batch.finished(state)
 
     def completed(self, file, run):
         state = self.state(file, run, False)['task']
@@ -468,7 +562,17 @@ class ChannelCounts:
         source = self.review_source(file, state)
         return event_images(source, events[number-1], state['frame'])
 
-    def comparison(self):
+    def frame_image(self, file, run, number, reader):
+        state = self.completed(file, run)
+        if not 1 <= number <= state['frame']:
+            raise ValueError('帧号超出本次计数范围')
+        frame = reader.read(self.review_source(file, state), number - 1)
+        ok, image = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 93])
+        if not ok:
+            raise ValueError('无法生成原分辨率画面')
+        return image.tobytes()
+
+    def comparison(self, include_removed=False):
         rows = []
         directory = self.root/'outputs'/'channel-counts'
         for folder in sorted(directory.glob('*')):
@@ -477,9 +581,47 @@ class ChannelCounts:
             for path in sorted(folder.glob('*/state.json'), reverse=True):
                 state = read(path)
                 if state.get('status') == 'complete':
-                    rows.append(dict(file=folder.name, run=state['id'], name=state['name'], counts=state['counts']))
+                    removed = path.with_name('comparison-hidden').is_file()
+                    if include_removed or not removed:
+                        row = dict(file=folder.name, run=state['id'], name=state['name'], counts=state['counts'])
+                        if include_removed:
+                            row['removed'] = removed
+                        rows.append(row)
                     break
         return rows
+
+    def export_batch(self, batch_id):
+        with self.condition:
+            if not batch_id or self.batch.record['id'] != batch_id:
+                raise ValueError('批次已改变，请刷新队列后重新导出')
+            rows = [row.copy() for row in self.batch.record['items']]
+            paused = {file for file, job in self.jobs.items() if job['paused']}
+        from openpyxl import Workbook
+        book = Workbook()
+        sheet = book.active
+        sheet.title = '批量通道计数'
+        max_channels = max(row['settings']['num_channels'] for row in rows)
+        sheet.append(['视频','状态','通道数','上边界（%）','计数线（%）','下边界（%）','累计通过','说明','计数记录']
+                     + [f'通道 {n:02d}' for n in range(1, max_channels+1)])
+        labels = dict(complete='已完成', failed='失败', running='处理中', interrupted='中断', pending='等待计数', skipped='已取消')
+        for index, row in enumerate(rows, start=2):
+            config = row['settings']
+            counts = []
+            if row['status'] == 'complete':
+                counts = read(self.folder(row['file'])/row['run']/'state.json')['counts']
+            label = '计数已暂停' if row['status']=='running' and row['file'] in paused else labels[row['status']]
+            sheet.append([row['name'], label, config['num_channels'],
+                          *[round(100*config[k], 2) for k in FIELDS[1:]],
+                          sum(counts) if counts else None, row['error'], row['run'], *counts])
+            for col in (1,8,9):
+                sheet.cell(index, col).data_type = 's'
+        sheet.freeze_panes = 'C2'
+        sheet.auto_filter.ref = sheet.dimensions
+        for column, width in [('A',36),('B',14),('H',45),('I',32)]:
+            sheet.column_dimensions[column].width = width
+        out = io.BytesIO()
+        book.save(out)
+        return out.getvalue()
 
     def export(self, file, run, channel=None):
         state = self.completed(file, run)
@@ -501,8 +643,8 @@ class ChannelCounts:
                 sheet.append([i, count])
         if 'events' in state:
             detail = book.create_sheet('越线明细')
-            detail.append(['记录号', '通道', '越线帧', '视频时间（秒）', '轨迹号',
-                           '前次 X（px）', '前次 Y（px）', '越线 X（px）', '越线 Y（px）', '检测线 Y（px）', '前次观测帧', '越线判据'])
+            detail.append(['记录号', '通道', '越线帧（从 1 开始）', '视频时间（秒）', '轨迹号',
+                           '前次 X（px）', '前次 Y（px）', '越线 X（px）', '越线 Y（px）', '检测线 Y（px）', '前次观测帧（从 1 开始）', '越线判据'])
             for event in state['events']:
                 if channel is not None and event['channel'] != channel:
                     continue

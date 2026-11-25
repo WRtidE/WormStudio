@@ -1,4 +1,4 @@
-'use strict';
+import {annotationReadiness, measureCalibration, detectScaleBar} from './annotation-readiness.js';
 const CURRENT_HEAD_DETECTION='taper_seed';
 function analysisMethod(){return state?.analysis_method||'body_sequence';}
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -69,8 +69,10 @@ function pickScale(point){
   const context=scratch.getContext('2d');
   context.drawImage(base,0,0,W,H);
   scalePoints=detectScaleBar(context.getImageData(0,0,W,H),point)||[];
-  scalePointMethod='auto';
-  updateCalibration(scalePoints.length?'':'未识别到完整标尺，请再点一次或手动选两端。');
+  if(!scalePoints.length){
+   setMode('scale');scalePointMethod='manual';
+   updateCalibration('已切换为手动标定，请先点标尺的一端，再点另一端。');
+  }else{scalePointMethod='auto';updateCalibration();}
  }else{
   scalePointMethod='manual';
   if(scalePoints.length===2)scalePoints=[];
@@ -486,6 +488,8 @@ function refresh(){
  const candidates=$('#candidates');candidates.replaceChildren();$('#candidates-panel').hidden=!o||o.candidates.length<2;
  if(o)for(const c of o.candidates){const b=document.createElement('button');b.textContent=`候选 ${c.index+1}`;b.classList.toggle('selected',o.candidate===c.index);b.onclick=async()=>{if(busy||saved)return;remember();setBusy(true);try{o.mask=await decode(c.mask);o.candidate=c.index;o.area=c.area_px;o.headPoint=null;o.confirmed=false;say(`已切换到候选 ${c.index+1}，请检查完整虫体。`)}finally{setBusy(false);draw()}};candidates.append(b)}
  $$('.sidebar .floating-content button,.sidebar input,.sidebar select,.workflow button,.footer-actions button').forEach(e=>e.disabled=busy||saved);
+ $('#anchor-prev').disabled=busy||saved||!!state.mask_correction||state.frame===0;
+ $('#anchor-next').disabled=busy||saved||!!state.mask_correction||state.frame===state.frame_count-1;
  $('#retry-analysis').disabled=busy||saved||!!state.algorithm?.checking;
  const needsConfirmation=step===2&&!o?.confirmed;
  $('#confirm-worm').hidden=step!==2;$('#confirm-worm').disabled=busy||saved||!o||o.area<20||!!o.confirmed;
@@ -667,7 +671,7 @@ async function saveAnnotation(){if(busy||saved)return;const check=readiness();if
 $('#close-success').onclick=()=>$('#success').hidden=true;
 document.addEventListener('keydown',e=>{if($('#head-sampler').open||e.target.matches('input,select,textarea')||busy||saved)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();void undo()}else if(step===2&&['1','2','3'].includes(e.key)){e.preventDefault();setMode({'1':'sam_positive','2':'sam_negative','3':'erase'}[e.key])}else if(e.key==='Escape'){poly=[];setMode('view');draftSaver?.mark()}});
 new ResizeObserver(fit).observe(viewport);
-async function init(){try{const response=await fetch('/state');if(!response.ok)throw Error('无法读取标注会话');state=await response.json();W=state.width;H=state.height;canvas.width=scratch.width=W;canvas.height=scratch.height=H;$('#video-name').textContent=state.sequence_total ? `标定 ${state.sequence_index}/${state.sequence_total} · ${state.video_name}` : state.video_name;$('#frame-label').textContent=`第 ${state.frame} 帧 / ${state.frame_count}`;$('#dimensions').textContent=`${W} × ${H}`;$('#model-label').textContent='智能分割';$('#scale').value=state.scale_um_per_px||'';$('#pixel-mode').checked=state.measurement_mode==='pixels';$('#anchor-frame').value=state.frame;$('#anchor-frame').max=state.frame_count-1;await loadImage(base,'/image.png');
+async function init(){try{const response=await fetch('/state');if(!response.ok)throw Error('无法读取标注会话');state=await response.json();W=state.width;H=state.height;canvas.width=scratch.width=W;canvas.height=scratch.height=H;$('#video-name').textContent=state.sequence_total ? `标定 ${state.sequence_index}/${state.sequence_total} · ${state.video_name}` : state.video_name;$('#frame-label').textContent=`第 ${state.frame} 帧 / 共 ${state.frame_count} 帧`;$('#dimensions').textContent=`${W} × ${H}`;$('#model-label').textContent='智能分割';$('#scale').value=state.scale_um_per_px||'';$('#pixel-mode').checked=state.measurement_mode==='pixels';$('#anchor-frame').value=state.frame;$('#anchor-frame').max=state.frame_count-1;$('#anchor-position').textContent=`第 ${state.frame} / ${state.frame_count-1} 帧`+(Number.isFinite(state.frame_seconds)?` · ${state.frame_seconds.toFixed(3)} s`:'');await loadImage(base,'/image.png');
  if(state.chamber_mode){
   document.body.classList.add('chamber-annotation');
   $('[data-panel="1"] .intro').textContent='先选择测量单位或完成标尺标定。所有培养槽共用这次标定。';
@@ -762,12 +766,16 @@ window.addEventListener('beforeunload',event=>{
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&!busy)void saveDraft().catch(()=>{});});
 $('#tracking-contrast').onchange=()=>{draftSaver?.mark();say('已更改跟踪画面。使用“重新预测”可按新设置生成轮廓。')};
 $('#save-draft').onclick=()=>{draftSaver?.mark();saveDraft().then(()=>say('草稿已保存到本机。')).catch(e=>say(e.message,'error'));};
-$('#load-anchor').onclick=async()=>{
+async function switchAnchor(frame){
  if(busy||saved)return;
- try{const frame=Number($('#anchor-frame').value);if(!Number.isInteger(frame)||frame<0||frame>=state.frame_count)throw Error('帧号超出范围');
-  await saveDraft();setBusy(true);await annotationPost('/api/annotation-frame',{frame});draftSaver.stop();allowLeave=true;location.reload();
+ try{if(!Number.isInteger(frame)||frame<0||frame>=state.frame_count)throw Error('帧号超出范围');
+  if(frame===state.frame)return;
+  await saveDraft();if(busy)return;setBusy(true);await annotationPost('/api/annotation-frame',{frame});draftSaver.stop();allowLeave=true;location.reload();
  }catch(e){setBusy(false);say(e.message,'error')}
-};
+}
+$('#load-anchor').onclick=()=>switchAnchor($('#anchor-frame').valueAsNumber);
+$('#anchor-prev').onclick=()=>switchAnchor(state.frame-1);
+$('#anchor-next').onclick=()=>switchAnchor(state.frame+1);
 $('#pan-tool').onclick=()=>{if(!busy&&!saved)setMode('view',true)};
 $('#locate-worm').onclick=()=>{
  if(!state||busy||saved)return;

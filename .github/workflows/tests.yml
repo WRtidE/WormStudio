@@ -31,5 +31,11 @@ jobs:
         if: runner.os == 'Windows'
         run: uv run --no-sync tests/windows_desktop_smoke.py
       - run: uv run --no-sync run_tests.py
+      - name: Check browser script syntax, including native ES modules
+        run: |
+          for source in web/*.js; do
+            node --check "$source"
+          done
+        shell: bash
       - run: node --test tests/*.js tests/*.cjs
         shell: bash

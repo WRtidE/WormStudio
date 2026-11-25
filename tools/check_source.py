@@ -8,6 +8,7 @@ FORBIDDEN_SUFFIXES={'.pt','.pth','.ckpt','.mp4','.avi','.mov','.npy','.npz','.zi
 FORBIDDEN_PARTS={'.git','__pycache__','.venv','validation','outputs','evaluation_data','node_modules'}
 PRIVATE_PATH=re.compile(r'(?i)[A-Z]:[/\\](?:Users|Anaconda|Program Files)[/\\]')
 SECRET=re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:ghp_|github_pat_)[A-Za-z0-9_]{25,}|AKIA[0-9A-Z]{16}')
+TUTORIAL_GIFS = {'docs/screenshots/channel-counting-quickstart.gif', 'docs/screenshots/phenotype-quickstart.gif'}
 
 
 def check(root):
@@ -22,11 +23,17 @@ def check(root):
         if p.suffix.lower() in FORBIDDEN_SUFFIXES or any(x in FORBIDDEN_PARTS for x in rel.parts):errors.append(f'artifact: {rel}')
         if rel.parts[0] in ('models','resources','input_videos','user-data','logs','.electron-runtime'):
             errors.append(f'runtime data: {rel}')
-        if p.stat().st_size>2_000_000:errors.append(f'oversize: {rel}')
+        tutorial_gif = rel.as_posix() in TUTORIAL_GIFS
+        size_limit = 5_000_000 if tutorial_gif else 2_000_000
+        if p.stat().st_size > size_limit:errors.append(f'oversize: {rel}')
         if (p.name in ('python_path.txt','target_videos.json','evaluation_dataset.json','.env')
                 or (p.name.startswith('.env.') and p.name != '.env.example')
                 or rel.match('config/*.local.*') or rel.as_posix() == 'tools/electron/local.json'):
             errors.append(f'private config: {rel}')
+        if tutorial_gif:
+            with p.open('rb') as image:
+                if image.read(6) != b'GIF89a':errors.append(f'invalid animated GIF: {rel}')
+            continue
         if (rel.as_posix() in ('web/wormstudio-icon.png', 'web/wormstudio-icon-macos.png')
                 or (rel.parent == Path('docs/screenshots') and p.suffix == '.png')):
             with p.open('rb') as image:

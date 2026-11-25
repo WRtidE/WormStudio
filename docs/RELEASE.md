@@ -61,12 +61,14 @@ node --test tests/*.js tests/*.cjs
 
 ### 在线安装版
 
-`tools/release/build_online.py` 将已验证的便携桌面构建拆成桌面首包、公共运行环境、CPU / NVIDIA 运行组件及模型。首包只含 Electron、应用代码、界面和练习视频；首次启动自动检测硬件并下载所选后端。NVIDIA 自动选择要求驱动至少为 572.61、计算能力在 5.x–12.x 范围内，安装后还会实际执行 CUDA 矩阵运算和 torchvision NMS。检测不到兼容驱动时使用 CPU；加速验证失败时可选择“改用 CPU”。Apple Silicon 使用原生环境，应用按现有设备策略选择 Metal。
+示例媒体独立于纯源码导出。打包时使用 `examples` 目录下的 `表征识别.mp4` 和 `通道计数.mp4`，两段练习短片各 16 帧。离线桌面构建的示例参数接收该目录。在线构建从旧桌面包升级时，传入 `--examples examples` 即可换用短片。
+
+`tools/release/build_online.py` 将已验证的便携桌面构建拆成桌面首包、公共运行环境、CPU / NVIDIA 运行组件及模型。首包包含 Electron、应用代码、界面和两个项目的示例视频；首次启动自动检测硬件并下载所选后端。NVIDIA 自动选择要求驱动至少为 572.61、计算能力在 5.x–12.x 范围内，安装后还会实际执行 CUDA 矩阵运算和 torchvision NMS。检测不到兼容驱动时使用 CPU；加速验证失败时可选择“改用 CPU”。Apple Silicon 使用原生环境，应用按现有设备策略选择 Metal。
 
 先按原构建流程产生可搬移的 CPU 桌面目录，再从干净源码导出构建在线版。输入不能是开发虚拟环境；CUDA wheel 必须匹配 `uv.lock` 中的 Windows CPython 3.11 CUDA 12.8 哈希。示例路径由维护者替换：
 
 ```powershell
-uv run --no-sync tools/release/build_online.py --source source-export --desktop desktop-build/WormStudio --gpu-wheels wheels --output online-release --base-url https://downloads.example.org/wormstudio/components
+uv run --no-sync tools/release/build_online.py --source source-export --desktop desktop-build/WormStudio --examples examples --gpu-wheels wheels --output online-release --base-url https://downloads.example.org/wormstudio/components
 ```
 
 输出包含 `WormStudio/`、`WormStudio-Windows-x64.zip`、`components/` 和 `SHA256SUMS.txt`。Mac 在原生构建机上以 `--target darwin-arm64 --desktop desktop-build/WormStudio.app` 生成，其签名、公证仍按 Mac 发布规范执行；Windows 本地测试不代表 Mac 已验证。

@@ -8,19 +8,22 @@ import time
 from collections import defaultdict
 from contextlib import nullcontext
 from itertools import chain
+from input_validation import reserved_filename
+from resource_paths import EXAMPLE_VIDEOS
 
 VIDEO = {'.mp4', '.avi', '.mov', '.mkv', '.m4v', '.mpg', '.mpeg', '.wmv', '.webm'}
 IMAGE = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff'}
 ALLOWED = VIDEO | IMAGE | {'.csv', '.json', '.txt'}
 
 
-def read(root):
+def load_index(root):
     path = root/'config/workspace.local.json'
-    if not path.exists(): return dict(version=2, files=[], folders=[], selected=None)
+    if not path.exists(): return dict(version=2, files=[], folders=[], selected=None), False
     # Fail visibly instead of replacing a damaged index with an empty library.
     value = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(value,dict) or not isinstance(value.get('files'), list): raise ValueError('文件工作区索引无效')
-    if value.get('version',1) < 2:
+    migrated = value.get('version', 1) < 2
+    if migrated:
         value['folders']=[]
         for item in value['files']:
             parts=str(item.get('relativePath','')).replace('\\','/').split('/')[:-1]
@@ -31,8 +34,14 @@ def read(root):
             for part in parts: parent=ensure_folder(value,part,parent)['id']
             item.update(parent=parent,order=next_order(value,parent))
         value['version']=2
-        write(root,value)
     if not isinstance(value.get('folders'),list): raise ValueError('文件夹索引无效')
+    return value, migrated
+
+
+def read(root):
+    value, migrated = load_index(root)
+    if migrated:
+        write(root, value)
     return value
 
 
@@ -54,10 +63,23 @@ def public(item):
 
 
 def register(root, path, *, auto=False, **metadata):
-    path = Path(path).resolve()
-    if not path.is_file() or path.suffix.lower() not in ALLOWED: raise ValueError('文件不存在或格式不受支持')
     state = read(root)
-    item = next((f for f in state['files'] if Path(f['path']) == path), None)
+    path = checked_file(path)
+    existing = next((f for f in state['files'] if Path(f['path']) == path), None)
+    item, changed = register_item(state, path, existing, auto, metadata)
+    if changed:
+        write(root, state)
+    return public(item) if item is not None else None
+
+
+def checked_file(path):
+    path = Path(path).resolve()
+    if not path.is_file() or path.suffix.lower() not in ALLOWED:
+        raise ValueError('文件不存在或格式不受支持')
+    return path
+
+
+def register_item(state, path, item, auto, metadata):
     if item is None:
         parent = metadata.get('parent')
         check_parent(state, parent)
@@ -66,18 +88,61 @@ def register(root, path, *, auto=False, **metadata):
                     added=time.time(), parent=parent, order=next_order(state,parent))
         item.update(metadata)
         state['files'].append(item)
-        write(root, state)
+        return item, True
     elif item.get('removed'):
-        if auto: return None
+        if auto: return None, False
         item.update(removed=False,parent=None,order=next_order(state,None))
-        write(root,state)
-    return public(item)
+        return item, True
+    return item, False
+
+
+def register_many(root, paths, *, auto=True, index=None):
+    state, changed = load_index(root) if index is None else index
+    by_path = {Path(item['path']): item for item in state['files']}
+    files = {}
+    for source in dict.fromkeys(paths):
+        try:
+            path = checked_file(source)
+            item, added = register_item(state, path, by_path.get(path), auto, {})
+            if item is not None:
+                by_path[path] = item
+            files[source] = public(item) if item is not None else None
+            changed |= added
+        except (ValueError, OSError):
+            continue  # A moved source must not hide the corresponding saved result.
+    if changed:
+        write(root, state)
+    return files
 
 
 def listing(root):
-    state = read(root)
+    state, changed = load_index(root)
+    files_by_path = {Path(item['path']): item for item in state['files']}
+    first_layout = 'exampleFolder' not in state
+    folder = next((f for f in state['folders'] if f['id'] == state.get('exampleFolder')), None)
+    examples = {}
+    for mode, name in EXAMPLE_VIDEOS.items():
+        path = (root/'examples'/name).resolve()
+        item = files_by_path.get(path)
+        if not path.is_file() or (item is not None and item.get('removed')):
+            continue
+        if item is None or (first_layout and item.get('parent') is None):
+            if folder is None:
+                folder = ensure_folder(state, '示例视频', None)
+            parent = folder['id']
+            if item is None:
+                item, _ = register_item(state, path, None, True, {'parent': parent})
+            else:
+                # Older workspaces placed bundled clips at the root. Keep their IDs and history.
+                item.update(parent=parent, order=next_order(state, parent))
+            changed = True
+        examples[mode] = item['id']
+    if changed or (first_layout and examples):
+        if examples:
+            state['exampleFolder'] = folder['id'] if folder else None
+        write(root, state)
     return dict(files=[public(f) for f in state['files'] if not f.get('removed')],
-                folders=state['folders'], selected=state.get('selected'))
+                folders=state['folders'], selected=state.get('selected'), examples=examples)
 
 
 def select(root, file_id):
@@ -89,7 +154,7 @@ def select(root, file_id):
 
 
 def media(root, file_id):
-    item = next((f for f in read(root)['files'] if f['id'] == file_id), None)
+    item = next((f for f in load_index(root)[0]['files'] if f['id'] == file_id), None)
     if item is None: return None
     return Path(item['path'])
 
@@ -108,7 +173,7 @@ def receive_file(path, stream, size):
 def upload(root, stream, size, name, relative_path='', signature='', parent=None, *, transfer=nullcontext):
     name = re.sub(r'[<>:"|?*\x00-\x1f]', '_', name.replace('\\', '/').rsplit('/', 1)[-1]).strip('. ')
     if not name or Path(name).suffix.lower() not in ALLOWED: raise ValueError('请选择视频、图片、CSV、JSON 或 TXT')
-    if name.split('.')[0].lower() in {'con','prn','aux','nul',*[f'{p}{i}' for p in ('com','lpt') for i in range(1,10)]}: name = 'file-'+name
+    if reserved_filename(name): name = 'file-'+name
     if not 0 < size <= 8*1024**3: raise ValueError('文件为空或超过 8 GB；大视频请使用完整路径打开')
     # Check the index before receiving bytes; a corrupt index must not be lost.
     check_parent(read(root), parent)

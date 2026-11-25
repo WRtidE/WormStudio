@@ -1,5 +1,5 @@
 """Read-only measurements of a confirmed annotation frame, without tracking."""
-import base64
+from input_validation import annotation_mask
 import math
 
 import cv2
@@ -91,19 +91,7 @@ def measure_annotation(annotation, body):
     if (not isinstance(roi, list) or len(roi) != 4 or any(type(v) is not int for v in roi)
             or not (0 <= roi[0] < roi[2] <= w and 0 <= roi[1] < roi[3] <= h)):
         raise ValueError('分析区域超出标注画面。')
-    prefix = 'data:image/png;base64,'
-    encoded = body.get('mask', '')
-    if not isinstance(encoded, str) or not encoded.startswith(prefix):
-        raise ValueError('掩膜必须为 PNG。')
-    try:
-        image = cv2.imdecode(np.frombuffer(base64.b64decode(encoded[len(prefix):], validate=True), np.uint8), cv2.IMREAD_UNCHANGED)
-    except (ValueError, cv2.error) as exc:
-        raise ValueError('虫体掩膜无法读取。') from exc
-    if image is None or image.shape[:2] != (h, w):
-        raise ValueError('掩膜尺寸与当前标注帧不匹配。')
-    mask = image > 127 if image.ndim == 2 else image[:, :, 0] > 127
-    if image.ndim == 3 and image.shape[2] == 4:
-        mask &= image[:, :, 3] > 0
+    mask = annotation_mask(body.get('mask'), (h, w))
     x, y, right, bottom = roi
     inside = mask[y:bottom, x:right]
     if inside.sum() != mask.sum():

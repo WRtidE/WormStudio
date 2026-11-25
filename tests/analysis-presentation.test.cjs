@@ -64,7 +64,9 @@ test('the progress page keeps polling across chamber handoffs, failures and a re
    last={status,sample:String(id),token:'session-token',stages:[],active:null,percent:0,batch:{running:!!frames.length&&!dispatch_error,dispatch_error,result_items:items},preview_run:status==='preparing'?null:'run-'+id};
    return {ok:true,json:async()=>last};
   }});
- await vm.runInContext(fs.readFileSync(require.resolve('../web/processing.js'),'utf8'),ctx);
+ const pollSource=fs.readFileSync(require.resolve('../web/progress-poll.js'),'utf8').replace('export async', 'async');
+ const pageSource=fs.readFileSync(require.resolve('../web/processing.js'),'utf8').replace(/^import .*?;\s*/, '');
+ await vm.runInContext(pollSource+'\n'+pageSource,ctx);
  async function tick(){const pending=[...timers].find(([,t])=>t.ms===1000);assert.ok(pending,'must still be polling');timers.delete(pending[0]);await pending[1].fn();}
  await tick();
  assert.equal(presentation.sessionView(last),'progress');

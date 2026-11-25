@@ -1,17 +1,118 @@
 'use strict';
 
-window.createChannelWorkspace = function ({request, token, openVideo, getFiles}) {
+// The two panels grow towards the middle, so the lower divider reverses the drag direction.
+function bindChannelDivider(panel, direction, isOpen, setOpen) {
+  const body = document.getElementById(panel.id+'-body');
+  const handle = document.getElementById(panel.id+'-divider');
+  const workspace = panel.parentElement, work = document.getElementById('count-work');
+  const empty = document.getElementById('count-empty');
+  const store = window.WorkspaceLinks.layoutStore, key = 'studio:'+panel.id;
+  let drag = null, preferred;
+
+  function setHeight(height) {
+    preferred = height;
+    if (height === undefined) body.style.removeProperty('--pane-height');
+    else body.style.setProperty('--pane-height', height+'px');
+  }
+  function restore() {
+    if (drag) return;
+    const {height} = store.read(key);
+    setHeight(Number.isFinite(height) && height > 0 ? height : undefined);
+  }
+  function save() { store.write(key, preferred === undefined ? {} : {height:preferred}); }
+  function size() { return isOpen() ? body.offsetHeight : 0; }
+  function limit() {
+    const middle = work.hidden ? empty : work;
+    return Math.max(0, size() + middle.offsetHeight - Math.min(150, workspace.clientHeight * .24));
+  }
+  function resize(requested) {
+    const height = Math.round(Math.max(0, Math.min(requested, limit())));
+    const expanded = height >= 5;
+    if (!expanded && !isOpen()) return;
+    setHeight(expanded ? height : undefined);
+    if (expanded !== isOpen()) setOpen(expanded);
+  }
+  handle.addEventListener('pointerdown', event => {
+    if (drag || event.button !== 0 || !event.isPrimary) return;
+    drag = {id:event.pointerId, y:event.clientY, height:size()};
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    handle.focus({preventScroll:true});
+    handle.setPointerCapture(event.pointerId);
+    handle.toggleAttribute('data-dragging', true);
+    event.preventDefault();
+  });
+  function move(event) {
+    if (drag?.id !== event.pointerId || event.clientY === drag.y && !drag.moved) return;
+    drag.moved = true;
+    resize(drag.height + direction * (event.clientY - drag.y));
+  }
+  function finish(event) {
+    if (drag?.id !== event.pointerId) return;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
+    window.removeEventListener('pointercancel', finish);
+    if (drag.moved) save();
+    drag = null;
+    handle.removeAttribute('data-dragging');
+  }
+  handle.addEventListener('lostpointercapture', finish);
+  function reset() { setHeight(undefined); save(); }
+  handle.addEventListener('dblclick', reset);
+  handle.addEventListener('keydown', event => {
+    if (event.key === 'Home') reset();
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      resize(size() + direction * (event.key === 'ArrowUp' ? -24 : 24));
+      save();
+    } else return;
+    event.preventDefault();
+  });
+  const observer = new ResizeObserver(() => {
+    const height = size();
+    handle.setAttribute('aria-valuenow', String(Math.min(100, Math.round(100 * height / (limit() || 1)))));
+    handle.setAttribute('aria-valuetext', isOpen() ? height+' 像素' : '已收起');
+  });
+  for (const element of [body, panel, work, empty]) observer.observe(element);
+  store.subscribe(restore);
+  restore();
+}
+
+window.createChannelWorkspace = function ({request, token, openVideo, getFiles, retryImport}) {
   const el = id => document.getElementById(id);
   const tabs = [...document.querySelectorAll('[data-count-tab]')];
-  const sliders = [...document.querySelectorAll('[data-count-line]')];
   const svg = el('count-view'), bars = el('cross-chart');
-  const lineNames = {mask_top_ratio:'上边界', tripwire_ratio:'越线 ↑', mask_bottom_ratio:'下边界'};
+  const viewport = window.ResultViewport.bindZoom({stage:svg, controls:el('count-zoom-tools'), onZoom:draw,
+    paint({width, height, transform:{s, x, y}}) {
+      svg.setAttribute('viewBox', [-x/s, -y/s, width/s, height/s].join(' '));
+    }});
+  let gesture = null;
+  const channelInput = el('count-channels'), channelFilter = el('cross-filter');
+  const labelWidth = 60, labelHeight = 22;
+  const lineNames = {mask_top_ratio:'上边界', tripwire_ratio:'计数线', mask_bottom_ratio:'下边界'};
   const states = {running:'计数中', paused:'已暂停', interrupted:'计数中断', failed:'计数失败', complete:'已完成'};
   let file = null, page = 'setup', task = null, run = null, activeRun = null, draft = null, history = [];
-  let setupPhoto = null, setupError = '', drawnPhoto = null, guides, line = null, highlighted = null;
+  let setupPhoto = null, setupError = '', drawnPhoto = null, guides, labelLayer, highlighted = null;
   let generation = 0, refreshRevision = 0, setupRevision = 0, timer, pending = false, writes = Promise.resolve();
   const route = (name, params) => '/api/channel/' + name + '?' + new URLSearchParams({file:file.id, ...params});
   const renderReview = window.createChannelReview({request, route});
+  const refreshComparison = window.createChannelComparison({request,post,getFiles,openRun:(entry,channel)=>{
+    openVideo(entry.file); chooseRun(entry.run,channel);
+  }});
+  const batch = window.createChannelBatch({request,token,getFiles,retryImport,refreshComparison,
+    openSetup:id=>{
+      openVideo(id);
+      if (file?.id===id && draft) changePage('setup');
+    },
+    current:()=>({id:file?.id, setup:page==='setup', ready:!!setupPhoto && !!file?.available && !pending &&
+      channelInput.validity.valid && channelInput.valueAsNumber===draft?.num_channels, settings:draft}),
+    openRun:item=>{
+      if (!getFiles().some(f=>f.id===item.file)) { notice('count-message','该视频已从工作区移除'); return; }
+      openVideo(item.file); chooseRun(item.run);
+    }});
+  const comparison = el('count-comparison');
+  bindChannelDivider(el('count-batch'), 1, () => batch.expanded, batch.setExpanded);
+  bindChannelDivider(comparison, -1, () => comparison.open, open => { comparison.open = open; });
   let live = null, newPreviewRun = null;
 
   function stopLive() {
@@ -22,7 +123,8 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
   }
 
   function position(frame) {
-    el('count-position').textContent = task.frames ? frame+' / '+task.frames+' 帧' : '';
+    el('count-position').textContent = frame > 0 ? '预览 · ' + channelFrameLabel(frame,task.fps) : '';
+    el('count-latest').disabled = pending || !task.picture || frame >= task.frame;
   }
 
   async function playLive(player) {
@@ -32,7 +134,13 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     try {
       if (task.status==='paused' || document.hidden || pending) { delay=120; return; }
       if (player.frame >= task.frame) {
-        if (task.status==='complete') changePage('result');
+        if (task.status==='complete') {
+          if (gesture || viewport.zoomed) {
+            // Keep the inspected area on screen when playback reaches the last frame.
+            stopLive();
+            render();
+          } else changePage('result');
+        }
         return;
       }
       if (!player.frame && task.status==='running' && task.frame<Math.min(task.frames || 6,6)) return;
@@ -127,8 +235,32 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     return labels;
   }
 
+  function positionLineLabels() {
+    const {transform:{x,y,s}, height,h} = viewport.view;
+    const halfHeight = labelHeight/2, gap = labelHeight+4, inset = 5;
+    const left = Math.max(inset, x - labelWidth - 12);
+    // Lay out the handles in screen pixels, including the margin beside the image.
+    labelLayer.setAttribute('transform', `matrix(${1/s} 0 0 ${1/s} ${-x/s} ${-y/s})`);
+    const visible = [];
+    for (const group of labelLayer.children) {
+      const target = y + draft[group.dataset.line] * h * s;
+      const onScreen = target >= 0 && target <= height;
+      group.style.display = onScreen ? '' : 'none';
+      if (onScreen) visible.push({group, target});
+    }
+    let next = inset + halfHeight;
+    visible.forEach(({group,target}, index) => {
+      const limit = height - inset - halfHeight - (visible.length-1-index)*gap;
+      const center = Math.min(limit, Math.max(next,target));
+      group.setAttribute('transform', `translate(${left} ${center})`);
+      group.querySelector('path').setAttribute('d', `M ${labelWidth} 0 l 12 ${target-center}`);
+      next = center + gap;
+    });
+  }
+
   function draw() {
     const setup = page === 'setup', photo = setup ? setupPhoto : live ? live.photo : task?.picture;
+    el('count-zoom-tools').hidden = !photo || page === 'result';
     if (!photo || page === 'result') {
       svg.replaceChildren();
       drawnPhoto = null;
@@ -136,7 +268,7 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     }
     const {width:w,height:h,bounds} = photo, params = setup ? draft : task.settings;
     if (!drawnPhoto || drawnPhoto.width!==w || drawnPhoto.height!==h) {
-      svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      viewport.layout(w,h);
       svg.replaceChildren();
       svgItem(svg, 'image', {href:photo.image, width:w, height:h});
       guides = svgItem(svg,'g',{});
@@ -164,20 +296,26 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
           'text-anchor':'middle',fill:'white',stroke:'#375042','stroke-width':2.5*unit,'paint-order':'stroke'},ch);
       }
     });
-    for (const [key, title] of Object.entries(lineNames)) {
+    for (const key of Object.keys(lineNames)) {
       const y = params[key]*h, crossing = key === 'tripwire_ratio';
       const group = svgItem(guides, 'g', setup ? {'data-line':key} : {});
       svgItem(group,'line',{x1:0,x2:w,y1:y,y2:y,stroke:crossing?'#d95545':'#efcd69','stroke-width':crossing?2:1.5,
         'stroke-dasharray':crossing?'none':'6 4','vector-effect':'non-scaling-stroke'});
       if (setup) {
         svgItem(group,'line',{x1:0,x2:w,y1:y,y2:y,stroke:'transparent','stroke-width':16,'vector-effect':'non-scaling-stroke'});
-        // Separate the handles horizontally so closely spaced boundaries remain selectable.
-        const width = 52*unit, height = 22*unit;
-        const x = key === 'mask_bottom_ratio' ? w-width : crossing ? Math.min(width+4*unit,w-width) : 0;
-        const top = Math.max(0, Math.min(y-height/2, h-height));
-        svgItem(group,'rect',{x,y:top,width,height,rx:4*unit,fill:crossing?'#9e4135':'#584a2c'});
-        svgItem(group,'text',{x:x+width/2,y:top+height*.69,'font-size':12*unit,'text-anchor':'middle',fill:'white'},title);
       }
+    }
+    if (setup && viewport.view) {
+      // Paint the handles last so neighboring lines cannot intercept their drag targets.
+      labelLayer = svgItem(guides, 'g', {class:'count-line-labels'});
+      for (const [key,title] of Object.entries(lineNames)) {
+        const group = svgItem(labelLayer, 'g', {'data-line':key});
+        svgItem(group,'path',{});
+        svgItem(group,'rect',{width:labelWidth,height:labelHeight,y:-labelHeight/2,rx:4});
+        svgItem(group,'line',{x1:7,x2:7,y1:-5,y2:5});
+        svgItem(group,'text',{x:15,y:0,'dominant-baseline':'central'},title);
+      }
+      positionLineLabels();
     }
     if (!setup) bounds.forEach(([a,b],i) => {
       const ch=bounds.length-i;
@@ -186,49 +324,52 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     });
   }
 
-  function updateSliders() {
-    for (const input of sliders) {
-      const ratio = draft[input.dataset.countLine], percent = Number((ratio*100).toFixed(1)) + '%';
-      input.value = Math.round(ratio*1000);
-      input.setAttribute('aria-valuetext', percent);
-      input.parentElement.querySelector('output').textContent = percent;
-    }
-  }
   function moveLine(key, value) {
     const limits = {mask_top_ratio:[0,draft.tripwire_ratio-.001], mask_bottom_ratio:[draft.tripwire_ratio+.001,1],
       tripwire_ratio:[draft.mask_top_ratio+.001,draft.mask_bottom_ratio-.001]};
     const [lo,hi] = limits[key];
     draft[key] = Math.max(lo,Math.min(hi,Math.round(value*1000)/1000));
-    updateSliders(); draw();
+    batch.changed(file.id); draw();
   }
   svg.onpointerdown = e => {
-    if (!e.isPrimary || e.button !== 0) return;
-    const target = e.target.closest('[data-line]');
-    if (page==='count') {
-      const band=e.target.closest('rect[data-channel]');
-      if (band) selectChannel(Number(band.dataset.channel));
-      return;
-    }
-    if (!target) return;
-    line = target.dataset.line;
-    e.preventDefault(); svg.setPointerCapture(e.pointerId);
+    if (!e.isPrimary || e.button !== 0 || !drawnPhoto || !viewport.view) return;
+    const line = e.target.closest('[data-line]')?.dataset.line;
+    gesture = {id:e.pointerId, x:e.clientX, y:e.clientY, dragged:false, line,
+      lineStart:line ? draft[line] : null, startY:e.clientY,
+      channel:e.target.closest('[data-channel]')?.dataset.channel};
+    svg.setPointerCapture(e.pointerId);
+    e.preventDefault();
   };
   svg.onpointermove = e => {
-    if (!line || !setupPhoto || !e.isPrimary) return;
-    const point = new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
-    moveLine(line,point.y/setupPhoto.height);
+    if (gesture?.id !== e.pointerId || !drawnPhoto) return;
+    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
+    if (gesture.line) {
+      const delta = (e.clientY - gesture.startY) / (viewport.view.transform.s * drawnPhoto.height);
+      moveLine(gesture.line, gesture.lineStart + delta);
+    } else {
+      if (!gesture.dragged && Math.hypot(dx,dy) < 4) return;
+      if (viewport.zoomed) {
+        svg.classList.add('is-panning');
+        viewport.pan(dx, dy);
+        if (page === 'setup') positionLineLabels();
+      }
+    }
+    gesture.dragged = true;
+    gesture.x = e.clientX;
+    gesture.y = e.clientY;
   };
-  svg.onlostpointercapture = () => { if (line) { line=null; saveDraft(); } };
-  new ResizeObserver(() => { if (drawnPhoto) draw(); }).observe(svg);
-  for (const input of sliders) {
-    input.oninput = () => moveLine(input.dataset.countLine,Number(input.value)/1000);
-    input.onchange = saveDraft;
+  function endGesture(e) {
+    if (gesture?.id !== e.pointerId) return;
+    const {line, dragged, channel} = gesture;
+    gesture = null;
+    svg.classList.remove('is-panning');
+    if (line && dragged) saveDraft();
+    if (channel && !dragged && page === 'count' && e.type === 'pointerup') selectChannel(Number(channel));
   }
-  el('count-adjust').onclick = () => {
-    const panel = el('count-sliders');
-    panel.hidden = !panel.hidden;
-    el('count-adjust').setAttribute('aria-expanded', String(!panel.hidden));
-  };
+  svg.onpointerup = svg.onpointercancel = svg.onlostpointercapture = endGesture;
+  new ResizeObserver(() => {
+    if (drawnPhoto) { viewport.layout(drawnPhoto.width, drawnPhoto.height); draw(); }
+  }).observe(svg);
 
   async function loadSetup() {
     const version = ++setupRevision;
@@ -244,10 +385,18 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     }
     render();
   }
-  el('count-channels').onchange = () => {
-    const n = el('count-channels').valueAsNumber;
-    if (!Number.isInteger(n) || n < 1 || n > 100) { el('count-channels').value=draft.num_channels; return; }
-    if (n === draft.num_channels) return;
+  function updateStartButton() {
+    el('count-start').toggleAttribute('data-retry', !!setupError);
+    const invalid = !channelInput.validity.valid;
+    el('count-channel-error').hidden = !invalid;
+    channelInput.setAttribute('aria-invalid', String(invalid));
+    el('count-start').disabled = pending || (!activeRun && (invalid || !file.available || (!setupPhoto && !setupError)));
+  }
+
+  channelInput.oninput = () => { batch.changed(file.id); updateStartButton(); batch.parameters(); };
+  channelInput.onchange = () => {
+    const n = channelInput.valueAsNumber;
+    if (!channelInput.validity.valid || n === draft.num_channels) return;
     draft.num_channels=n; saveDraft(); void loadSetup();
   };
 
@@ -256,13 +405,21 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     const button=e.target.closest('button[data-channel]');
     if (button) selectChannel(Number(button.dataset.channel));
   };
-  el('cross-all').onclick = () => selectChannel(null);
+  channelFilter.onchange = () => {
+    highlighted = channelFilter.value ? Number(channelFilter.value) : null;
+    render();
+    if (highlighted != null) bars.querySelector('[aria-pressed=true]').scrollIntoView({block:'nearest', inline:'nearest'});
+  };
 
   function distribution() {
     const counts = live ? (live.photo?.counts || task.counts.map(()=>0)) : task.counts;
     const max = Math.max(1,...counts);
     if (bars.childElementCount !== counts.length) {
       bars.replaceChildren();
+      channelFilter.replaceChildren(new Option('全部通道', ''));
+      for (let ch=1; ch<=counts.length; ch++) {
+        channelFilter.add(new Option('通道 ' + String(ch).padStart(2,'0'), String(ch)));
+      }
       bars.style.gridTemplateColumns = 'repeat(' + counts.length + ',minmax(22px,1fr))';
       for (let ch=counts.length; ch>0; ch--) {
         const button = document.createElement('button');
@@ -283,8 +440,9 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
       button.setAttribute('aria-label',button.title);
     }
     el('cross-total').textContent=counts.reduce((sum,n)=>sum+n,0);
-    el('cross-selected').textContent=highlighted==null?'':'通道 '+String(highlighted).padStart(2,'0')+' · '+counts[highlighted-1]+' 次越线';
-    el('cross-all').hidden=highlighted==null;
+    el('count-scope').textContent = live ? '预览累计' : page==='result' || task.status==='complete' ? '全视频' : '已处理帧累计';
+    channelFilter.value = highlighted ?? '';
+    notice('cross-selected', highlighted == null ? '' : counts[highlighted-1] + ' 次越线');
     const scoped=el('cross-export-selected');
     scoped.hidden=page!=='result'||highlighted==null;
     if(!scoped.hidden){
@@ -301,9 +459,12 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
 
   function render() {
     syncLive();
+    batch.parameters();
     const setup=page==='setup', result=page==='result';
     el('count-work').hidden=!draft;
     el('count-empty').hidden=!!draft;
+    el('count-import').hidden=!!file?.persisting || file?.kind==='video' && !!file.path;
+    el('count-playhead').hidden=!draft || page!=='count';
     for (const tab of tabs) {
       const name=tab.dataset.countTab;
       tab.disabled=!draft || pending || (name==='result' && task?.status!=='complete') || (name==='count' && !task);
@@ -315,15 +476,16 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     el('count-config').hidden=!setup;
     el('count-distribution').hidden=setup;
     el('count-transport').hidden=page!=='count';
-    for (const b of el('channel-history-list').children) {
-      b.disabled=pending;
-      if (b.dataset.run===task?.id) b.setAttribute('aria-current','true'); else b.removeAttribute('aria-current');
+    for (const row of el('channel-history-list').children) {
+      const entry=row.querySelector('.history-entry'), remove=row.querySelector('.history-delete');
+      entry.disabled=pending;
+      if (entry.dataset.run===task?.id) entry.setAttribute('aria-current','true'); else entry.removeAttribute('aria-current');
+      remove.disabled=pending || entry.dataset.run===activeRun;
+      remove.title=entry.dataset.run===activeRun?'计数结束后可移除':'从列表移除，保留已保存的结果';
     }
     if (setup) {
-      if (document.activeElement!==el('count-channels')) el('count-channels').value=draft.num_channels;
-      updateSliders();
-      el('count-start').disabled=pending || (!activeRun && (!file.available || (!setupPhoto && !setupError)));
-      el('count-start').textContent=activeRun?'查看计数进度':setupError?'重新读取首帧':'开始计数';
+      updateStartButton();
+      el('count-start').textContent=setupError?'重新读取首帧':activeRun?'查看计数进度':'开始计数';
       const status = !file.available ? '原视频不可用' : setupError || (!setupPhoto ? '读取视频首帧…' : '');
       notice('count-photo-status', status);
     } else {
@@ -338,12 +500,16 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
           button.disabled=pending;
         }
         const progress=el('count-progress');
+        const percent = task.frames > 0 ? Math.min(100,Math.floor(task.frame * 100 / task.frames)) : null;
+        const processed = '已处理 ' + task.frame + (task.frames > 0 ? ' / ' + task.frames : '') + ' 帧';
+        el('count-processed').textContent = percent == null ? processed : percent + '% · ' + processed;
         progress.hidden=!task.frames && !['running','paused'].includes(task.status);
         if (task.frames>0) {
           progress.max=task.frames; progress.value=task.frame;
-          progress.title='已处理 '+task.frame+' / '+task.frames+' 帧';
+          progress.setAttribute('aria-valuetext',processed);
         }
-        else progress.removeAttribute('value');
+        else { progress.removeAttribute('value'); progress.removeAttribute('aria-valuetext'); }
+        el('count-latest').hidden=!live || task.status==='complete';
         position(live ? live.frame : task.frame);
         notice('count-photo-status',(live ? live.photo : task.picture) ? '' : task.status==='running'?'等待首帧…':'暂无计数画面');
       }
@@ -358,39 +524,6 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     notice('count-message',page==='setup'?setupNotice:task?.error || task?.warning);
     if (page==='setup' && !setupPhoto && file.available) void loadSetup(); else render();
   }
-  let matrixRevision=0;
-  async function loadComparison(){
-    const version=++matrixRevision,table=el('channel-matrix'),message=el('matrix-state');
-    table.replaceChildren();message.textContent='正在读取通道结果…';
-    try{
-      const rows=await request('/api/channel/comparison');
-      if(version!==matrixRevision)return;
-      const library=new Map(getFiles().map(f=>[f.id,f]));
-      const available=rows.filter(row=>library.has(row.file));
-      message.textContent=available.length?'':'暂无已完成的通道计数。';
-      if(!available.length)return;
-      const max=available.reduce((n,row)=>Math.max(n,row.counts.length),0);
-      const head=table.createTHead().insertRow();
-      for(const text of ['视频','总次数',...Array.from({length:max},(_,i)=>'通道 '+String(i+1).padStart(2,'0'))]){
-        const th=document.createElement('th');th.scope='col';th.textContent=text;head.append(th);
-      }
-      const body=table.createTBody();
-      for(const entry of available){
-        const tr=body.insertRow(),source=library.get(entry.file),name=document.createElement('th');
-        name.scope='row';name.textContent=source.name;name.title=source.path||source.name;tr.append(name);
-        tr.insertCell().textContent=entry.counts.reduce((sum,n)=>sum+n,0);
-        for(let i=0;i<max;i++){
-          const td=tr.insertCell();
-          if(i>=entry.counts.length){td.textContent='—';continue;}
-          const button=document.createElement('button');button.className='small-button';button.textContent=String(entry.counts[i]);
-          button.setAttribute('aria-label',source.name+' 通道 '+(i+1)+'，'+entry.counts[i]+' 次');
-          button.onclick=()=>{openVideo(entry.file);chooseRun(entry.run,i+1);};
-          td.append(button);
-        }
-      }
-    }catch(error){if(version===matrixRevision)message.textContent=error.message;}
-  }
-  el('count-comparison').addEventListener('toggle',()=>{if(el('count-comparison').open)void loadComparison();});
   function chooseRun(id, channel=null) {
     clearTimeout(timer);
     run=id;
@@ -405,18 +538,25 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
       if (version!==refreshRevision) return;
       if(selectedChannel!=null)highlighted=selectedChannel;
       else if (task?.id!==data.task?.id) highlighted=null;
-      if(task && task.id===data.task?.id && task.status!=='complete' && data.task.status==='complete' && el('count-comparison').open)void loadComparison();
-      task=data.task; activeRun=data.active_run; draft??=data.draft;
-      if (initial) page=task?.status==='complete'?'result':task?'count':'setup';
+      if(task && task.id===data.task?.id && task.status!=='complete' && data.task.status==='complete')void refreshComparison();
+      task=data.task; activeRun=data.active_run;
+      if (!draft) { draft=data.draft; channelInput.value=draft.num_channels; }
+      if (initial) page=!run && batch.isEditing(file.id)?'setup':task?.status==='complete'?'result':task?'count':'setup';
       else if (page==='count' && task?.status==='complete' && !live) page='result';
       if (page!=='setup' || initial) notice('count-message',page==='setup'?'':task?.error || task?.warning);
       if (history.join()!==data.history.join()) {
         history=data.history;
         el('channel-history-list').replaceChildren(...history.map(id=>{
-          const b=document.createElement('button');
-          b.dataset.run=id;
-          b.textContent=id.slice(4,6)+'月'+id.slice(6,8)+'日 '+id.slice(8,10)+':'+id.slice(10,12)+':'+id.slice(12,14);
-          b.onclick=()=>chooseRun(id); return b;
+          const row=el('history-row-template').content.firstElementChild.cloneNode(true);
+          const entry=document.createElement('button');
+          entry.className='history-entry'; entry.dataset.run=id;
+          entry.textContent=id.slice(4,6)+'月'+id.slice(6,8)+'日 '+id.slice(8,10)+':'+id.slice(10,12)+':'+id.slice(12,14);
+          entry.onclick=()=>chooseRun(id);
+          row.querySelector('.history-face').append(entry);
+          const remove=row.querySelector('.history-delete');
+          remove.setAttribute('aria-label','从计数记录移除 '+entry.textContent);
+          remove.onclick=()=>action('remove-history',id);
+          return row;
         }));
       }
       el('channel-history').hidden=!history.length;
@@ -432,15 +572,21 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
     }
   }
 
-  async function action(name) {
+  async function action(name,targetRun=task?.id) {
     if (pending) return;
     const version=generation;
     pending=true; clearTimeout(timer); refreshRevision++; render();
     try {
       await writes;
       if (version!==generation) return;
-      const data=await post(file.id,name,{settings:draft,run:task?.id});
+      const data=await post(file.id,name,name==='remove-history'?{run:targetRun}:{settings:draft,run:targetRun});
       if (version!==generation) return;
+      if (name==='remove-history') {
+        const selected=targetRun===task?.id || targetRun===run;
+        if (selected) run=null;
+        await refresh(selected);
+        return;
+      }
       if (task?.id!==data.task.id) highlighted=null;
       if (name==='start') newPreviewRun=data.task.id;
       task=data.task; run=task.id; page='count';
@@ -454,15 +600,21 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
       if (version===generation) { pending=false; render(); }
     }
   }
+  el('count-import').onclick=()=>el('import-files').click();
   el('count-retry').onclick=()=>{
     el('count-retry').hidden=true;
     el('count-empty-label').textContent='读取计数记录…';
     void refresh(true);
   };
   el('count-start').onclick=()=>{
-    if (activeRun) chooseRun(activeRun);
-    else if (setupError) void loadSetup();
+    if (setupError) void loadSetup();
+    else if (activeRun) chooseRun(activeRun);
     else void action('start');
+  };
+  el('count-latest').onclick=()=>{
+    // Rejoin at the checkpoint; discard any older preview frame still decoding.
+    stopLive();
+    render();
   };
   el('count-pause').onclick=()=>{
     if (task.status==='failed') changePage('setup');
@@ -473,20 +625,21 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles})
   for (const tab of tabs) tab.onclick=()=>changePage(tab.dataset.countTab);
 
   return {
+    batch,
     flush:()=>writes,
     select(item) {
       if (file?.id===item?.id && file?.name===item?.name && file?.available===item?.available && file?.path===item?.path) return;
       file=item?{...item}:null;
       generation++; setupRevision++; refreshRevision++; clearTimeout(timer);
-      task=draft=run=activeRun=setupPhoto=highlighted=line=newPreviewRun=null;
+      task=draft=run=activeRun=setupPhoto=highlighted=newPreviewRun=null;
+      viewport.clear(); gesture=drawnPhoto=null;
+      svg.classList.remove('is-panning');
       page='setup'; history=[]; pending=false; setupError='';
-      el('count-sliders').hidden=true;
-      el('count-adjust').setAttribute('aria-expanded','false');
       el('channel-history-list').replaceChildren(); el('channel-history').hidden=true;
       el('channel-name').textContent=file?.name||'工作台';
       const video=file?.kind==='video' && file.path;
       notice('count-message','');
-      el('count-empty-label').textContent=video?'读取计数记录…':file?.persisting?'正在保存视频':'从左侧选择一个视频';
+      el('count-empty-label').textContent=video?'读取计数记录…':file?.persisting?'正在保存视频':file ? '当前文件不能用于计数，请选择或导入视频。' : '从左侧选择视频，或导入要计数的视频。';
       el('count-retry').hidden=true;
       render();
       if (video) {

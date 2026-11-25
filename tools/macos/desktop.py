@@ -43,10 +43,6 @@ def populate(res, workspace):
     # Copy only shipped code and defaults; mutable catalogues, sessions, videos and
     # results live in this stable path and never in the read-only app bundle.
     shutil.copytree(res/'app', workspace, dirs_exist_ok=True)
-    sample = workspace/'examples/practice.avi'
-    sys.path.insert(0, str(workspace/'src'))
-    from workspace_library import register
-    register(workspace, sample, auto=True)
 
 
 def run(res, base, logfile):

@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.17/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
@@ -28,25 +28,30 @@
 
 ## 下载与启动
 
-Windows 当前稳定版为 **v1.1.16**。下载约 **161 MB** 的桌面包，首次打开时由软件准备运行环境和模型。Apple 芯片 Mac 使用 **v1.0.3** 离线包。[Windows 版本说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.1.16) · [下载文件 SHA-256 校验清单](https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/SHA256SUMS.txt)
+Windows 当前稳定版为 **v1.1.17**。下载约 **170 MB** 的桌面包，首次打开时由软件准备运行环境和模型。Apple 芯片 Mac 使用 **v1.0.3** 离线包。[Windows 版本说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.1.17) · [下载文件 SHA-256 校验清单](https://github.com/WRtidE/WormStudio/releases/download/v1.1.17/SHA256SUMS.txt)
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.1.16 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
+| Windows 64 位（x64） | [Windows v1.1.17 在线版，约 170 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.17/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
 Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。已有完整组件时，再次启动直接进入工作台。GPU 组件优先从国内镜像下载，失败时自动切换备用源。运行组件和模型由程序自动下载，无需逐一手动选择附件。
 
 ## 用练习视频完成第一次分析
 
-首次准备完成后，可用随包的 `practice.avi` 熟悉标注和导出；练习视频只有 5 帧。
+工作台为两个项目各提供一段 16 帧的练习短片。在左侧选择项目，再从文件栏的 **示例视频** 文件夹打开对应短片。
 
-1. **选择视频。** 在左侧文件列表中选择 `practice.avi`，点击 **开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
-2. **选择区域和单位。** 练习视频选择 **完整画面** 和 **像素单位**，点击 **下一步：点选线虫**。分析实验视频时，如果需要以微米报告体长，选择 **标尺标定**，填入画面中标尺的实际长度（μm），再用 **手动选两端** 点出标尺的两个端点。
+- **通道计数** · 用 `通道计数.mp4` 练习设置检测线、放大复核越线画面和导出 Excel。[看通道计数教程（29 秒动图）](docs/USER_GUIDE.md#通道计数)
+- **表征识别** · 用 `表征识别.mp4` 练习自动识别标尺、点选虫体、标记头部和导出表型指标。[看表征识别教程（52 秒动图）](docs/USER_GUIDE.md#表征识别入门)
+
+### 表征识别操作步骤
+
+1. **选择视频。** 打开 `表征识别.mp4`，停在一帧虫体清晰的画面，点击 **用当前画面开始标注**。分析自己的视频时，点击 **导入文件** 或将视频拖入工作台，等导入完成后再选中它。
+2. **选择单位和区域。** 要用微米测量，选择 **标尺标定**，填入画面标尺的实际长度（示例为 500 μm），点 **单击识别** 后点击彩色横线，核对两个端点。没有可靠标尺时可选 **像素单位**。使用完整画面，或框出覆盖虫体整段活动范围的区域，再点 **下一步：点选线虫**。
 
    ![准备画面中，右侧已选中完整画面和像素单位，右下角可进入点选线虫](docs/screenshots/prepare-frame.png)
 
-3. **点选并确认虫体。** 在深色虫体内部点一下，等待轮廓出现。如果漏掉一段，在那一段内部补点。如果圈入了背景，选 **排除提示** 并点击误选的位置。轮廓贴合后，点击底部 **确认虫体**。练习视频可以跳过头端标记。
+3. **确认虫体并标记头部。** 在深色虫体内部点一下，等待轮廓出现。如果漏掉一段，在那一段内部补点。如果圈入了背景，选 **排除提示** 并点击误选的位置。轮廓贴合后点 **确认虫体**。辨认出头端后，点 **标记头部**，再点击原图上的头端。第一条线虫的标记显示为 **H1**。
 
    ![练习视频使用原图分割。点选虫体后，绿色区域显示当前候选轮廓，右侧可切换候选，右下角可确认虫体](docs/screenshots/confirm-contour.png)
 
@@ -71,7 +76,7 @@ Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 *
 
 ## 导出数据、找回历史结果
 
-打开 **结果** 可查看整段视频的汇总。用 v1.1.15 的发布包运行随附练习视频，CPU 和 NVIDIA 两次验证均得到 **5/5 帧有效姿态**，平均体宽约 **12.8 px**。点击右上角的 **其他文件** 可导出视频、表格或统计图。
+打开 **结果** 可查看整段视频的汇总。此前用 v1.1.15 的发布包运行五帧合成练习视频，CPU 和 NVIDIA 两次验证均得到 **5/5 帧有效姿态**，平均体宽约 **12.8 px**。点击右上角的 **其他文件** 可导出视频、表格或统计图。
 
 ![练习视频结果页显示 5/5 帧有效姿态，中位体长 174 px，平均体宽 12.8 px。查看分析视频位于指标变化上方](docs/screenshots/result-summary.png)
 

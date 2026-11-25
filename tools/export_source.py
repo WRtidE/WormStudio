@@ -16,7 +16,8 @@ TOP = ('.gitignore', '.gitattributes', '.editorconfig', 'AGENTS.md', 'README.md'
 DOCS = ('INSTALL.md', 'ARCHITECTURE.md', 'USER_GUIDE.md', 'MODELS.md', 'QUALITY_SCHEMA.md',
         'DEVELOPMENT.md', 'RELEASE.md', 'VALIDATION.md', 'models.json', 'FIRST_ANALYSIS.html', 'PORTABLE_RELEASE.md', 'CPU_OPTIMIZATION.md', 'MACOS.md', 'MAC_FIRST_ANALYSIS.html', 'releases/v1.0.1.md',
         'screenshots/prepare-frame.png', 'screenshots/confirm-contour.png', 'screenshots/result-playback.png',
-        'screenshots/result-summary.png', 'screenshots/phenotype-plots.png')
+        'screenshots/result-summary.png', 'screenshots/phenotype-plots.png',
+        'screenshots/channel-counting-quickstart.gif', 'screenshots/phenotype-quickstart.gif')
 CONFIG = ('phenotype_config.json', 'motion_constraints.json', 'README.md',
           'target_videos.example.json', 'evaluation_dataset.example.json')
 

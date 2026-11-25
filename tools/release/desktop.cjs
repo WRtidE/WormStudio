@@ -3,7 +3,6 @@ const electron = require('electron');
 const {app, BrowserWindow, dialog} = electron;
 const fs = require('node:fs');
 const path = require('node:path');
-const execFileAsync = require('node:util').promisify(require('node:child_process').execFile);
 
 const payload = path.join(process.resourcesPath, 'analysis');
 const base = app.getPath('userData');
@@ -75,10 +74,18 @@ async function launch(prepared = false) {
     if (fs.existsSync(legacyInit) && (await fs.promises.readFile(legacyInit, 'utf8')).trim() === '"""Endpoint ordering and head/tail evidence."""') {
       await fs.promises.rename(legacyInit, legacyInit+'.v1.1.2');
     }
-    await fs.promises.cp(path.join(payload,'code'), workspace, {recursive:true});
+    const code = path.join(payload,'code');
+    const examples = path.join(code,'examples');
+    await fs.promises.cp(code, workspace, {recursive:true, preserveTimestamps:true, filter:async (src,dest) => {
+      if (path.dirname(src) !== examples) return true;
+      const previous = await fs.promises.stat(dest).catch(error => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+      if (!previous) return true;
+      const shipped = await fs.promises.stat(src);
+      return shipped.size !== previous.size || Math.abs(shipped.mtimeMs - previous.mtimeMs) >= 1;
+    }});
     status('正在启动分析工作台…');
-    await execFileAsync(python, ['-c','from pathlib import Path; import sys; sys.path.insert(0,"src"); from workspace_library import register; register(Path.cwd(), Path("examples/practice.avi"), auto=True)'],
-      {cwd:workspace,windowsHide:true});
     app.once('browser-window-created', (_,win) => win.once('ready-to-show', () => {
       const startup = splash; splash = null; startup.close();
     }));

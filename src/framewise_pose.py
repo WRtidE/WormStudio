@@ -31,7 +31,7 @@ def observed_pose(mask, *, max_size=320):
     small = cv2.resize(patch, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_NEAREST_EXACT)
     padded = np.pad(small, 2)
     try:
-        path, _, quality = centerline(padded > 0)
+        path, _, quality = centerline(padded > 0, measure_radius=False)
     except ValueError:
         return None, 'centerline_missing'
     if quality['skeleton_path_fraction'] < .80 or quality['centerline_inside_fraction'] < .97:

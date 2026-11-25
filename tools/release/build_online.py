@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import shutil
+import sys
 from stat import S_ISREG
 import tarfile
 import tomllib
@@ -105,7 +106,7 @@ def gpu_assets(source, directory):
     return assets
 
 
-def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None, reuse_components=None):
+def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None, reuse_components=None, examples=None):
     url = urlsplit(base_url)
     if url.scheme != 'https' or not url.netloc or url.username or url.password or url.query or url.fragment:
         raise ValueError('--base-url must be a public HTTPS directory')
@@ -113,6 +114,9 @@ def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None
     mac = target == 'darwin-arm64'
     resources = desktop / ('Contents/Resources' if mac else 'resources')
     payload = resources / 'analysis'
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'src'))
+    from resource_paths import release_examples
+    videos = release_examples(examples if examples is not None else payload/'code/examples')
     python_relative = 'python/bin/python3.11' if mac else 'python/python.exe'
     site = 'python/lib/python3.11/site-packages' if mac else 'python/Lib/site-packages'
     manifest = json.loads((source/'SOURCE_MANIFEST.json').read_text(encoding='utf-8'))
@@ -174,9 +178,9 @@ def build(source, desktop, output, base_url, target='win32-x64', gpu_wheels=None
             destination = code / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(file, destination)
-    example = payload/'code/examples/practice.avi'
-    if example.is_file():
-        (code/'examples').mkdir(exist_ok=True); shutil.copyfile(example, code/'examples/practice.avi')
+    (code/'examples').mkdir(exist_ok=True)
+    for video in videos:
+        shutil.copy2(video, code/'examples'/video.name)
     (app_resources/'analysis/online-manifest.json').write_text(json.dumps(online_manifest, ensure_ascii=False, indent=2),encoding='utf-8')
     entry = app_resources/'app'; entry.mkdir()
     config = json.loads((source/'tools/electron/package.json').read_text(encoding='utf-8'))
@@ -215,6 +219,7 @@ if __name__ == '__main__':
         parser.add_argument('--'+key,required=True,type=lambda value:Path(value).resolve())
     parser.add_argument('--base-url',required=True)
     parser.add_argument('--target',choices=('win32-x64','darwin-arm64'),default='win32-x64')
+    parser.add_argument('--examples', type=Path, help='Project MP4 directory (defaults to the input desktop package)')
     parser.add_argument('--gpu-wheels',type=lambda value:Path(value).resolve())
     parser.add_argument('--reuse-components',type=lambda value:Path(value).resolve(),
                         help='Reuse an unchanged, previously verified runtime/model manifest without republishing its assets')

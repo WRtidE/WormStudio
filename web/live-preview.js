@@ -135,7 +135,7 @@
     const edit = el('live-edit-mask');
     edit.hidden = !paused || !state?.can_edit_preview_masks;
     edit.disabled = editing || !displayed;
-    edit.textContent = editing ? '正在停止计算…' : '修改当前帧 Mask';
+    edit.textContent = editing ? '正在准备修正…' : state?.status==='running' ? '停止计算并修正此帧' : '修正此帧并重新处理';
     el('live-edit-note').hidden = !paused || !state?.can_edit_preview_masks;
   }
   function reset(next) {
@@ -221,6 +221,8 @@
   el('live-latest').onclick = () => { jump = true; };
   el('live-edit-mask').onclick = async () => {
     if (!paused || !displayed || editing || !state?.can_edit_preview_masks) return;
+    const question = state.status==='running' ? '停止当前计算并修正' : '修正';
+    if (!window.confirm(`${question}第 ${displayed.frame} 帧的掩膜？已有结果会保留，保存修正后将另存新任务，从跟踪开始重新计算。`)) return;
     editing = true; steps = 0; jump = false; controls();
     window.WorkspaceLinks?.setPanelOpen(document.querySelector('.live-data-panel'), true);
     const body = JSON.stringify({run, sequence: displayed.sequence}), token = state.token;

@@ -52,6 +52,29 @@ class BackgroundInputTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('sam2'), 'SAM2 not installed')
 class TrackingFramesTests(unittest.TestCase):
+    def test_tracking_encoder_finishes_in_order_and_propagates_write_failure(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from track_configured_video import ImageWrites, write_input_frame
+        from image_io import write_png, read_image
+        import cv2
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as directory, ThreadPoolExecutor(1) as pool:
+            target = Path(directory)
+            writes = ImageWrites(pool)
+            pixels = np.arange(20*24*3, dtype=np.uint8).reshape(20, 24, 3)
+            path = target/'frame.jpg'
+            writes.submit(write_input_frame, path, pixels)
+            mask = target/'mask.png'
+            writes.submit(write_png, mask, pixels[:, :, 0])
+            writes.submit(write_png, mask, pixels[:, :, 1])
+            writes.finish()
+            self.assertEqual(path.read_bytes(), cv2.imencode('.jpg', pixels, [cv2.IMWRITE_JPEG_QUALITY, 94])[1].tobytes())
+            np.testing.assert_array_equal(read_image(mask, gray=True), pixels[:, :, 1])
+            writes.submit(write_input_frame, target/'missing'/'frame.jpg', pixels)
+            with self.assertRaises(OSError):
+                writes.finish()
+
     def test_random_access_matches_upstream_without_retaining_frames(self):
         from PIL import Image
         from sam2.utils.misc import load_video_frames

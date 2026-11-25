@@ -3,6 +3,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from functools import wraps
 from http.server import ThreadingHTTPServer
+from pathlib import Path
+import cv2
 import secrets
 import socket
 import threading
@@ -19,9 +21,53 @@ def workspace_request(method):
     @wraps(method)
     def serialized(handler):
         with handler.server.control:
-            if not handler.server.closing:
-                return method(handler)
+            if handler.server.closing:
+                return
+            hosts = handler.headers.get_all('Host', [])
+            if len(hosts) != 1 or hosts[0].lower() not in handler.server.allowed_hosts:
+                with handler.server.outside_control():
+                    handler.respond_before_body(403, dict(error='无效的工作台地址'))
+                return
+            return method(handler)
     return serialized
+
+
+class PreviewFrameReader:
+    """Own one decoder; positioning and reading always happen under the same lock."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.capture = None
+        self.source = None
+        self.next_frame = None
+
+    def read(self, video, frame):
+        with self.lock:
+            stat = Path(video).stat()
+            source = (video, stat.st_size, stat.st_mtime_ns)
+            if source != self.source:
+                self.close()
+                self.capture = cv2.VideoCapture(str(video))
+                if not self.capture.isOpened():
+                    self.close()
+                    raise ValueError('无法打开预览视频')
+                self.source = source
+                self.next_frame = 0
+            if not 0 <= frame < int(self.capture.get(cv2.CAP_PROP_FRAME_COUNT)):
+                raise ValueError('帧号超出范围')
+            if frame != self.next_frame and not self.capture.set(cv2.CAP_PROP_POS_FRAMES, frame):
+                self.close()
+                raise ValueError('无法定位指定帧')
+            ok, image = self.capture.read()
+            if not ok:
+                self.close()
+                raise ValueError('无法解码此帧')
+            self.next_frame = frame + 1
+            return image
+
+    def close(self):
+        if self.capture is not None:
+            self.capture.release()
+        self.capture = self.source = self.next_frame = None
 
 
 class WorkspaceHTTPServer(ThreadingHTTPServer):
@@ -34,7 +80,9 @@ class WorkspaceHTTPServer(ThreadingHTTPServer):
         self.connections_lock = threading.Lock()
         self.predictions = ThreadPoolExecutor(max_workers=1, thread_name_prefix='annotation-predict')
         self.prediction = None
+        self.preview_reader = PreviewFrameReader()
         super().__init__(address, handler)
+        self.allowed_hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
 
     @contextmanager
     def outside_control(self):
@@ -76,5 +124,6 @@ class WorkspaceHTTPServer(ThreadingHTTPServer):
                     with suppress(OSError):
                         connection.shutdown(socket.SHUT_RDWR)
         super().server_close()
+        self.preview_reader.close()
         self.predictions.shutdown(wait=True, cancel_futures=True)
         self.prediction = None

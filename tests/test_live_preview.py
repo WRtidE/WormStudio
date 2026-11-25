@@ -122,6 +122,7 @@ class LivePreviewTests(unittest.TestCase):
         report_preview(np.zeros((20,30,3),np.uint8), 0, 3)
         self.progress.bind_server(create_server(progress=self.progress))
         base = self.progress.url.removesuffix('/progress') + '/api/live-preview?run='
+        old_folder = self.progress.preview_dir
         old_run = self.progress.run_id
         with urllib.request.urlopen(base + old_run + '&after=0') as response:
             self.assertEqual(json.load(response)['latest'], 1)
@@ -133,6 +134,7 @@ class LivePreviewTests(unittest.TestCase):
                 urllib.request.urlopen(base + suffix)
             self.assertEqual(error.exception.code, 409)
         self.progress.configure(self.config, self.info, self.stages, self.base)
+        self.assertFalse(old_folder.exists())
         self.assertNotEqual(self.progress.run_id, old_run)
         with self.assertRaises(ValueError): self.progress.preview(old_run)
         self.assertEqual(self.progress.preview(self.progress.run_id)['latest'], 0)

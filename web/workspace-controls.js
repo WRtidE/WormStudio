@@ -13,12 +13,14 @@
     await window.StudioWorkspace.refreshSession(result);
     await refresh();
   }
-  function button(text,handler) {
-    const b=document.createElement('button'); b.className='plain-button';b.textContent=text;
+  function button(text,handler,b=document.createElement('button')) {
+    if(!b.className)b.className='plain-button';
+    b.textContent=text;
     b.onclick=()=>{b.disabled=true;Promise.resolve().then(handler).catch(e=>{el('status-text').textContent=e.message;}).finally(()=>b.disabled=false);};
     return b;
   }
   const historyList=el('saved-run-list');
+  const sidebar=el('library');
   let opened=null, drag=null, suppressClick=false;
   function reveal(row) {
     opened?.classList.remove('show-delete');
@@ -29,13 +31,13 @@
     suppressClick=false;
     if(opened&&!opened.contains(event.target))reveal(null);
   },true);
-  historyList.addEventListener('pointerdown',event=>{
+  sidebar.addEventListener('pointerdown',event=>{
     const row=event.target.closest('.history-row');
     if(!row||event.button!==0||!event.isPrimary||event.target.closest('.history-delete'))return;
     drag={row,id:event.pointerId,x:event.clientX,y:event.clientY};
     event.target.setPointerCapture(event.pointerId);
   });
-  historyList.addEventListener('pointermove',event=>{
+  sidebar.addEventListener('pointermove',event=>{
     if(drag?.id!==event.pointerId)return;
     const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
     if(Math.abs(dy)>8&&Math.abs(dy)>Math.abs(dx)){drag=null;return;}
@@ -45,10 +47,10 @@
     drag=null;
   });
   for(const name of ['pointerup','pointercancel','lostpointercapture']){
-    historyList.addEventListener(name,event=>{if(drag?.id===event.pointerId)drag=null;});
+    sidebar.addEventListener(name,event=>{if(drag?.id===event.pointerId)drag=null;});
   }
-  historyList.addEventListener('click',event=>{
-    if(!event.detail||event.target.closest('.history-delete'))return;
+  sidebar.addEventListener('click',event=>{
+    if(!event.detail||!event.target.closest('.history-row')||event.target.closest('.history-delete'))return;
     if(suppressClick||opened?.contains(event.target)){
       event.stopImmediatePropagation();
       if(!suppressClick)reveal(null);
@@ -56,7 +58,7 @@
     }
   },true);
   let wheelRow=null,wheelDelta=0,wheelTime=0,wheelHandled=false;
-  historyList.addEventListener('wheel',event=>{
+  sidebar.addEventListener('wheel',event=>{
     const row=event.target.closest('.history-row');
     if(!row||event.ctrlKey||Math.abs(event.deltaX)<=Math.abs(event.deltaY))return;
     event.preventDefault();
@@ -68,11 +70,11 @@
     wheelDelta+=event.deltaX*(event.deltaMode===1?16:event.deltaMode===2?row.clientWidth:1);
     if(Math.abs(wheelDelta)>=24){reveal(wheelDelta>0?row:null);wheelHandled=true;}
   },{passive:false});
-  historyList.addEventListener('keydown',event=>{
+  sidebar.addEventListener('keydown',event=>{
     const row=event.target.closest('.history-row');
     if(row&&event.key==='Delete'){
       event.preventDefault();reveal(row);row.querySelector('.history-delete').focus();
-    }else if(opened&&event.key==='Escape'){
+    }else if(opened?.contains(event.target)&&event.key==='Escape'){
       opened.querySelector('.history-entry').focus();reveal(null);
     }
   });
@@ -83,12 +85,13 @@
       const data=await response.json();
       window.StudioWorkspace?.updateRuns(data.runs);
       el('target-video-list').replaceChildren(...data.targets.map(t=>{const b=button('标注 '+t.name,()=>action('/api/new-video',{video_path:t.path}));b.title='标注 '+t.name;return b;}));
-      reveal(null);historyList.replaceChildren();
+      if(historyList.contains(opened))reveal(null);
+      historyList.replaceChildren();
       for(const run of data.history||data.runs) {
-        const item=document.createElement('div');item.className='history-row';
-        const remove=button('删除',()=>action('/api/remove-history',{sample:run.sample}));
-        remove.className='history-delete';remove.setAttribute('aria-label','从历史任务删除 '+run.sample);
-        const face=document.createElement('div');face.className='history-face';item.append(remove,face);
+        const item=el('history-row-template').content.firstElementChild.cloneNode(true);
+        const remove=button('删除',()=>action('/api/remove-history',{sample:run.sample}),item.querySelector('.history-delete'));
+        remove.setAttribute('aria-label','从历史任务删除 '+run.sample);
+        const face=item.querySelector('.history-face');
         const entry=button('',()=>action(run.complete?'/api/open-run':'/api/resume-run',{sample:run.sample}));entry.classList.add('history-entry');
         const title=document.createElement('span');title.className='history-name';title.textContent=run.sample;
         const label=document.createElement('small');label.textContent=run.complete?'查看结果':'继续任务';

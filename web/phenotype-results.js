@@ -26,10 +26,20 @@ const SummaryMetrics=(()=>{
  }
  function columns(data){const seen=new Set(),out=[];for(const worm of data.worms)for(const m of worm.metrics){const key=canonical(m.key);if(!seen.has(key)){seen.add(key);out.push(m);}}return out;}
  function csv(data){
-  const metrics=columns(data),quote=value=>'"'+String(value).replace(/"/g,'""')+'"';
-  const chamber=data.chamber_id!=null;
-  const rows=[[...(chamber?['视频','培养槽']:[]),'线虫',...metrics.map(m=>label(m)+(m.unit?` (${m.unit})`:''))]];
-  for(const worm of data.worms)rows.push([...(chamber?[data.video_name,data.chamber_id]:[]),worm.worm_id,...metrics.map(m=>{const value=find(worm,canonical(m.key))?.value;return numeric(value)?Number(value):'';})]);
+  const metrics=columns(data),quote=value=>'"'+String(value??'').replace(/"/g,'""')+'"';
+  const indexed=data.worms.map(worm=>new Map(worm.metrics.map(m=>[canonical(m.key),m])));
+  const coverage=[];
+  for(const m of metrics){
+   for(const [field,title] of [['valid_frames','有效帧数'],['valid_duration_s','有效时长 (s)']]){
+    if(indexed.some(values=>numeric(values.get(canonical(m.key))?.[field])))coverage.push({key:canonical(m.key),field,label:label(m)+' · '+title});
+   }
+  }
+  const rows=[['视频','源文件','任务','培养槽','线虫','总帧数','有效姿态帧',...metrics.map(m=>label(m)+(m.unit?` (${m.unit})`:'')),...coverage.map(c=>c.label)]];
+  for(const [index,worm] of data.worms.entries()){
+   const cell=(key,field)=>{const value=indexed[index].get(key)?.[field];return numeric(value)?Number(value):'';};
+   rows.push([data.video_name,data.video_path,data.sample,data.chamber_id,worm.worm_id,worm.frames,worm.valid_frames,
+    ...metrics.map(m=>cell(canonical(m.key),'value')),...coverage.map(c=>cell(c.key,c.field))]);
+  }
   return rows.map(row=>row.map(quote).join(',')).join('\r\n');
  }
  function groupCsv(items,reports){

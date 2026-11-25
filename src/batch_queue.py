@@ -8,6 +8,7 @@ from datetime import datetime
 
 class BatchQueue:
     def __init__(self, path):
+        self.revision = 0
         self.path = Path(path)
         self.items = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else []
         self.running = False
@@ -33,6 +34,7 @@ class BatchQueue:
                 item.update(status='pending', error='上次处理被中断，等待重新启动')
 
     def persist(self, items=None):
+        self.revision += 1
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix('.tmp')
         temporary.write_text(json.dumps(self.items if items is None else items, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -134,6 +136,7 @@ class BatchQueue:
         self.running = True
 
     def persist_groups(self, group, groups):
+        self.revision += 1
         self.results_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.results_path.with_suffix('.tmp')
         temporary.write_text(json.dumps(dict(current=group, groups=groups, archived=self.archived), ensure_ascii=False), encoding='utf-8')
@@ -172,9 +175,9 @@ class BatchQueue:
             item = next((i for i in self.items if i['config'].get('chamber_id') is not None
                          and i.get('result_sample', i['config']['sample']) == previous_sample), None)
             if item is None:
-                for saved in self.archived.values():
+                for key, saved in self.archived.items():
                     if saved.get('chamber_id') is not None and saved['sample'] == previous_sample:
-                        saved.update(sample=result_sample, status='complete', error='')
+                        self.archived[key] = dict(saved, sample=result_sample, status='complete', error='')
                         self.persist_groups(self.result_samples, self.groups)
                         break
         if item is None and result_sample:

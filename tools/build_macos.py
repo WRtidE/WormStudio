@@ -36,7 +36,7 @@ def digest(path):
     return h.hexdigest()
 
 
-def build(output, models):
+def build(output, models, examples):
     require_native_mac()
     import conda_pack
     import sam2
@@ -54,6 +54,8 @@ def build(output, models):
         if not path.is_file() or digest(path) != item['sha256']:
             raise ValueError('模型缺失或校验失败：'+str(path))
     sys.path.insert(0, str(ROOT/'src'))
+    from resource_paths import release_examples
+    videos = release_examples(examples)
     from electron_desktop import runtime_dir
     desktop_runtime = runtime_dir()
     from export_source import source_files
@@ -75,8 +77,9 @@ def build(output, models):
     shutil.copytree(sam_path, app/'resources/sam2/sam2', ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copy2(ROOT/'tools/portable_launcher.py', output/'launch.py')
     shutil.copy2(ROOT/'docs/MAC_FIRST_ANALYSIS.html', output/'先读我.html')
-    from create_practice_video import create
-    create(output/'examples')
+    (app/'examples').mkdir()
+    for video in videos:
+        shutil.copy2(video, app/'examples'/video.name)
     for name, mode in [('启动软件.command', 'cpu'), ('试验性Metal加速.command', 'mps')]:
         script = output/name
         script.write_text(command_text(mode), encoding='utf-8', newline='\n')
@@ -96,5 +99,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--models', required=True, type=Path)
+    parser.add_argument('--examples', type=Path, default=ROOT/'examples')
     args = parser.parse_args()
-    build(args.output, args.models)
+    build(args.output, args.models, args.examples)

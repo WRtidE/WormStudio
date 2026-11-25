@@ -10,25 +10,16 @@ from scipy.sparse.csgraph import dijkstra
 from skimage.morphology import skeletonize
 
 
-def resample(points, count=101):
+def resample(points, count=101, *, tolerance=1e-8, error='Degenerate centerline'):
     s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
-    keep = np.r_[True, np.diff(s) > 1e-8]
+    keep = np.r_[True, np.diff(s) > tolerance]
     if s[-1] < 1:
-        raise ValueError('Degenerate centerline')
+        raise ValueError(error)
     return np.column_stack([np.interp(np.linspace(0, s[-1], count), s[keep], points[keep, j]) for j in (0, 1)])
 
 
-def centerline(mask):
-    """Longest geodesic between skeleton endpoints; distances include diagonals."""
-    ys, xs = np.nonzero(mask)
-    if len(xs) < 20:
-        raise ValueError('Empty or very small mask')
-    x0, y0 = max(0, xs.min()-3), max(0, ys.min()-3)
-    local = mask[y0:ys.max()+4, x0:xs.max()+4]
-    labels, n = ndimage.label(local)
-    sizes = np.bincount(labels.ravel()); sizes[0] = 0
-    local = labels == sizes.argmax()
-    sk = skeletonize(local)
+def skeleton_path(sk, *, no_ends='Closed/self-contact skeleton: no reliable pair of endpoints',
+                  disconnected='Disconnected centerline'):
     coords = np.argwhere(sk)
     index = np.full(sk.shape, -1, int); index[sk] = np.arange(len(coords))
     rows, cols, weights = [], [], []
@@ -42,7 +33,7 @@ def centerline(mask):
     graph = coo_matrix((weights,(rows,cols)),shape=(len(coords),len(coords))).tocsr()
     ends = np.flatnonzero(np.diff(graph.indptr)==1)
     if len(ends)<2:
-        raise ValueError('Closed/self-contact skeleton: no reliable pair of endpoints')
+        raise ValueError(no_ends)
     distances, predecessors = dijkstra(graph, indices=ends, return_predecessors=True)
     end_dist = distances[:,ends]
     end_dist[~np.isfinite(end_dist)] = -1
@@ -50,9 +41,24 @@ def centerline(mask):
     node = int(ends[b]); route = [node]
     while node != ends[a]:
         node = int(predecessors[a,node])
-        if node<0: raise ValueError('Disconnected centerline')
+        if node<0: raise ValueError(disconnected)
         route.append(node)
     points = coords[route][:,::-1].astype(float)
+    return points, len(route)/len(coords), len(ends)
+
+
+def centerline(mask, *, measure_radius=True):
+    """Longest geodesic between skeleton endpoints; distances include diagonals."""
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 20:
+        raise ValueError('Empty or very small mask')
+    x0, y0 = max(0, xs.min()-3), max(0, ys.min()-3)
+    local = mask[y0:ys.max()+4, x0:xs.max()+4]
+    labels, n = ndimage.label(local)
+    sizes = np.bincount(labels.ravel()); sizes[0] = 0
+    local = labels == sizes.argmax()
+    sk = skeletonize(local)
+    points, coverage, endpoints = skeleton_path(sk)
     # Extend both terminal tangents to the mask boundary to include the tips.
     for reverse in (False,True):
         if reverse: points=points[::-1]
@@ -70,12 +76,14 @@ def centerline(mask):
     smooth=savgol_filter(points,7,2,axis=0)
     smooth[0],smooth[-1]=points[0],points[-1]
     points=resample(smooth)
-    dt=ndimage.distance_transform_edt(local)
-    radius=ndimage.map_coordinates(dt,[points[:,1],points[:,0]],order=1,mode='constant')
+    radius = None
+    if measure_radius:
+        dt=ndimage.distance_transform_edt(local)
+        radius=ndimage.map_coordinates(dt,[points[:,1],points[:,0]],order=1,mode='constant')
     inside=ndimage.map_coordinates(local.astype(float),[points[:,1],points[:,0]],order=0,mode='constant')
     points += [x0,y0]
-    return points,radius,dict(skeleton_endpoints=len(ends),
-                            skeleton_path_fraction=len(route)/len(coords),
+    return points,radius,dict(skeleton_endpoints=endpoints,
+                            skeleton_path_fraction=coverage,
                             centerline_inside_fraction=float(inside.mean()))
 
 

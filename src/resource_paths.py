@@ -4,6 +4,16 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_VIDEOS = {'phenotype': '表征识别.mp4', 'channel': '通道计数.mp4'}
+
+
+def release_examples(directory):
+    """Require both project videos before assembling a desktop release."""
+    paths = [directory / name for name in EXAMPLE_VIDEOS.values()]
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f'缺少项目示例视频：{path}')
+    return paths
 
 
 def resource_root(project=PROJECT_ROOT):

@@ -239,7 +239,8 @@ window.StudioResults = (() => {
     const filename = key==='video' && data.artifacts?.find(item=>item.key===key)?.filename;
     if (filename) query.set('file',filename);
     if (inline) query.set('inline', '1');
-    if (data.summaryOnly) query.set('group', data.group || '');
+    if (data.read_only) query.set('history','1');
+    else if (data.summaryOnly) query.set('group', data.group || '');
     return '/artifact?' + query;
   }
   el('refresh-video').onclick = async () => {
@@ -259,7 +260,7 @@ window.StudioResults = (() => {
   };
   el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source();video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
   function updateHeadButtons(row=rowAt(position)){
-    const disabled=submittingHead || !row?.head_review_allowed || video.seeking || el('result-original').checked;
+    const disabled=latest?.read_only || submittingHead || !row?.head_review_allowed || video.seeking || el('result-original').checked;
     el('head-a').disabled=el('head-b').disabled=disabled;
   }
   for(const [id,endpoint] of [['head-a',0],['head-b',1]]) el(id).onclick=async()=>{
@@ -421,7 +422,7 @@ window.StudioResults = (() => {
     } finally { preparingClips.delete(data.sample); }
   }
   function attachVideo(data) {
-    if(el('result-video-details').open && data.phenotypes?.chamber_id!=null && !data.artifacts?.some(item=>item.key==='video')){
+    if(!data.read_only && el('result-video-details').open && data.phenotypes?.chamber_id!=null && !data.artifacts?.some(item=>item.key==='video')){
       prepareClip(data);return;
     }
     if(el('result-video-details').open && data.artifacts?.some(item=>item.key==='video') && !video.hasAttribute('src'))
@@ -444,11 +445,11 @@ window.StudioResults = (() => {
       ? '此视频含旧版指标条。可用已保存的识别结果生成新版视频。'
       : '此视频含旧版指标条。请将原视频放回原位置，再打开此任务生成副本。');
     window.ResultPlayer.reset();
-    renderPhenotypes(data.phenotypes && {...data.phenotypes,video_name:data.video_name||data.phenotypes.video_name},data.sample);
+    renderPhenotypes(data.phenotypes && {...data.phenotypes,sample:data.sample,video_path:data.video_path,video_name:data.video_name||data.phenotypes.video_name},data.sample);
     el('result-summary').disabled=!data.phenotypes?.worms?.length;
     text('head-review-message','');el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
     el('result-review').open=false;el('result-review').hidden=true;reviewTasks=[];
-    el('head-correction').open=false;
+    el('head-correction').open=false;el('head-correction').hidden=!!data.read_only;
     video.pause(); video.removeAttribute('src'); video.load();
     controls.forEach(id => el(id).disabled = true);
     ['studio-metric-cards','studio-extra-metrics','studio-extra-artifacts','result-dimensions','result-quality-track','result-worm','studio-artifacts'].forEach(id => el(id).replaceChildren());
@@ -490,7 +491,7 @@ window.StudioResults = (() => {
     }
     const timeout = setTimeout(() => activeController.abort(), 15000);
     try {
-      const endpoint=data.summaryOnly || !fullDetails?'/api/saved-timeline?group='+encodeURIComponent(data.group||'')+(fullDetails?'&detail=1':'')+'&run=':'/api/frame-metrics?run=';
+      const endpoint=data.read_only || data.summaryOnly || !fullDetails?'/api/saved-timeline?'+(data.read_only?'history=1':'group='+encodeURIComponent(data.group||''))+(fullDetails?'&detail=1':'')+'&run=':'/api/frame-metrics?run=';
       const response = await fetch(endpoint + encodeURIComponent(data.sample), {cache:'no-store', signal:activeController.signal});
       const result = await response.json();
       if (!response.ok) throw Error(result.error || '逐帧指标不可用');
@@ -499,9 +500,9 @@ window.StudioResults = (() => {
       timeline = result; worm = result.worm_ids.includes(renderPhenotypes.selected()) ? renderPhenotypes.selected() : result.worm_ids[0];
       renderPhenotypes.setTimeline(result);
       if(!fullDetails){el("results-load-state").hidden=true;timeline=null;return;}
-      el('head-auto').hidden=result.head_detection_mode==='taper_seed';el('head-auto').disabled=false;text('head-auto-message','');
+      el('head-auto').hidden=!!data.read_only||result.head_detection_mode==='taper_seed';el('head-auto').disabled=false;text('head-auto-message','');
       window.ResultPlayer.configure(result,sync);
-      if (!data.summaryOnly) {
+      if (!data.read_only && !data.summaryOnly) {
         const anchorsResponse=await fetch('/api/head-anchors?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
         const anchorsResult=await anchorsResponse.json();if(!anchorsResponse.ok)throw Error(anchorsResult.error||'锚点读取失败');
         if(version!==revision)return;headAnchors=anchorsResult.anchors||{};
@@ -537,7 +538,7 @@ window.StudioResults = (() => {
       if (key) { key = ''; revision++; controller?.abort(); timeline = null; updateHeadButtons(); showEvents(null); video.pause(); }
       return;
     }
-    const nextKey = JSON.stringify([data.sample, data.artifacts, !!data.summaryOnly, data.group]);
+    const nextKey = JSON.stringify([data.sample, data.artifacts, !!data.summaryOnly, !!data.read_only, data.group]);
     if (visible && key !== nextKey) { key = nextKey; load(data); }
   }
   for(const id of ['result-analysis-details','result-video-details','summary-trends']){

@@ -93,4 +93,4 @@ function detectScaleBar({data, width, height}, [x, y]) {
     return horizontal ? [[start, center], [end, center]] : [[center, start], [center, end]];
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = {annotationReadiness, measureCalibration, detectScaleBar};
+export {annotationReadiness, measureCalibration, detectScaleBar};

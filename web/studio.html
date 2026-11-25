@@ -31,6 +31,7 @@
   <div id="file-list" class="file-list" aria-label="文件列表"></div>
   <div id="evaluation-library" class="evaluation-library" hidden><p class="section-caption">评测标注任务 <span id="eval-task-count">0</span></p><div id="eval-task-list" class="file-list" aria-label="评测任务列表"></div></div>
   <div id="library-empty" class="library-empty"><svg><use href="#i-file"/></svg><p>还没有文件</p><span>导入视频，开始你的第一次分析</span><button id="clear-file-filter" class="small-button" hidden>清除筛选</button></div>
+  <template id="history-row-template"><div class="history-row"><button type="button" class="history-delete">删除</button><div class="history-face"></div></div></template>
   <details id="channel-history" hidden><summary>计数记录</summary><div id="channel-history-list"></div></details>
   <details id="saved-projects"><summary>历史任务</summary><div class="history-content"><div id="target-video-list"></div><div id="saved-batches"></div><div id="saved-run-list"></div><button id="refresh-projects" class="plain-button">刷新任务列表</button></div></details>
   <div class="library-bottom"><button id="current-analysis" class="plain-button" hidden><span class="status-dot"></span>返回当前分析<svg><use href="#i-arrow"/></svg></button><div id="layout-feedback" class="layout-feedback" role="status" hidden><span></span><button type="button">重试</button></div><div class="local-footer"><span class="status-dot"></span><span id="connection-label">正在连接本地服务</span></div></div>
@@ -38,41 +39,81 @@
 <main class="main-workspace">
   <header class="workspace-header"><div class="breadcrumbs"><button id="expand-sidebar" class="icon-button" title="展开文件栏" aria-label="展开文件栏" hidden><svg><use href="#i-panel"/></svg></button><span id="mode-crumb">表征识别</span><span class="slash">/</span><strong id="channel-name" hidden></strong><strong id="current-name">工作台</strong></div><div class="header-right"><button id="open-settings" class="small-button" hidden aria-label="设置"><svg aria-hidden="true"><use href="#i-sliders"/></svg>设置</button><button id="focus-canvas" class="small-button" aria-pressed="false" hidden>专注画面</button><button id="cancel-run" class="small-button" hidden>取消当前处理</button><span id="session-badge" class="session-badge">本地工作区</span></div></header>
   <section id="channel-workspace" hidden aria-label="通道计数">
-    <nav class="count-tabs" aria-label="通道计数步骤"><button data-count-tab="setup">通道设置</button><button data-count-tab="count">计数进度</button><button data-count-tab="result">结果复核</button></nav>
+    <nav class="count-tabs" aria-label="通道计数步骤"><button data-count-tab="setup" aria-current="page" disabled>通道设置</button><button data-count-tab="count" disabled>计数进度</button><button data-count-tab="result" disabled>结果复核</button></nav>
+    <section id="count-batch" aria-label="批量计数">
+      <div class="count-batch-bar">
+        <div class="count-batch-caption" role="status"><strong id="count-batch-title">批量计数</strong><span id="count-batch-summary"></span><span id="count-batch-filename"></span></div>
+        <div class="count-batch-actions">
+          <button id="count-batch-back" class="small-button" hidden>上一个</button>
+          <button id="count-batch-next" class="primary" hidden>确认并继续</button>
+          <button id="count-batch-toggle" class="small-button" aria-expanded="false" aria-controls="count-batch-body">队列</button>
+        </div>
+      </div>
+      <div id="count-batch-body" class="count-batch-body" hidden>
+        <p id="count-batch-empty">拖入多个视频或一个文件夹，逐个标注检测线。也可以从左侧文件树多选视频拖入。</p>
+        <section id="count-batch-staging" hidden><h2>标注队列</h2><ol id="count-batch-list"></ol></section>
+        <section id="count-batch-history" hidden><h2>计数队列</h2><ol id="count-batch-results"></ol>
+          <div class="count-batch-actions"><a id="count-batch-export" class="small-button" hidden>导出本批汇总 Excel</a><button id="count-batch-pause" class="small-button">完成当前视频后暂停</button><button id="count-batch-resume" class="small-button">继续未完成项</button><button id="count-batch-retry" class="small-button">重试失败项</button><button id="count-batch-cancel" class="small-button">取消剩余待处理项</button></div>
+        </section>
+      </div>
+      <p id="count-batch-message" role="status"></p><p id="count-batch-connection" role="status"></p>
+    </section>
+    <div id="count-batch-divider" class="count-divider" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整批量队列高度" aria-controls="count-batch" aria-valuenow="0" title="上下拖动调整队列高度 · 双击恢复默认"></div>
     <div id="count-message" role="status" hidden></div>
-    <div id="count-empty"><span id="count-empty-label" role="status">从左侧选择一个视频</span><button id="count-retry" class="small-button" hidden>重试</button></div>
-    <details id="count-comparison" class="cross-panel"><summary>跨视频通道对照</summary><p>每个视频取最近一次完成的计数。点击数量可查看该次越线记录。</p><div class="summary-table-scroll"><table id="channel-matrix" class="summary-table"></table></div><p id="matrix-state" role="status"></p></details>
+    <div id="count-empty"><span id="count-empty-label" role="status">从左侧选择视频，或导入要计数的视频。</span><button id="count-import" class="primary">导入视频</button><button id="count-retry" class="small-button" hidden>重试</button></div>
     <div id="count-work" hidden>
       <section id="count-distribution" class="cross-panel" aria-label="通道分布" hidden>
-        <div class="cross-heading"><h2>通道分布</h2><span class="cross-total">全视频 <b id="cross-total"></b> 次越线 <span id="cross-selected"></span></span>
-          <div class="cross-actions"><button id="cross-all" class="small-button" hidden>清除筛选</button><a id="cross-export" class="small-button" hidden>导出全部通道 Excel</a><a id="cross-export-selected" class="small-button" hidden>导出所选通道 Excel</a></div></div>
+        <div class="cross-heading"><h2>通道分布</h2><span class="cross-total"><span id="count-scope"></span> <b id="cross-total"></b> 次越线</span>
+          <div class="cross-actions"><select id="cross-filter" aria-label="筛选通道"><option value="">全部通道</option></select><span id="cross-selected"></span><a id="cross-export" class="small-button" hidden>导出全部通道 Excel</a><a id="cross-export-selected" class="small-button" hidden>导出所选通道 Excel</a></div></div>
         <div class="cross-scroll"><div id="cross-chart" role="group" aria-label="按通道筛选"></div></div>
       </section>
       <div id="count-layout" hidden>
         <section id="count-config" aria-label="设置检测区域">
-          <div class="count-tools"><label for="count-channels">通道数</label><input id="count-channels" type="number" min="1" max="100" value="32">
-            <button class="small-button" id="count-adjust" aria-expanded="false" aria-controls="count-sliders">微调检测线</button>
+          <div class="count-tools"><label for="count-channels">通道数</label><input id="count-channels" type="number" min="1" max="100" required value="32" aria-describedby="count-channel-error">
+            <span id="count-channel-error" role="status" hidden>请输入 1 到 100 之间的整数。</span>
             <button id="count-start" class="primary">开始计数</button></div>
-          <div id="count-sliders" hidden>
-            <label>上边界 <output></output><input data-count-line="mask_top_ratio" type="range" min="0" max="1000"></label>
-            <label>越线 ↑ <output></output><input data-count-line="tripwire_ratio" type="range" min="0" max="1000"></label>
-            <label>下边界 <output></output><input data-count-line="mask_bottom_ratio" type="range" min="0" max="1000"></label>
-          </div>
+          <div class="count-guide"><span class="guide-crossing">向上越过红线计数</span><span class="guide-bounds">拖动黄虚线调整检测范围</span><span>通道从右向左编号</span></div>
         </section>
+        <div id="count-transport" hidden><strong id="count-status"></strong><progress id="count-progress" aria-label="计数进度"></progress><span id="count-processed"></span><button id="count-pause" class="small-button">暂停计数</button></div>
         <div class="count-stage"><svg id="count-view" role="img" aria-label="通道画面与检测线"></svg><span id="count-photo-status" role="status" hidden></span></div>
-        <div id="count-transport" hidden><strong id="count-status"></strong><progress id="count-progress" aria-label="计数进度"></progress><span id="count-position"></span><button id="count-pause" class="small-button">暂停计数</button></div>
+        <div class="count-view-footer">
+          <div id="count-playhead" hidden><span id="count-position"></span><button id="count-latest" class="small-button">跳到已处理帧</button></div>
+          <div id="count-zoom-tools" class="channel-zoom-tools" role="group" aria-label="预览缩放" hidden>
+            <label for="count-zoom">缩放</label><input id="count-zoom" type="range" min="100" max="800" step="1" value="100" title="拖动滑块或滚轮缩放，放大后拖动画面平移">
+            <output id="count-zoom-level" for="count-zoom">100%</output><button id="count-fit" class="small-button" disabled>适应画面</button>
+          </div>
+        </div>
       </div>
       <section id="cross-results" hidden aria-label="越线复核">
         <section class="cross-panel cross-overview"><div class="cross-heading"><h2>完整视野</h2><div class="cross-view-actions"><button id="cross-return" class="small-button" hidden>回到越线帧</button><label><input type="checkbox" id="cross-markers" checked>叠加标记</label></div></div>
-          <div class="cross-stage" tabindex="0" role="group" aria-label="逐帧查看原片"><div id="cross-photo" hidden><img id="cross-full" alt="显微视频原帧"><i id="cross-band"></i><i class="cross-line" id="cross-line"></i></div><span id="cross-photo-status" role="status" hidden></span></div>
-          <div class="cross-transport"><button id="cross-before" class="small-button" aria-label="上一帧" title="上一帧">‹</button><input type="range" id="cross-seek" min="1" value="1" aria-label="原片帧"><button id="cross-after" class="small-button" aria-label="下一帧" title="下一帧">›</button><span id="cross-frame"></span></div>
+          <div class="cross-stage" tabindex="0" role="group" aria-label="完整视野，左右键逐帧查看，滚轮缩放，放大后拖动平移" title="滚轮缩放，拖动画面平移，双击复位"><div id="cross-photo" hidden><img id="cross-full" alt="显微视频原帧" draggable="false"><img id="cross-detail" alt="" draggable="false" hidden><i id="cross-band"></i><i class="cross-line" id="cross-line"></i></div><span id="cross-photo-status" role="status" hidden></span></div>
+          <div id="cross-zoom-tools" class="channel-zoom-tools" role="group" aria-label="完整视野缩放" hidden>
+            <label for="cross-zoom">缩放</label><input id="cross-zoom" type="range" min="100" max="800" step="1" value="100" aria-label="完整视野缩放">
+            <output for="cross-zoom">100%</output><button type="button" class="small-button" disabled>适应画面</button>
+            <span id="cross-detail-note" role="status" hidden></span>
+          </div>
+          <div class="cross-transport"><button id="cross-before" class="small-button" aria-label="上一帧" title="上一帧">‹</button><input type="range" id="cross-seek" min="0" value="0" aria-label="原片帧"><button id="cross-after" class="small-button" aria-label="下一帧" title="下一帧">›</button><span id="cross-frame"></span></div>
         </section>
-        <section class="cross-panel cross-evidence"><div class="cross-heading"><h2>越线前后</h2></div>
-          <p id="cross-status" role="status" hidden></p><div id="cross-triplet"></div>
+        <section class="cross-panel cross-evidence"><div class="cross-heading"><h2>越线前后</h2><span id="cross-record-position"></span></div>
           <div id="cross-controls" hidden><span id="cross-single" hidden></span><select id="cross-choose" aria-label="选择越线记录"></select><button class="small-button" id="cross-prev" aria-label="上一次越线" title="上一次越线">‹</button><button class="small-button" id="cross-next" aria-label="下一次越线" title="下一次越线">›</button></div>
+          <p id="cross-status" role="status" hidden></p><div id="cross-triplet"></div>
         </section>
       </section>
     </div>
+    <div id="count-comparison-divider" class="count-divider" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="调整跨视频对照表高度" aria-controls="count-comparison" aria-valuenow="0" title="上下拖动调整对照表高度 · 双击恢复默认"></div>
+    <details id="count-comparison" class="cross-panel">
+      <summary>跨视频通道对照 <span id="matrix-count"></span></summary>
+      <div id="count-comparison-body">
+        <div class="matrix-toolbar">
+          <p id="matrix-hint">每个视频展示最近一次完成的计数。点击通道次数可查看越线记录。</p>
+          <button id="matrix-removed" type="button" aria-controls="channel-matrix" hidden></button>
+        </div>
+        <div class="matrix-scroll" tabindex="0" role="region" aria-label="各视频的通道次数" hidden>
+          <table id="channel-matrix" aria-label="跨视频通道计数" aria-describedby="matrix-hint"></table>
+        </div>
+        <p id="matrix-state" role="status"></p>
+      </div>
+    </details>
   </section>
   <nav class="workspace-tabs" aria-label="工作区视图"><div class="view-tabs"><button data-view="preview" class="active" aria-current="page"><svg><use href="#i-video"/></svg>预览</button><button data-view="annotation" disabled><svg><use href="#i-sliders"/></svg>标注</button><button data-view="progress" disabled>进度</button><button data-view="results" disabled>结果</button></div><div id="result-switcher" role="group" aria-label="本次处理完成的视频" hidden><span class="result-scope-label">本次结果</span><button id="result-previous-video" class="icon-button" aria-label="上一个已完成视频" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button><span id="result-video-name"></span><span id="result-position" aria-live="polite" aria-atomic="true"></span><button id="result-next-video" class="icon-button" aria-label="下一个已完成视频" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button></div><span id="tab-note">从一个视频开始</span></nav>
   <section id="local-file-notice" class="local-file-notice" aria-label="本地文件启动提示" hidden><div><strong>当前为文件预览模式</strong><p>请打开 <b>WormStudio</b> 桌面应用以标注、评测和保存。</p></div><button id="local-file-help" class="small-button">查看启动步骤</button></section>
@@ -102,6 +143,7 @@
   <section id="analysis-workspace" class="analysis-workspace" hidden aria-label="分析工作区"><iframe id="analysis-frame" title="线虫标注与分析"></iframe></section>
   <section id="results-workspace" class="results-workspace" hidden aria-label="结果与质量工作台">
     <div class="results-main">
+      <div id="history-context" hidden><span></span> <button type="button" id="history-return" class="small-button">返回当前分析</button></div>
       <div class="results-heading"><div><h1>线虫指标</h1></div><div class="result-actions">
         <button id="result-summary" class="small-button" hidden>返回指标</button>
         <button id="summary-export" class="small-button">导出当前线虫</button><button id="summary-export-all" class="small-button" hidden>导出全部线虫</button>
@@ -244,6 +286,6 @@
 <div id="tree-menu" class="tree-menu" role="menu" aria-label="文件管理" hidden></div>
 <dialog id="tree-dialog"><form id="tree-form"><div class="dialog-header"><h2 id="tree-dialog-title">新建文件夹</h2><button type="button" class="icon-button" data-close="tree-dialog" aria-label="关闭">×</button></div><p id="tree-dialog-description"></p><div id="tree-name-field"><label for="tree-name">名称</label><input id="tree-name" maxlength="120" required autocomplete="off"></div><p id="tree-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="tree-dialog">取消</button><button id="tree-submit" class="primary" type="submit">保存</button></div></form></dialog>
 <dialog id="path-dialog"><form id="path-form"><div class="dialog-header"><h2>打开本机视频</h2><button type="button" class="icon-button" data-close="path-dialog" aria-label="关闭">×</button></div><p>输入完整路径，直接读取原始视频，无需复制文件。</p><label for="path-value">视频完整路径</label><input id="path-value" placeholder="C:\实验数据\video.mp4" required autocomplete="off"><p id="path-error" class="error-text" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="small-button" data-close="path-dialog">取消</button><button class="primary" type="submit"><span id="path-submit-label">打开并标注</span><svg><use href="#i-arrow"/></svg></button></div></form></dialog>
-<dialog id="help-dialog"><div class="dialog-header"><h2>在一个工作台完成分析</h2><button class="icon-button" data-close="help-dialog" aria-label="关闭">×</button></div><ol class="help-list"><li><b>启动工作台</b><p>Mac 双击 WormStudio.app，Windows 双击 start.bat。使用源码时运行 python studio.py。</p></li><li><b>导入素材</b><p>左侧支持多选文件、选择文件夹或拖放；文件夹按原层级显示。点击文件栏的新建文件夹图标可整理素材，拖动条目可排序或移入文件夹，右键或行末菜单可重命名、上移、下移和移除。移除仅影响工作区列表，保留磁盘文件与结果。视频可进入分析流程，图片与数据文件可预览。通过文件选择器导入的素材会复制到本机工作区，刷新和重启后自动恢复。大视频可通过完整路径打开，直接关联原文件；移动原文件后需要重新打开其路径。</p></li><li><b>在右侧完成标注</b><p>一起拖入多个视频即可依次标定，确认最后一个视频后自动顺序处理。先选择像素单位或填写真实标定，再逐条点选线虫并确认掩膜，最后确认标注并开始分析。草稿自动保存，下次打开同一视频的同一帧时会恢复。</p></li><li><b>调整画面与工具</b><p>宽窗口可拖动面板标题和边缘调整位置、大小；窄窗口在视频下方切换工具。右上角“专注画面”可暂时隐藏工具，文件栏顶部“⋯ → 恢复默认布局”可重置。布局保存在本机，重启后恢复。</p></li><li><b>暂停与修改掩膜</b><p>“暂停画面”仅暂停预览，后台计算继续。暂停后选择“修改当前帧 Mask”，程序会停止当前计算，打开该帧；保存修正后另存新结果并重新计算，原结果保留。</p></li><li><b>查看结果与评测</b><p>保存标注后自动处理，切换到分析结果可查看视频、逐帧指标及下载文件。独立人工标注请使用文件栏顶部“⋯ → 评测标注”。当前任务结束后可开始下一个视频。</p></li></ol><p class="help-shortcuts"><kbd>Ctrl O</kbd> 导入文件 <kbd>/</kbd> 搜索文件 <kbd>Esc</kbd> 关闭弹窗</p></dialog>
-<script src="./analysis-presentation.js"></script><script src="./result-viewport.js"></script><script src="./result-player.js"></script><script src="./phenotype-results.js"></script><script src="./result-events.js"></script><script src="./studio-results.js"></script><script src="./studio-evaluation.js"></script><script src="./workspace-links.js"></script><script src="./library-tree.js"></script><script src="./result-navigation.js"></script><script src="./channel-review.js"></script><script src="./channel-counts.js"></script><script src="./studio.js"></script>
+<dialog id="help-dialog"><div class="dialog-header"><h2>在一个工作台完成分析</h2><button class="icon-button" data-close="help-dialog" aria-label="关闭">×</button></div><ol class="help-list"><li><b>启动工作台</b><p>Mac 双击 WormStudio.app，Windows 双击 start.bat。使用源码时运行 python studio.py。</p></li><li><b>导入素材</b><p>左侧支持多选文件、选择文件夹或拖放；文件夹按原层级显示。点击文件栏的新建文件夹图标可整理素材，拖动条目可排序或移入文件夹，右键或行末菜单可重命名、上移、下移和移除。移除仅影响工作区列表，保留磁盘文件与结果。视频可进入分析流程，图片与数据文件可预览。通过文件选择器导入的素材会复制到本机工作区，刷新和重启后自动恢复。大视频可通过完整路径打开，直接关联原文件；移动原文件后需要重新打开其路径。</p></li><li><b>在右侧完成标注</b><p>多个视频导入后，检查顺序并点击“按顺序标注”。确认最后一个视频后开始顺序处理。先选择像素单位或填写真实标定，再逐条点选线虫并确认掩膜，最后确认标注并开始分析。草稿自动保存，下次打开同一视频的同一帧时会恢复。</p></li><li><b>调整画面与工具</b><p>宽窗口可拖动面板标题和边缘调整位置、大小；窄窗口在视频下方切换工具。右上角“专注画面”可暂时隐藏工具，文件栏顶部“⋯ → 恢复默认布局”可重置。布局保存在本机，重启后恢复。</p></li><li><b>暂停与修改掩膜</b><p>“暂停画面”仅暂停预览，后台计算继续。暂停后选择“停止计算并修正此帧”并确认，程序会停止当前计算，打开该帧；保存修正后另存新结果并重新计算，原结果保留。</p></li><li><b>查看结果与评测</b><p>保存标注后自动处理，切换到分析结果可查看视频、逐帧指标及下载文件。独立人工标注请使用文件栏顶部“⋯ → 评测标注”。当前任务结束后可开始下一个视频。</p></li></ol><p class="help-shortcuts"><kbd>Ctrl O</kbd> 导入文件 <kbd>/</kbd> 搜索文件 <kbd>Esc</kbd> 关闭弹窗</p></dialog>
+<script src="./analysis-presentation.js"></script><script src="./result-viewport.js"></script><script src="./result-player.js"></script><script src="./phenotype-results.js"></script><script src="./result-events.js"></script><script src="./studio-results.js"></script><script src="./studio-evaluation.js"></script><script src="./workspace-links.js"></script><script src="./library-tree.js"></script><script src="./result-navigation.js"></script><script src="./channel-review.js"></script><script src="./channel-comparison.js"></script><script src="./channel-batch.js"></script><script src="./channel-counts.js"></script><script src="./studio.js"></script>
 <script src="/workspace-controls.js"></script></body></html>

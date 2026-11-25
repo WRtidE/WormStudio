@@ -72,6 +72,8 @@ docs/*
 !docs/screenshots/
 docs/screenshots/*
 !docs/screenshots/*.png
+!docs/screenshots/channel-counting-quickstart.gif
+!docs/screenshots/phenotype-quickstart.gif
 
 .electron-runtime/
 .app-data/

@@ -7,9 +7,9 @@ import cv2
 import numpy as np
 from scipy.ndimage import distance_transform_edt, map_coordinates
 
-from body_sequence import select_body_sequence, BodySequenceBreak, persistent_loop_centers
+from body_sequence import select_body_sequence, BodySequenceBreak, enclosed_holes
 from framewise_pose import observed_pose
-from centerline_topology import topology_candidates, hidden_tip_candidates
+from centerline_topology import prepare_topology, junction_candidates, hidden_loop_candidates
 from body_geometry import local_field, candidate_score
 from head_recovery import appearance_vote, pose_parity, tracking_indices
 from marked_end_recovery import fingerprint, recover_marked_end
@@ -52,11 +52,15 @@ def availability():
     if not checkpoint.is_file():missing.append('SAM2 Large 权重')
     return dict(available=not missing,detail='缺少：'+'、'.join(missing) if missing else '分析准备已完成',method='body_sequence')
 
-def visible_pillars(gray,masks,radius):
+def visible_pillars(gray, masks, radius, *, holes=None):
     """Locate static circular pillars near the contact holes in the raw images."""
     guesses=[]
-    for mask in masks:
-        for center in persistent_loop_centers(mask,mask,radius):
+    if holes is None:
+        holes = (enclosed_holes(mask, mask) for mask in masks)
+    for frame_holes in holes:
+        for area, center in frame_holes:
+            if area < radius**2:
+                continue
             if not any(np.linalg.norm(center-old)<2*radius for old in guesses):
                 guesses.append(center)
     result=[]
@@ -93,21 +97,30 @@ def candidates_for(mask,reference,observed,device='cpu'):
     if observed is not None:
         kept=keep([dict(points=observed,name='clear_observation',connection_cost=0.,endpoint_observed=[True,True])])
         if kept:return kept,radius
-    raw=[]
-    for zone in (.7,1.,1.25):
-        cs,_,_=topology_candidates(mask,prune=True,contact_radius_fraction=zone)
-        for c in cs:c.update(name=f'zone{zone}_'+c['name'],endpoint_observed=[True,True])
-        raw.extend(cs)
-    raw+=hidden_tip_candidates(mask,reference)
+    topology = prepare_topology(mask, prune=True)
+    if topology is None:
+        return [], radius
+    raw = []
+    for zone in (.7, 1., 1.25):
+        choices, _, _ = junction_candidates(topology, zone)
+        for candidate in choices:
+            candidate.update(name=f'zone{zone}_'+candidate['name'], endpoint_observed=[True, True])
+        raw.extend(choices)
+    raw.extend(hidden_loop_candidates(topology, reference))
     if not raw:
-        for scale in (.5,.35):
-            small=cv2.resize(mask.astype('uint8'),None,fx=scale,fy=scale,interpolation=cv2.INTER_NEAREST)>0
-            cs,_,_=topology_candidates(small,prune=True)
-            for c in cs:c['endpoint_observed']=[True,True]
-            cs+=hidden_tip_candidates(small,reference*scale)
-            for c in cs:
-                c['points']=(c['points']+.5)/scale-.5;c['name']=f'scale{scale}_'+c['name']
-            raw.extend(cs)
+        for scale in (.5, .35):
+            small = cv2.resize(mask.astype('uint8'), None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST) > 0
+            topology = prepare_topology(small, prune=True)
+            if topology is None:
+                continue
+            choices, _, _ = junction_candidates(topology, 1.25)
+            for candidate in choices:
+                candidate['endpoint_observed'] = [True, True]
+            choices.extend(hidden_loop_candidates(topology, reference*scale))
+            for candidate in choices:
+                candidate['points'] = (candidate['points']+.5)/scale-.5
+                candidate['name'] = f'scale{scale}_'+candidate['name']
+            raw.extend(choices)
     return keep(raw),radius
 
 
@@ -304,12 +317,15 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
     # Candidates and samples are fixed now. Splitting a window or verifying a
     # second mark reuses the same image motion, independent of radius and marks.
     flow_cache={}
+    # Hole geometry depends only on the silhouette. A split still uses its own
+    # radius threshold and background images, including for singleton window audits.
+    holes = [enclosed_holes(mask, mask) if choices else () for mask, choices in zip(masks, frames)]
     while queue:
         group=queue.pop(0);lo,hi=int(group[0]),int(group[-1])
         local=[a for a in marks if lo<=a['frame']<=hi]
         linked=bool(local);conflict=False
         radius=float(np.median(radii[lo:hi+1]))
-        pillars=visible_pillars(gray[lo:hi+1],masks[lo:hi+1],radius)
+        pillars = visible_pillars(gray[lo:hi+1], masks[lo:hi+1], radius, holes=holes[lo:hi+1])
         if len(group)==1:
             chosen=[dict(points=frames[lo][0]['points'].copy(),candidate=0,reverse=False)]
             evidence=dict(links=[],total_cost=None)

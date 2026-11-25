@@ -11,7 +11,7 @@ test('tree edits keep pending uploads and uploads registered during a tree reque
  const saved={id:'saved',path:'saved.mp4',name:'old'};
  let reply;
  const c=vm.createContext({
-  files:[saved,pending],folders:[{id:'top'},{id:'sub',parent:'top'}],selectedId:'local',stagedIds:[],
+  files:[saved,pending],examples:{},folders:[{id:'top'},{id:'sub',parent:'top'}],selectedId:'local',stagedIds:[],
   organizing:false,folderImport:false,progress:{token:'session'},selected:()=>pending,
   renderActions(){},renderFiles(){},renderDetails(){},status(){},jsonRequest:()=>new Promise(resolve=>{reply=resolve})
  });
@@ -19,8 +19,9 @@ test('tree edits keep pending uploads and uploads registered during a tree reque
  await assert.rejects(c.treeMutation({op:'remove',id:'top'}),/尚未保存/);
  await assert.rejects(c.treeMutation({op:'move',id:'saved',before:'local'}),/尚未保存/);
  const rename=c.treeMutation({op:'rename',id:'saved',name:'new'});
- reply({files:[{...saved,name:'new'},{id:'registered',parent:'sub',signature:'large'}],folders:c.folders});
+ reply({files:[{...saved,name:'new'},{id:'registered',parent:'sub',signature:'large'}],folders:c.folders,examples:{phenotype:'saved'}});
  await rename;
+ assert.equal(c.examples.phenotype,'saved');
  assert.equal(c.files.length,2);assert.equal(c.files[0],saved);assert.equal(saved.name,'new');assert.equal(c.files[1],pending);
  const collapse=c.treeMutation({op:'collapse',id:'sub'});
  Object.assign(pending,{id:'registered',path:'large.mp4',persisting:false});c.selectedId=pending.id;
@@ -32,14 +33,16 @@ test('a saved video starts and progress refreshes while the next upload is pendi
  const nodes=new Map(),requests=[],uploads=[],ready={status:'ready',batch:{running:false},token:'token'};
  const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',firstChild:{},close(){}});return nodes.get(id)};
  const c=vm.createContext({$, $$:()=>[],files:[],folders:[],terminal:['ready','complete','failed','cancelled'],
+  progressModule:{fetchProgress:()=>c.jsonRequest('/api/progress')},
   busy:false,localFile:false,connected:true,progress:ready,view:'preview',mode:'phenotype',initialized:true,
   resultRevision:0,pollNumber:0,appliedPoll:0,organizing:false,folderImport:false,pendingUploads:0,importQueue:Promise.resolve(),
-  currentSample:'',setupSession:null,historyGroup:'',pickedSample:'',analysisId:null,selectedId:null,analysisItem:null,
-  explorer:{destination:null,replaceId(){}},window:{},frame:{dataset:{}},channel:{flush:async()=>{}},
+  currentSample:'',setupSession:null,historyGroup:'',savedView:null,pickedSample:'',analysisId:null,selectedId:null,analysisItem:null,
+  explorer:{destination:null,replaceId(){}},window:{},frame:{dataset:{}},channel:{flush:async()=>{},batch:{uploaded(){}}},
   AnalysisPresentation:require('../web/analysis-presentation.js'),ResultNavigation:require('../web/result-navigation.js'),
   videoExtensions:/\.mp4$/,imageExtensions:/\.png$/,URL:{createObjectURL:()=>null},crypto:require('node:crypto'),
   renderDetails(){},renderFiles(){},renderLinkedRuns(){},renderBatch(){},renderResultNavigation(){},status(){},
   editingSetup:()=>false,preview(){},persistSelection(){},batchSelection:()=>[],selected:()=>c.files.find(f=>f.id===c.selectedId),
+  stagedIds:[],setStaging(ids){c.stagedIds=Array.from(ids);},
   selectFile(id){c.selectedId=id},showView(next){c.view=next},
   upload(item){return new Promise((resolve,reject)=>uploads.push({item,resolve,reject}))},
   async jsonRequest(route,options){
@@ -79,6 +82,11 @@ test('a saved video starts and progress refreshes while the next upload is pendi
  assert.equal(c.files.length,2);assert.equal(c.files[1].persistError,false);
  assert.equal(requests.filter(r=>r==='/api/new-video').length,1);
  assert.deepEqual(uploads.map(u=>u.item.name),['one.mp4','two.mp4','two.mp4']);
+ c.view='preview';
+ await run('importFiles(incoming)');
+ assert.deepEqual(c.stagedIds,['one','two']);
+ assert.equal(c.view,'preview');
+ assert.equal(requests.filter(r=>r==='/api/new-video').length,1);
 });
 function fixture(filter='video'){
  class Element{

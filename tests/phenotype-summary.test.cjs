@@ -23,9 +23,9 @@ test('missing head metrics have a reason and never become zero',()=>{
  assert.equal(detail.value,'—');assert.equal(detail.note,'需确认头端后计算');
 });
 test('comparison export has one row per worm, correct units and empty missing values',()=>{
- const data={worms:[worm(1,[metric('median_length_px',505,{unit:'px'}),metric('mean_speed_px_s',0,{unit:'px/s'})]),
+ const data={video_name:'A.mp4',video_path:'raw/A.mp4',sample:'A-v2',worms:[worm(1,[metric('median_length_px',505,{unit:'px',valid_frames:5}),metric('mean_speed_px_s',0,{unit:'px/s',valid_duration_s:0})]),
   worm(7,[metric('median_length_px',null,{unit:'px'}),metric('mean_speed_px_s',20,{unit:'px/s'})])]};
- assert.equal(metrics.csv(data),'"线虫","中位体长 (px)","平均运动速度 (px/s)"\r\n"1","505","0"\r\n"7","","20"');
+ assert.equal(metrics.csv(data),'"视频","源文件","任务","培养槽","线虫","总帧数","有效姿态帧","中位体长 (px)","平均运动速度 (px/s)","中位体长 · 有效帧数","平均运动速度 · 有效时长 (s)"\r\n"A.mp4","raw/A.mp4","A-v2","","1","120","100","505","0","5","0"\r\n"A.mp4","raw/A.mp4","A-v2","","7","120","100","","20","",""');
 });
 test('time series selects the requested worm and leaves missing measurements disconnected',()=>{
  const timeline={fps:2,frames:[[{worm_id:1,speed_px_s:10},{worm_id:7,speed_px_s:0}],[{worm_id:7,speed_px_s:null}],[{worm_id:7,speed_px_s:20}]]};
@@ -62,6 +62,6 @@ test('result HTML is metric-first with optional video/review and no provisional 
 
 test('chamber exports identify the video and physical chamber next to each measurement',()=>{
  const rows=metrics.csv({video_name:'sample.mp4',chamber_id:3,worms:[worm(1,[metric('median_length_um',123.45678)])]}).split('\r\n');
- assert.match(rows[0],/^"视频","培养槽","线虫"/);
- assert.match(rows[1],/^"sample.mp4","3","1","123.45678"$/);
+ assert.match(rows[0],/^"视频","源文件","任务","培养槽","线虫"/);
+ assert.match(rows[1],/^"sample.mp4","","","3","1","120","100","123.45678"$/);
 });

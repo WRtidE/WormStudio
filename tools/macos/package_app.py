@@ -31,7 +31,9 @@ def icon():
         return out.getvalue()
 
 
-def build(cache, models, sam, example, destination):
+def build(cache, models, sam, examples, destination):
+    from resource_paths import release_examples
+    videos = release_examples(examples)
     from fetch_wheels import rank
     electron = cache/'electron'/f'electron-v{VERSION}.zip'
     verified_archive(electron, 'darwin-arm64')
@@ -91,7 +93,8 @@ def build(cache, models, sam, example, destination):
             rel = path.relative_to(ROOT)
             if rel.parts[:2] == ('tools', 'electron') or rel.parts[0] in ('web','src','packages','config') or rel.name in ('studio.py','worm_pipeline.py','evaluation.py','review_saved_result.py','THIRD_PARTY.md'):
                 z.write(path, RES+'app/'+rel.as_posix())
-        z.write(example, RES+'app/examples/practice.avi')
+        for video in videos:
+            z.write(video, RES+'app/examples/'+video.name)
         for path in [sam/'LICENSE', *sorted((sam/'sam2').rglob('*'))]:
             if path.is_file() and '__pycache__' not in path.parts and (path.suffix in ('.py','.yaml','.cu') or path.name=='LICENSE'):
                 z.write(path, RES+'sam2/'+path.relative_to(sam).as_posix())
@@ -112,5 +115,5 @@ def build(cache, models, sam, example, destination):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    for arg in ('cache','models','sam','example','destination'): parser.add_argument(arg,type=Path)
+    for arg in ('cache','models','sam','examples','destination'): parser.add_argument(arg,type=Path)
     build(**vars(parser.parse_args()))

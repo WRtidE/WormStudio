@@ -1,5 +1,8 @@
 """Local processing status and opt-in, throttled child-process progress events."""
+from live_preview import discard_preview
+
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -70,6 +73,7 @@ class PipelineProgress:
         self.token = secrets.token_urlsafe(24)
         self.run_id = secrets.token_hex(8)
         self.lock = threading.RLock()
+        self.revision = 0
         self.closed = threading.Event()
         self.cancel_requested = threading.Event()
         self.next_ready = threading.Event()
@@ -85,6 +89,7 @@ class PipelineProgress:
         self.artifacts = {}
         self.frame_metrics = None
         self.preview_dir = None
+        self._owned_preview = None
         self.batch = None
 
     def bind_server(self, server):
@@ -108,6 +113,7 @@ class PipelineProgress:
             self.frame_metrics = None
             self.run_id = secrets.token_hex(8)
             self.preview_dir = base / 'live-preview' / self.run_id
+            retired, self._owned_preview = self._owned_preview, self.preview_dir
             self.path = base / 'pipeline-progress.json'
             self.data.update(status='running', sample=config['sample'], video_name=Path(config['video']).name,
                 history_reopened=False, saved_elapsed_seconds=None, saved_finished_at=None,
@@ -117,6 +123,7 @@ class PipelineProgress:
                 stages=[dict(name=s['name'], label=stage_label(s), phase=s['phase'], status='pending',
                              fraction=0, current=None, total=None, unit='帧', detail='', seconds=0) for s in stages])
             self.persist()
+        discard_preview(retired)
 
     def begin(self, index, log):
         with self.lock:
@@ -134,6 +141,7 @@ class PipelineProgress:
             index = self.data['active']
             if index is None: return
             row = self.data['stages'][index]
+            prior_row, prior_log = row.copy(), self.data['logs']
             if self.event_path and self.event_path.exists():
                 try:
                     event = json.loads(self.event_path.read_text(encoding='utf-8'))
@@ -151,8 +159,10 @@ class PipelineProgress:
                         handle.seek(max(0, self.log_path.stat().st_size-8000))
                         self.data['logs'] = '\n'.join(handle.read().decode('utf-8', errors='replace').splitlines()[-30:])
                 except OSError: pass
+            changed = row != prior_row or self.data['logs'] != prior_log
             row['seconds'] = round(time.time()-self.active_started, 1)
-            self.persist()
+            if changed:
+                self.persist()
 
     def done(self, index, reused=False):
         with self.lock:
@@ -164,39 +174,16 @@ class PipelineProgress:
 
     def finish(self, base, config, stop_after):
         from centerline_methods import method_source
-        from run_storage import result_video_files
+        from run_storage import result_artifacts
         with self.lock:
             self.ended = time.time()
             self.data.update(status='complete', detail='全部处理完成' if stop_after == 'export' else f'已完成所选阶段：{PHASE_LABELS[stop_after]}', active=None)
             result = base / ('phenotypes-' + method_source(config['centerline_method']))
             # Only expose outputs whose producing stage completed in this run.
             finished = {s['phase'] for s in self.data['stages'] if s['status'] in ('complete', 'reused')}
-            outputs = result_video_files(base, config) + [
-                       ('metrics', '逐帧指标 CSV', result/'per_frame_metrics.csv', 'metrics'),
-                       ('summary', '线虫汇总 CSV', result/'worm_summary.csv', 'metrics'),
-                       ('behavior-events', '停顿与倒退事件 CSV', result/'behavior_events.csv', 'metrics'),
-                       ('trajectory-segments', '分段净位移 CSV', result/'trajectory_segments.csv', 'metrics'),
-                       ('events', '单向摆动事件 CSV', result/'bend_events.csv', 'metrics'),
-                       ('plots', '指标与质心轨迹 PNG', result/'phenotype-plots.png', 'metrics'),
-                       ('lines', '正式中线 NPZ', result/'centerlines.npz', 'metrics'),
-                       ('display-lines', '显示中线 NPZ（含待复核候选）', result/'display-centerlines.npz', 'metrics'),
-                       ('report', '分析报告', result/'报告.md', 'metrics'),
-                       ('quality', '逐帧质量与证据 JSON', result/'quality.json', 'metrics'),
-                       ('quality-audit', '质量门控汇总 JSON', result/'quality-audit.json', 'metrics'),
-                       ('quality-gates', '逐帧门控与触发位置 CSV', result/'quality-gates.csv', 'metrics'),
-                       ('tracklets', '连续跟踪片段及起止帧 JSON', result/'tracklets.json', 'metrics'),
-                       ('identity-links', '片段身份关联、图像依据与复核 JSON', result/'identity-links.json', 'metrics'),
-                       ('tracklet-metrics', '连续跟踪片段的逐帧指标 CSV', result/'tracklet-metrics.csv', 'metrics'),
-                       ('frame-json', '逐帧指标 JSON', result/'per_frame_metrics.json', 'metrics'),
-                       ('diagnostics', '诊断候选指标（不作测量）', result/'diagnostic-metrics.json', 'metrics'),
-                       ('diagnostic-lines', '诊断中线 NPZ（不作测量）', result/'diagnostic-centerlines.npz', 'metrics')]
-            if config.get('centerline_method')=='self_contact':
-                from tracking_data import RECOVERY_FOLDER as FOLDER
-                outputs.append(('crop-recovery','触边扩框复核记录 JSON',base/'sam2-tracking'/FOLDER/'summary.json','quality'))
-            for key, label, path, phase in outputs:
-                if phase in finished and path.is_file():
-                    self.artifacts[key] = path
-                    self.data['artifacts'].append(dict(key=key, label=label, filename=path.name))
+            for key, (label, path) in result_artifacts(base, config, finished).items():
+                self.artifacts[key] = path
+                self.data['artifacts'].append(dict(key=key, label=label, filename=path.name))
             if 'summary' in self.artifacts:
                 import csv
                 from measurement_units import number
@@ -275,13 +262,32 @@ class PipelineProgress:
             if index is not None: self.data['stages'][index]['status'] = 'cancelled' if cancelled else 'failed'
             self.persist()
 
+    def elapsed_seconds(self):
+        if self.data.get('history_reopened'):
+            return self.data.get('saved_elapsed_seconds')
+        return round((self.ended or time.time()) - self.started, 1) if self.started else 0
+
+    def progress_response(self, previous, chamber_videos):
+        with self.lock:
+            batch = self.batch
+            # Session transitions and queue dispatch can happen between persisted stages.
+            key = (self.run_id, self.revision, self.data['status'], self.data['sample'],
+                   self.data['detail'], self.data['notice'], self.config and self.config.get('video'),
+                   batch and (batch.revision, batch.running, batch.dispatch_error), chamber_videos)
+            revision = hashlib.sha256(json.dumps(key).encode()).hexdigest()
+            if previous == revision:
+                active = self.data['active']
+                seconds = self.data['stages'][active]['seconds'] if active is not None else None
+                return dict(unchanged=True, revision=revision, elapsed_seconds=self.elapsed_seconds(),
+                            stage_seconds=seconds)
+            return dict(self.snapshot(), revision=revision, chamber_videos=chamber_videos)
+
     def snapshot(self):
         with self.lock:
             result = copy.deepcopy(self.data)
             result['batch'] = self.batch.snapshot() if self.batch else dict(running=False, items=[])
             historical = result.get('history_reopened', False)
-            result['elapsed_seconds'] = (result.get('saved_elapsed_seconds') if historical else
-                                         round((self.ended or time.time())-self.started, 1) if self.started else 0)
+            result['elapsed_seconds'] = self.elapsed_seconds()
             result['finished_at'] = result.get('saved_finished_at') if historical else self.ended
             rows = result['stages']
             result['completed_stages'] = sum(s['status'] in ('complete', 'reused') for s in rows)
@@ -307,6 +313,7 @@ class PipelineProgress:
             return (self.preview_dir / f'{sequence:09d}{suffix}').read_bytes()
 
     def persist(self):
+        self.revision += 1
         if self.path:
             record = self.snapshot()
             record.pop('token', None)
@@ -341,3 +348,5 @@ class PipelineProgress:
             self.server.shutdown()
             self.server.server_close()
             self.worker.join(timeout=2)
+        discard_preview(self._owned_preview)
+        self._owned_preview = None
