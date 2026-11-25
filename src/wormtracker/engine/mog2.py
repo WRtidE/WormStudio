@@ -17,12 +17,20 @@ from wormtracker.core.counter import count_crossings
 from wormtracker.config import WormTrackerConfig, get_config
 
 
+class GpuDetectionError(RuntimeError):
+    """The OpenCL foreground model must be rebuilt from the beginning on CPU."""
+
+
 class MOG2Engine(BaseEngine):
     """MOG2 背景减除检测引擎"""
 
-    def __init__(self, config: Optional[WormTrackerConfig] = None, *, retain_masks=True):
+    def __init__(self, config: Optional[WormTrackerConfig] = None, *, retain_masks=True, use_gpu=False):
         self.config = config or get_config()
-        self._backSub: Optional[cv2.BackgroundSubtractor] = None
+        self.use_gpu = use_gpu
+        self._backSub = cv2.createBackgroundSubtractorMOG2(
+            history=self.config.bg_history, varThreshold=self.config.var_threshold, detectShadows=False)
+        self._open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 5))
+        self._close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         self._tracker = ChannelTracker(self.config)
         self._armed = set()
         self._evidence = CrossingEvidence(self.config)
@@ -32,17 +40,8 @@ class MOG2Engine(BaseEngine):
 
     def prime(self, background: np.ndarray) -> None:
         """Initialize from the temporal median of startup samples before counting frame one."""
-        self._ensure_backsub(background.shape)
-        self._backSub.apply(self._strip(background, 0), learningRate=1.0)
+        self._foreground(self._strip(background, 0), 1.0)
         self._primed = True
-
-    def _ensure_backsub(self, frame_shape: tuple) -> None:
-        if self._backSub is None:
-            self._backSub = cv2.createBackgroundSubtractorMOG2(
-                history=self.config.bg_history,
-                varThreshold=self.config.var_threshold,
-                detectShadows=False,
-            )
 
     # ---- 公共接口 ----
 
@@ -62,8 +61,7 @@ class MOG2Engine(BaseEngine):
 
     def warmup(self, frame: np.ndarray, offset=0) -> None:
         """Learn background in chip coordinates, including during recovery."""
-        self._ensure_backsub(frame.shape)
-        self._backSub.apply(self._strip(frame, offset), learningRate=0.3)
+        self._foreground(self._strip(frame, offset), 0.3)
 
     def reset(self) -> None:
         """熔断时清空追踪器"""
@@ -79,8 +77,6 @@ class MOG2Engine(BaseEngine):
         counts: dict,
         cross_cooldown: dict,
     ) -> FrameResult:
-        self._ensure_backsub(frame.shape)
-
         centroids = []
         fg_mask = None
         raw_fg = None
@@ -205,16 +201,7 @@ class MOG2Engine(BaseEngine):
         offset = grid_data.get("offset_x", 0)
         strip = self._strip(frame, offset)
         self._evidence.observe(strip, grid_data["channel_bounds"], top, int(h * self.config.tripwire_ratio), offset)
-        raw_fg = self._backSub.apply(strip, learningRate=0.003)
-        if offset:
-            transform = np.float32([[1, 0, offset], [0, 1, 0]])
-            raw_fg = cv2.warpAffine(raw_fg, transform, (w, strip.shape[0]), flags=cv2.INTER_NEAREST)
-        wall_mask = self._build_wall_mask(grid_data, strip.shape[0], w)
-        if wall_mask is not None:
-            raw_fg = cv2.bitwise_and(raw_fg, wall_mask)
-        fg = self._apply_morphology(raw_fg)
-        if wall_mask is not None:
-            fg = cv2.bitwise_and(fg, wall_mask)
+        fg, raw_fg = self._foreground(strip, 0.003, grid_data)
         noise_ratio = cv2.countNonZero(fg) / (h * w)
         centroids = self._extract_centroids(fg, grid_data["channel_bounds"], top)
         if not self.retain_masks:
@@ -224,6 +211,34 @@ class MOG2Engine(BaseEngine):
                 cv2.copyMakeBorder(raw_fg, top, bottom, 0, 0, cv2.BORDER_CONSTANT))
 
     # ---- 子步骤 ----
+
+    def _foreground(self, strip, rate, grid=None):
+        """Keep the background model and binary filters on the same device."""
+        try:
+            image = cv2.UMat(strip) if self.use_gpu else strip
+            raw = self._backSub.apply(image, learningRate=rate)
+            if grid is None:
+                return  # Background training only.
+            height, width = strip.shape
+            offset = grid.get('offset_x', 0)
+            if offset:
+                transform = np.float32([[1, 0, offset], [0, 1, 0]])
+                raw = cv2.warpAffine(raw, transform, (width, height), flags=cv2.INTER_NEAREST)
+            walls = self._build_wall_mask(grid, height, width)
+            if walls is not None:
+                if self.use_gpu:
+                    walls = cv2.UMat(walls)
+                raw = cv2.bitwise_and(raw, walls)
+            fg = self._apply_morphology(raw)
+            if walls is not None:
+                fg = cv2.bitwise_and(fg, walls)
+            if self.use_gpu:
+                return fg.get(), raw.get() if self.retain_masks else None
+            return fg, raw
+        except cv2.error as exc:
+            if self.use_gpu:
+                raise GpuDetectionError(str(exc)) from exc
+            raise
 
     def _build_wall_mask(
         self, grid_data: dict, h: int, w: int
@@ -265,16 +280,14 @@ class MOG2Engine(BaseEngine):
 
         return wall_mask
 
-    def _apply_morphology(self, fg: np.ndarray) -> np.ndarray:
+    def _apply_morphology(self, fg):
         """形态学：开运算(去竖线噪声) → 闭运算×2(连接虫体断点)。"""
         # 开运算：去除墙壁边缘残留的细竖线噪声
-        kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 5))
-        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel_open)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, self._open_kernel)
 
         # 闭运算：连接虫体碎片
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel_close)
-        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel_close)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, self._close_kernel)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, self._close_kernel)
 
         return fg
 

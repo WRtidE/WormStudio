@@ -11,11 +11,12 @@ import cv2
 import numpy as np
 
 from channel_runs import ChannelBatch, new_run, read, save
+from platforms.device import opencv_gpu_name
 from workspace_library import VIDEO, media, load_index
 from wormtracker.config import WormTrackerConfig
 from wormtracker.core.grid import get_interpolated_grid
 from wormtracker.core.grid_reference import ChannelGridReference
-from wormtracker.engine.mog2 import MOG2Engine
+from wormtracker.engine.mog2 import GpuDetectionError, MOG2Engine
 
 
 BASE = WormTrackerConfig.from_yaml(Path(__file__).parent/'wormtracker/defaults.yaml')
@@ -430,6 +431,33 @@ class ChannelCounts:
 
     def process(self, source, folder, job):
         state = job['state']
+        try:
+            gpu = opencv_gpu_name()
+            fallback = False
+            while True:
+                try:
+                    final = self._count_video(source, folder, job, gpu, fallback)
+                    break
+                except GpuDetectionError:
+                    # The learned background and track IDs belong to this attempt.
+                    # Replay on CPU; the last checkpoint stays visible until caught up.
+                    gpu = None
+                    fallback = True
+        except Exception as exc:
+            final = dict(status='failed', error=str(exc))
+        with self.condition:
+            try:
+                state.update(final)
+                save(folder/'state.json', state)
+            except OSError as exc:
+                state.update(status='failed', error='计数结果保存失败：'+str(exc))
+                raise
+            finally:
+                self.jobs.pop(state['file'], None)
+                self.batch.finished(state)
+
+    def _count_video(self, source, folder, job, gpu, fallback):
+        state = job['state']
         cap = None
         idx, cooldown, valid = 0, 0, 0
         checkpoint = state['frame']
@@ -440,7 +468,10 @@ class ChannelCounts:
         try:
             config = WormTrackerConfig.from_dict(dict(BASE.to_dict(), **state['settings']))
             counts = {i:0 for i in range(1,config.num_channels+1)}
-            engine = MOG2Engine(config, retain_masks=False)
+            engine = MOG2Engine(config, retain_masks=False, use_gpu=bool(gpu))
+            with self.condition:
+                state.update(device='gpu' if gpu else 'cpu', gpu_name=gpu, gpu_fallback=fallback)
+                save(folder/'state.json', state)
             cap = cv2.VideoCapture(str(source))
             if not cap.isOpened():
                 raise ValueError('无法打开视频')
@@ -511,21 +542,10 @@ class ChannelCounts:
             if not self.closed and valid < idx:
                 final['warning'] = f'有 {idx-valid} 帧未识别到通道边界，已跳过。'
             final['status'] = 'interrupted' if self.closed else 'complete'
-        except Exception as exc:
-            final = dict(status='failed', error=str(exc))
+            return final
         finally:
             if cap is not None:
                 cap.release()
-        with self.condition:
-            try:
-                state.update(final)
-                save(folder/'state.json', state)
-            except OSError as exc:
-                state.update(status='failed', error='计数结果保存失败：'+str(exc))
-                raise
-            finally:
-                self.jobs.pop(state['file'], None)
-                self.batch.finished(state)
 
     def completed(self, file, run):
         state = self.state(file, run, False)['task']

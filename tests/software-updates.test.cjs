@@ -6,10 +6,13 @@ const os = require('node:os');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
 const {Updates, findUpdate} = require('../tools/electron/updates.cjs');
+const {version: currentVersion} = require('../tools/electron/package.json');
+const nextMajor = Number(currentVersion.split('.')[0]) + 1;
+const newerVersion = `${nextMajor}.10.0`;
 const bytes = Buffer.from('offline installer');
 const asset = {name:'WormStudio-Mac-arm64.zip', browser_download_url:'https://example.org/app.zip',
   size:bytes.length, digest:'sha256:'+createHash('sha256').update(bytes).digest('hex')};
-const release = {tag_name:'v1.10.0', body:'更新说明', assets:[asset]};
+const release = {tag_name:`v${newerVersion}`, body:'更新说明', assets:[asset]};
 
 test('restart installation requires a verified ZIP and serializes install requests', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(),'worm-install-'));
@@ -17,7 +20,7 @@ test('restart installation requires a verified ZIP and serializes install reques
   let finish, calls = 0;
   const updates = new Updates({directory:dir, downloads:dir, platform:'win32', arch:'x64', notify(){},
     installer:async record => { calls++; assert.equal(record.archive, 'verified.zip'); await new Promise(resolve => { finish = resolve; }); }});
-  updates.cache.release = {...asset, name:'WormStudio-Windows-x64.zip', version:'1.10.0'};
+  updates.cache.release = {...asset, name:'WormStudio-Windows-x64.zip', version:newerVersion};
   updates.downloaded = 'verified.zip';
   updates.transfer = {status:'done'};
   assert.equal(updates.state().canInstall, true);
@@ -32,10 +35,11 @@ test('restart installation requires a verified ZIP and serializes install reques
   assert.equal(calls, 1);
 });
 test('selects the highest stable newer installer for this OS and architecture', () => {
-  const list = [release, {...release, tag_name:'v1.9.0'}, {...release, tag_name:'v2.0.0', prerelease:true},
-    {...release, tag_name:'v2.1.0', assets:[{...asset, name:'source.zip'}]}];
-  assert.equal(findUpdate(list,'darwin','arm64').version, '1.10.0');
+  const list = [release, {...release, tag_name:`v${nextMajor}.9.0`}, {...release, tag_name:`v${nextMajor}.11.0`, prerelease:true},
+    {...release, tag_name:`v${nextMajor}.12.0`, assets:[{...asset, name:'source.zip'}]}];
+  assert.equal(findUpdate(list,'darwin','arm64').version, newerVersion);
   assert.equal(findUpdate(list,'win32','x64'), null);
+  assert.equal(findUpdate([{...release, tag_name:`v${currentVersion}`}],'darwin','arm64'), null);
   assert.equal(findUpdate([{...release, tag_name:'v1.0.0'}],'darwin','arm64'), null);
 });
 test('daily auto check, persistent opt-out, manual refresh and offline last known release', async t => {

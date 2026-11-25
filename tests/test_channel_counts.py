@@ -5,6 +5,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -14,6 +15,7 @@ from channel_counts import ChannelCounts, event_images, read, save
 from wormtracker.core.counter import count_crossings
 from workspace_http import PreviewFrameReader
 from workspace_library import register, select, listing
+from wormtracker.engine.mog2 import MOG2Engine
 
 
 def crossing_video(path, frames=130, up_start=27):
@@ -34,6 +36,39 @@ def crossing_video(path, frames=130, up_start=27):
 
 
 class ChannelIntegration(unittest.TestCase):
+    def test_gpu_failure_after_crossing_replays_on_cpu_without_duplicate_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video = root/'crossing.avi'
+            crossing_video(video, frames=24, up_start=0)
+            service = ChannelCounts(root)
+            self.addCleanup(service.close)
+            params = dict(num_channels=4)
+            reference = dict(frame=0, events=[], file='test', settings=params)
+            with patch('channel_counts.opencv_gpu_name', return_value=None):
+                service.process(video, root, dict(state=reference, paused=False))
+            self.assertEqual(len(reference['events']), 1)
+            self.assertEqual(reference['device'], 'cpu')
+            self.assertFalse(reference['gpu_fallback'])
+
+            state = dict(frame=0, events=[], file='test', settings=params)
+            morphology = MOG2Engine._apply_morphology
+
+            def lose_gpu(engine, mask):
+                if engine.use_gpu and state['events']:
+                    raise cv2.error('test OpenCL device lost')
+                return morphology(engine, mask)
+
+            with patch('channel_counts.opencv_gpu_name', return_value='test GPU'), \
+                    patch.object(MOG2Engine, '_apply_morphology', lose_gpu):
+                service.process(video, root, dict(state=state, paused=False))
+            self.assertEqual(state['status'], 'complete')
+            self.assertEqual(state['device'], 'cpu')
+            self.assertTrue(state['gpu_fallback'])
+            self.assertEqual(state['frame'], 24)
+            self.assertEqual(state['events'], reference['events'])
+            self.assertEqual(state['counts'], reference['counts'])
+
     def test_review_detail_uses_the_requested_source_frame_at_native_size(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

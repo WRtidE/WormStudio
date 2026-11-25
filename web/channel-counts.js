@@ -491,7 +491,10 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles, 
     } else {
       distribution();
       if (!result) {
-        el('count-status').textContent=live && task.status==='complete' ? '计数完成 · 预览中' : states[task.status] || task.status;
+        const status=live && task.status==='complete' ? '计数完成 · 预览中' : states[task.status] || task.status;
+        const device=task.gpu_fallback ? '已切换 CPU' : task.device?.toUpperCase();
+        el('count-status').textContent=device ? status+' · '+device : status;
+        el('count-status').title=task.gpu_fallback ? 'GPU 运算中断，已从首帧用 CPU 重新计算' : task.gpu_name || '';
         const button=el('count-pause');
         button.disabled=pending || (task.status==='interrupted' && !file.available);
         button.textContent=({running:'暂停',paused:'继续计数',interrupted:'继续计数',complete:'查看结果',failed:'调整设置'})[task.status];

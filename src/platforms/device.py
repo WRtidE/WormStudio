@@ -3,6 +3,22 @@ import os
 from contextlib import nullcontext
 
 
+def opencv_gpu_name():
+    """Select an OpenCL GPU in the calling video worker, independently of PyTorch."""
+    if os.environ.get('WORMSTUDIO_DEVICE', '').lower() == 'cpu':
+        return None
+    import cv2
+    try:
+        if cv2.ocl.useOpenCL():
+            device = cv2.ocl.Device_getDefault()
+            if device.type() & cv2.ocl.Device_TYPE_GPU:
+                return device.name()
+    except cv2.error:
+        # An installed OpenCL driver can still fail to initialize its context.
+        return None
+    return None
+
+
 def selected_device():
     import torch
     mode = os.environ.get('WORMSTUDIO_DEVICE', 'auto').lower()
