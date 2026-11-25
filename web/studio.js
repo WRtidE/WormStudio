@@ -15,7 +15,7 @@
   let currentSample = '', mediaRevision = 0, dragging = 0;
   const frame = $('#analysis-frame');
   let stagedIds = [];
-  let resultRevision = 0;
+  let resultRevision = 0, pollNumber=0, appliedPoll=0;
   let chamberRequestKey = '', chamberTableKey = '', chamberReports = {}, chamberReadFailed = false;
 
   let mode='phenotype';
@@ -278,7 +278,8 @@
   const selected = () => files.find(file=>file.id===selectedId) || (setupSession?.file.id===selectedId?setupSession.file:null);
   const editingSetup = () => setupSession && view==='preview' && selectedId===setupSession.file.id
     && progress?.sample===setupSession.sample && progress.status==='preparing' && !progress.batch?.running;
-  const canStart = () => connected && progress && terminal.includes(progress.status) && !progress.batch?.running && !busy && !pendingUploads && !organizing && !folderImport;
+  const canStart = () => connected && progress && terminal.includes(progress.status) && !progress.batch?.running && !busy;
+  const savedVideo = file => file?.kind === 'video' && !!file.path && file.available !== false && !file.persisting && !file.persistError;
   function sizeLabel(size) {
     if (size == null) return '本机文件';
     if (size < 1024) return size + ' B';
@@ -317,15 +318,28 @@
   }
   function renderActions() {
     const file = selected();
-    ['#new-folder','#import-folder','#import-files'].forEach(id=>$(id).disabled=organizing||folderImport||pendingUploads>0);
-    $('#start-analysis').disabled = !file || file.kind !== 'video' || !(file.file || file.path) || file.available === false || !canStart();
+    $('#cancel-run').hidden=!connected || !['running','preparing'].includes(progress?.status);
+    ['#new-folder','#import-folder','#import-files'].forEach(id=>$(id).disabled=organizing||folderImport);
+    $('#start-analysis').disabled = !savedVideo(file) || !canStart();
     $('#start-analysis').firstChild.textContent = busy ? '正在导入…' : file?.analyzed ? '重新分析' : '开始标注';
     const selection=batchSelection();
+    const groupUnavailable=selection.some(id=>!savedVideo(files.find(f=>f.id===id)));
     if(selection.length){
-      $('#start-analysis').disabled = !canStart();
+      $('#start-analysis').disabled = !canStart() || groupUnavailable;
       $('#start-analysis').firstChild.textContent = `开始顺序标定（${selection.length}）`;
     }
-    $('#start-hint').textContent = localFile ? '打开 WormStudio 桌面应用即可标注与分析' : !connected ? '本地服务未连接，请检查启动窗口' : pendingUploads ? '正在保存导入素材，请稍候' : busy ? '正在读取视频，请稍候' : !terminal.includes(progress?.status) ? '当前分析进行中，完成后可开始下一个视频' : !file ? '导入视频后即可开始' : file.kind !== 'video' ? '此文件可预览；分析流程需要视频' : !file.file && !file.path ? '重新分析可在结果页选择“重新标注本视频”' : '进入标注后，先设置区域与实际尺寸';
+    const hint=$('#start-hint');
+    if(localFile)hint.textContent='打开 WormStudio 桌面应用即可标注与分析';
+    else if(!connected)hint.textContent='本地服务未连接，请检查启动窗口';
+    else if(file?.persistError)hint.textContent='当前文件保存失败：'+file.persistError;
+    else if(busy)hint.textContent='正在读取视频，请稍候';
+    else if(!terminal.includes(progress?.status)||progress.batch?.running)hint.textContent='当前任务进行中，完成后可开始下一个视频';
+    else if(groupUnavailable)hint.textContent='所选队列中有视频尚未保存或路径不可用';
+    else if(file?.persisting)hint.textContent='正在保存当前文件，完成后即可标注';
+    else if(!file)hint.textContent='导入视频后即可开始';
+    else if(file.kind!=='video')hint.textContent='此文件可预览；分析流程需要视频';
+    else if(!file.path)hint.textContent='重新分析可在结果页选择“重新标注本视频”';
+    else hint.textContent='进入标注后，先设置区域与实际尺寸';
     if(editingSetup()){
       $('#start-analysis').disabled=busy||!connected;
       $('#start-analysis').firstChild.textContent='继续标注';
@@ -336,7 +350,7 @@
     $('#current-analysis').hidden = !analysisId;
     const isAnnotation = progress?.status === 'preparing' && !progress?.batch?.running && analysisId;
     $('[data-view="annotation"]').disabled = !connected || !isAnnotation;
-    $('[data-view="progress"]').disabled = !connected || !analysisId || isAnnotation;
+    $('[data-view="progress"]').disabled = !connected || (!analysisId && !AnalysisPresentation.awaitingDispatch(progress)) || isAnnotation;
     $('[data-view="results"]').disabled = !connected || (progress?.status !== 'complete' && !ResultNavigation.group(progress).length && !historyGroup);
     $('[data-view="evaluation"]').disabled = localFile;
     $('#eval-return').textContent = AnalysisPresentation.sessionView(progress)==='results' ? '返回分析结果' : analysisId ? '返回当前分析' : '返回文件预览';
@@ -371,6 +385,11 @@
     $('#batch-count').textContent = counts.join(' · ') || '处理中';
     const editable = canStart();
     const start = $('#batch-start'), stop = $('#batch-stop');
+    const reason=$('#batch-dispatch-error');
+    if(batch.dispatch_error && reason.hidden)panel.open=true;
+    reason.hidden=!batch.dispatch_error;
+    reason.textContent=batch.dispatch_error||'';
+    start.textContent=batch.dispatch_error?'重试写入并继续':'继续处理';
     start.hidden = start.disabled = !editable || !items.some(item => item.status === 'pending');
     stop.hidden = stop.disabled = !batch.running;
 
@@ -413,7 +432,7 @@
       list.append(row);
     }
   }
-  $('#batch-start').onclick=()=>batchAction('start');
+  $('#batch-start').onclick=()=>batchAction(progress.batch.dispatch_error?'retry-dispatch':'start');
   $('#batch-stop').onclick=()=>batchAction('stop');
   window.addEventListener('message',event=>{
     if(event.origin!==location.origin || event.source!==frame.contentWindow || event.data?.type!=='annotation-queued')return;
@@ -426,7 +445,9 @@
     $('#selected-name').textContent = file.name;
     $('#selected-type').textContent = (file.name.split('.').pop() || '文件').toUpperCase();
     $('#selected-size').textContent = sizeLabel(file.size);
-    $('#selected-storage').textContent = file.persisting ? '正在保存…' : file.persistError ? '尚未保存，请重新导入' : file.available === false ? '原路径不可用' : file.cached ? '已保存在本机工作区' : file.path ? '已关联原文件路径' : '仅本次预览';
+    $('#selected-storage').textContent = file.persisting ? '正在保存…' : file.persistError || (file.available === false ? '原路径不可用' : file.cached ? '已保存在本机工作区' : file.path ? '已关联原文件路径' : '仅本次预览');
+    $('#retry-import').hidden=!file.persistError;
+    if(file.persistError)$('#retry-import').title=file.persistError;
     $('#selected-resolution').textContent = file.width ? `${file.width} × ${file.height}` : '—';
     $('#selected-duration').textContent = file.kind === 'video' ? durationLabel(file.duration) : '不适用';
     $('#media-resolution').textContent = file.width ? `${file.width} × ${file.height} px` : '原始文件';
@@ -521,13 +542,30 @@
     } else unavailable('已加入工作区。此文件类型暂不支持预览。');
   }
   async function treeMutation(body,internal=false) {
-    if(!internal&&(organizing||folderImport||pendingUploads))throw Error('文件正在保存，请稍后再整理。');
+    if(!internal&&(organizing||folderImport))throw Error('请等待当前文件夹操作完成。');
+    const targets=new Set([...(body.ids||[]),body.id,body.before].filter(Boolean));
+    const unsaved=files.filter(file=>file.persisting||file.persistError);
+    if(unsaved.some(file=>{
+      if(targets.has(file.id))return true;
+      if(body.op==='remove'){
+        for(let parent=file.parent;parent;parent=folders.find(folder=>folder.id===parent)?.parent){
+          if(targets.has(parent))return true;
+        }
+      }
+      return false;
+    }))throw Error('本操作涉及尚未保存的文件，请先完成保存。');
+    const known=new Set(files.filter(file=>file.path).map(file=>file.id));
     if(!internal)organizing=true;renderActions();
     try{
       if(!progress?.token)progress=await jsonRequest('/api/progress');
       const data=await jsonRequest('/api/library-tree',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token},body:JSON.stringify(body)});
       const previous=new Map(files.map(f=>[f.id,f]));
-      files.splice(0,files.length,...data.files.map(f=>Object.assign(previous.get(f.id)||{},f)));
+      const listed=new Set(data.files.map(f=>f.id));
+      // Uploads can finish on either side of the tree response. Keep their local
+      // objects until the upload handler adopts the permanent ID.
+      const local=files.filter(f=>!known.has(f.id)&&!listed.has(f.id));
+      const saved=data.files.filter(f=>previous.has(f.id)||!local.some(p=>p.persisting&&p.signature===f.signature&&p.parent===f.parent));
+      files.splice(0,files.length,...saved.map(f=>Object.assign(previous.get(f.id)||{},f)),...local);
       folders.splice(0,folders.length,...data.folders);
       if(selectedId&&!files.some(f=>f.id===selectedId)){selectedId=null;if(view==='preview')preview(null);}
       if(body.op==='remove'&&stagedIds.length){
@@ -542,8 +580,8 @@
     }finally{if(!internal)organizing=false;renderActions();}
   }
   async function importFiles(incoming,parent=explorer.destination,emptyFolders=[]) {
-    const importMode=mode;
-    if(organizing||folderImport||pendingUploads){status('请等待当前导入完成。',true);return;}
+    const importMode=mode, revision=resultRevision;
+    if(organizing||folderImport){status('请等待当前文件夹操作完成。',true);return;}
     const videos = [];
     folderImport=true;renderActions();
     try{
@@ -573,18 +611,21 @@
         first ||= item;
         if(item.kind === 'video' && !videos.includes(item)) videos.push(item);
       }
-      if(first)selectFile(first.id);else renderFiles();
+      if(first && (mode==='channel'||view==='preview') && !editingSetup())selectFile(first.id);else renderFiles();
       status(added?`已加入 ${added} 个文件 · 文件夹层级已保留`:first?'文件已在此文件夹中':'文件夹已添加，未发现支持的视频、图片或数据文件。');
     }catch(e){status('导入失败：'+e.message,true);return;}
     finally{folderImport=false;$('#files-input').value='';$('#folder-input').value='';renderActions();}
     if(localFile || importMode==='channel' || mode==='channel' || videos.length < 2)return;
-    await importQueue;
-    if(mode==='channel')return;
-    const missing=videos.find(item=>item.persistError || !item.path);
-    if(missing){status(`未能保存 ${missing.name}，请重新导入这组视频。`,true);return;}
+    await Promise.all(videos.map(file=>file.persisting));
+    if(mode==='channel'||revision!==resultRevision)return;
+    const missing=videos.find(item=>!savedVideo(item));
+    if(missing){status(`${missing.name} 暂不能标注：${missing.persistError||'路径不可用'}`,true);return;}
     try {
       await poll();
+      if(revision!==resultRevision)return;
       if(!canStart()){status('视频已导入。当前任务结束后可重新拖入这组视频开始连续标定。');return;}
+      const library=new Set(files);
+      if(!videos.every(file=>library.has(file)))return;
       const paths=[...new Set(videos.map(item=>item.path))];
       if(paths.length>1)await start(videos[0], paths[0], paths);
     }catch(e){status('连续标定未启动：'+e.message,true);}
@@ -615,7 +656,7 @@
   }
   function queueImport(item) {
     if(item.persisting)return;
-    pendingUploads++;item.persisting=true;item.persistError=false;
+    pendingUploads++;item.persistError=false;
     importQueue=importQueue.then(async()=>{
       try {
         if(!progress?.token)progress=await jsonRequest('/api/progress');
@@ -628,10 +669,15 @@
         if(selectedId===item.id){renderDetails(item);preview(item);persistSelection();}
         if(oldUrl?.startsWith('blob:'))URL.revokeObjectURL(oldUrl);
         status(`已保存 ${item.name} · 刷新或重启后可继续使用`);
-      } catch(error) {item.persistError=true;status(`${item.name} 未保存：${error.message}。重新导入可重试。`,true);}
+      } catch(error) {item.persistError=error.message;status(`${item.name} 未保存：${error.message}。可在当前素材重试。`,true);}
       finally {item.persisting=false;pendingUploads--;renderFiles();renderActions();renderDetails(selected());}
     });
+    item.persisting=importQueue;
   }
+  $('#retry-import').onclick=()=>{
+    const item=selected();
+    if(item?.persistError){queueImport(item);renderDetails(item);renderActions();}
+  };
   function upload(item) {
     return new Promise((resolve,reject)=>{
       const request=new XMLHttpRequest();
@@ -645,7 +691,6 @@
     });
   }
   async function prepareToLeave() {
-    if(pendingUploads)throw Error('文件正在保存，请等待导入完成。');
     await channel.flush();
     await frame.contentWindow?.AnnotationDraft?.flush();
   }
@@ -704,18 +749,27 @@
       setupSession=null;showView('annotation');
     }finally{busy=false;renderActions();}
   }
-  window.StudioWorkspace={prepareToLeave,openSavedResult,editAnnotationSetup,updateRuns(data){
+  async function refreshSession(result){
+    resultRevision++;setupSession=null;historyGroup='';pickedSample='';frame.dataset.route='';
+    if(result.file&&!files.some(file=>file.id===result.file.id))files.push(result.file);
+    await poll();
+    if(connected){
+      const next=result.annotation_url?'annotation':progress.status==='preparing'?'progress':AnalysisPresentation.sessionView(progress);
+      showView(next);
+    }
+  }
+  window.StudioWorkspace={prepareToLeave,openSavedResult,editAnnotationSetup,refreshSession,updateRuns(data){
     runs=data;
     for(const run of runs){if(run.file&&!files.some(f=>f.id===run.file.id))files.push(run.file);}
     renderFiles();renderLinkedRuns();renderResultNavigation();
   }};
   async function start(item, path = null, sequence = undefined) {
     if (!canStart()) throw Error('请等待当前任务结束后再开始下一个视频。');
-    if (!path && item?.size > 8 * 1024 ** 3) throw Error('视频超过 8 GB，请使用右上角“通过路径打开”。');
-    await prepareToLeave();
-    historyGroup='';pickedSample='';busy = true; renderActions(); status('正在读取视频…');
+    if (!path || (item && !savedVideo(item))) throw Error('请先保存视频并确认路径可用。');
+    busy = true; resultRevision++; renderActions();
     try {
-      if(!path){const stored=await upload(item);Object.assign(item,stored);path=stored.path;}
+      await prepareToLeave();
+      historyGroup='';pickedSample='';status('正在读取视频…');
       const data = await jsonRequest('/api/new-video', {method:'POST', headers:{'Content-Type':'application/json','X-Annotation-Token':progress.token}, body:JSON.stringify({video_path:path,sequence,edit_setup:true,chamber_mode:$('#chamber-mode').checked})});
       if (!item) {
         item = files.find(f=>f.id===data.file.id) || data.file;
@@ -731,11 +785,12 @@
     } finally { busy = false; renderActions(); }
   }
   async function poll() {
-    if (busy || pendingUploads || localFile) return;
-    const revision=resultRevision;
+    if (busy || localFile) return;
+    const revision=resultRevision, request=++pollNumber;
     try {
       const data = await jsonRequest('/api/progress');
-      if(busy || revision!==resultRevision)return;
+      if(busy || revision!==resultRevision || request<appliedPoll)return;
+      appliedPoll=request;
       const previousStatus = progress?.status;
       const batchEnded=!!progress?.batch?.running && !data.batch?.running;
       if (!connected && view === 'progress') status('');
@@ -757,7 +812,7 @@
       if(data.status==='complete'&&analysisItem)analysisItem.analyzed=true;
       if (!initialized) {
         initialized = true;
-        if (analysisId) {
+        if (analysisId || AnalysisPresentation.awaitingDispatch(data)) {
           showView(AnalysisPresentation.sessionView(data));
         }
         if (view !== 'progress') status(analysisId ? '已恢复当前分析会话' : '工作台已就绪 · 导入视频即可开始');
@@ -766,7 +821,7 @@
         if(data.status==='complete')window.WorkspaceActions?.refresh();
         renderFiles();
         // Once this analysis finishes, show its total metrics. Keep batch work in place.
-        const finishedChambers=!data.batch?.running && ['complete','cancelled','failed'].includes(data.status) && ResultNavigation.group(data).some(i=>i.status==='complete');
+        const finishedChambers=!data.batch?.running && !AnalysisPresentation.awaitingDispatch(data) && ['complete','cancelled','failed'].includes(data.status) && ResultNavigation.group(data).some(i=>i.status==='complete');
         if((AnalysisPresentation.totalsReady(data) || finishedChambers) && ['annotation','progress'].includes(view)) {
           showView('results');status(finishedChambers?'已显示本批次结果':'分析完成 · 已显示线虫指标');
         }
@@ -779,8 +834,11 @@
       }
       if (data.status === 'preparing' && !data.batch?.running) status('正在标注 · 草稿自动保存到本机');
       if (data.status === 'running' && view !== 'progress') status(`正在处理 ${data.video_name}`);
+      if(AnalysisPresentation.awaitingDispatch(data))status(data.batch.dispatch_error,true);
       renderActions();
     } catch {
+      if(busy || revision!==resultRevision || request<appliedPoll)return;
+      appliedPoll=request;
       connected = false; $('#connection-label').textContent = '本地服务未连接';
       status('本地服务连接中断，请检查运行窗口。已导入文件仍可预览。', true); renderActions();
     }
@@ -815,7 +873,7 @@
   });
 
   explorer=LibraryTree.create({getState:()=>({files,folders,query:$('#file-search').value,filter,selectedId,analysisId}),mutate:treeMutation,select:selectFile,stageVideos,icon,status,selectionChanged:selectionUpdated,
-    isBusy:()=>organizing||folderImport||pendingUploads>0,
+    isBusy:()=>organizing||folderImport,
     importFiles:parent=>{pickingParent=parent;$('#files-input').click();},importFolder:parent=>{pickingParent=parent;$('#folder-input').click();},dropFiles:droppedFiles});
   $('#files-input').onchange = event => void importFiles(event.target.files,pickingParent);
   $('#folder-input').onchange = event => void importFiles(event.target.files,pickingParent);
@@ -842,7 +900,7 @@
       const ids=batchSelection();
       if(!ids.length){await start(selected(), selected()?.path);return;}
       const staged = ids.map(id => files.find(file => file.id === id));
-      if(staged.some(file => !file?.path || file.available === false))throw Error('队列中有不可用的视频，请先将它移出。');
+      if(!staged.every(savedVideo))throw Error('所选队列中有视频尚未保存或路径不可用。');
       const paths = [...new Set(staged.map(file => file.path))];
       await start(staged[0], paths[0], paths);
       if(ids===stagedIds)setStaging([]);
@@ -943,7 +1001,7 @@
   function stageVideos(ids) {
     if(busy){status('请等待当前视频打开后再添加。');return;}
     const videos=ids.map(id=>files.find(item=>item.id===id));
-    if(videos.some(file=>!file?.path||file.kind!=='video'||file.available===false)){status('所选视频尚未保存或路径不可用。',true);return;}
+    if(!videos.every(savedVideo)){status('所选视频尚未保存或路径不可用。',true);return;}
     const added=ids.filter(id=>!stagedIds.includes(id));
     if(!added.length){status('所选视频已在待标定队列中');return;}
     setStaging([...stagedIds,...added]);
@@ -979,7 +1037,7 @@
     $('#connection-label').textContent = '文件预览 · 本地服务未连接';
     status('界面已加载 · 打开 WormStudio 桌面应用进行标注与评测');
   }
-  // No overlapping polls; request/upload mutations have priority.
+  // Schedule the next periodic refresh after the previous one completes.
   async function schedulePoll() { await poll(); window.setTimeout(schedulePoll, 2500); }
   if (!localFile) window.StudioWorkspace.ready.then(()=>window.setTimeout(schedulePoll,2500));
 })();

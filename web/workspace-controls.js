@@ -10,7 +10,8 @@
     const result=await response.json();
     if(!response.ok) throw Error(result.error||'操作失败');
     if(path==='/api/remove-history')return refresh();
-    location.reload();
+    await window.StudioWorkspace.refreshSession(result);
+    await refresh();
   }
   function button(text,handler) {
     const b=document.createElement('button'); b.className='plain-button';b.textContent=text;
@@ -100,6 +101,5 @@
   window.WorkspaceActions={run:action,refresh};
   el('refresh-projects').onclick=refresh;
   el('cancel-run').onclick=()=>action('/api/cancel').catch(e=>{el('status-text').textContent=e.message;});
-  setInterval(async()=>{try{const p=await(await fetch('/api/progress')).json();el('cancel-run').hidden=!['running','preparing'].includes(p.status);}catch{}},2000);
   refresh();
 })();

@@ -27,6 +27,7 @@ window.StudioResults = (() => {
     ['length_width_ratio','长宽比',''],['speed_bl_s','体长归一化速度','体长/s'],
     ['midbody_abs_curvature_per_um','中段绝对曲率','μm⁻¹'],['speed_um_s','质心速度','μm/s'],['head_angle_deg','头部弯曲角','°']];
   let latest = null, key = '', timeline = null, worm = null, position = 0, pending = null;
+  let submittingHead=false;
   const chamberClips = new Map(), preparingClips = new Set();
   let controller = null, revision = 0, ranges = [], visible = false, headAnchors = {};
   let identityReport={edges:[]},identityEdge=null,identityTimer=null;
@@ -116,9 +117,9 @@ window.StudioResults = (() => {
     if(task.action==='confirm_head'||task.action==='inspect_anchors')el('head-correction').open=true;
   };
   function draw(frame, force = false) {
-    if (!timeline) return;
+    if (!timeline) return false;
     frame = Math.max(0, Math.min(timeline.frame_count - 1, frame));
-    if (frame === position && !force) return;
+    if (frame === position && !force) return false;
     position = frame;
     el('result-frame-error').hidden=true;el('result-frame-number').removeAttribute('aria-invalid');
     el('result-frame').value = el('result-frame-number').value = frame;
@@ -128,9 +129,9 @@ window.StudioResults = (() => {
     el('result-prev-issue').disabled = !ranges.some(range => range.start < frame);
     el('result-next-issue').disabled = !ranges.some(range => range.start > frame);
     const row = rowAt(frame);
-    if (!row) return;
+    updateHeadButtons(row);
     window.ResultPlayer.frame(row,frame);
-    el('head-a').disabled=el('head-b').disabled=!row.head_review_allowed;
+    if (!row) return true;
     const contactDirection=row.head_reason==='two_sided_contact_orientation';
     const labels=row.endpoint_labels || ['A','B'];
     const neutral = labels[0] === 'A';
@@ -180,7 +181,6 @@ window.StudioResults = (() => {
     if(row.blur_darker_tips?.tail)el('result-head-explanation').textContent+=' 尾端标记的蓝色外圈位于较深拖影的影尖。';
     text('head-choice-note',row.head_review_allowed?`${colors[0]} ${labels[0]} / ${colors[1]} ${labels[1]}。请选择头端，另存当前片段的确认结果。`:'本帧端点或身份不可靠，请切换至清晰、可靠的姿态帧。');
     el('head-choice-note').textContent+=el('result-original').checked?' 当前为原始画面，请先取消“原始画面”查看端点标记。':'';
-    if(el('result-original').checked)el('head-a').disabled=el('head-b').disabled=true;
     if(row.head_anchor_conflict) text('head-review-message','本片段头部锚点冲突，正式头摆已暂停。请在锚点列表核对并撤销错误记录。');
     else text('head-review-message',row.head_reason==='manual_point_not_near_endpoint'?'锚点远离可靠端点，请核对原记录。':'');
     const audit=timeline.quality_audit?.worms?.[String(worm)];
@@ -231,6 +231,7 @@ window.StudioResults = (() => {
       catch { evidence.textContent = AnalysisPresentation.text(q?.evidence || '没有记录证据。'); }
       details.append(summary, note, evidence); el('result-dimensions').append(details);
     }
+    return true;
   }
   function artifactUrl(data, key, inline=false) {
     if(key==='video' && data.chamberJob)return '/artifact?chamber_video='+encodeURIComponent(data.chamberJob)+(inline?'&inline=1':'');
@@ -257,15 +258,36 @@ window.StudioResults = (() => {
     }
   };
   el('result-original').onchange=()=>{if(!latest||!timeline)return;const artifact=latest.artifacts.find(a=>a.key===(el('result-original').checked?'source-video':'video'));if(!artifact){el('result-original').checked=false;return;}video.pause();pending=position;window.ResultPlayer.source();video.src=artifactUrl(latest,artifact.key,true);video.load();draw(position,true);};
+  function updateHeadButtons(row=rowAt(position)){
+    const disabled=submittingHead || !row?.head_review_allowed || video.seeking || el('result-original').checked;
+    el('head-a').disabled=el('head-b').disabled=disabled;
+  }
   for(const [id,endpoint] of [['head-a',0],['head-b',1]]) el(id).onclick=async()=>{
-    el('head-a').disabled=el('head-b').disabled=true;
-    try{const state=await(await fetch('/api/progress')).json();const r=await fetch('/api/confirm-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,worm_id:worm,frame:position,endpoint})});const d=await r.json();if(!r.ok)throw Error(d.error);location.reload();}
-    catch(e){text('head-review-message',e.message);draw(position,true);}
+    if(el(id).disabled || video.seeking)return;
+    video.pause();
+    const anchor={sample:timeline.sample,worm_id:worm,frame:position,endpoint};
+    submittingHead=true;
+    updateHeadButtons();
+    try{
+      const progress=await fetch('/api/progress',{cache:'no-store'});
+      if(!progress.ok)throw Error('无法读取复核会话，请重试。');
+      const {token}=await progress.json();
+      const response=await fetch('/api/confirm-head',{method:'POST',
+        headers:{'Content-Type':'application/json','X-Annotation-Token':token},body:JSON.stringify(anchor)});
+      const result=await response.json();
+      if(!response.ok)throw Error(result.error);
+      await window.StudioWorkspace.refreshSession(result);
+    }catch(error){
+      if(timeline?.sample===anchor.sample)text('head-review-message',error.message);
+    }finally{
+      submittingHead=false;
+      updateHeadButtons();
+    }
   };
   el('head-first').onclick=()=>{el('result-video-details').open=true;el('result-video-details').scrollIntoView({block:'start',behavior:'smooth'});el('result-original').checked=false;el('result-original').dispatchEvent(new Event('change'));seek(0,true);el('head-correction').open=true;};
   el('head-auto').onclick=async()=>{
     el('head-auto').disabled=true;text('head-auto-message','正在另存结果并计算候选…');
-    try{const state=await(await fetch('/api/progress')).json();const response=await fetch('/api/auto-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,head_mode:'taper_seed'})});const data=await response.json();if(!response.ok)throw Error(data.error);location.reload();}
+    try{const state=await(await fetch('/api/progress')).json();const response=await fetch('/api/auto-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,head_mode:'taper_seed'})});const data=await response.json();if(!response.ok)throw Error(data.error);await window.StudioWorkspace.refreshSession(data);}
     catch(e){text('head-auto-message',e.message);el('head-auto').disabled=false;}
   };
   function renderAnchors(){
@@ -278,7 +300,7 @@ window.StudioResults = (() => {
       note.textContent=`${anchor.id} · ${anchor.source||'旧版人工点'} · ${anchor.confirmed_at||'历史记录未提供时间'}`;
       remove.textContent='撤销此锚点';remove.onclick=async()=>{remove.disabled=true;try{
         const state=await(await fetch('/api/progress')).json();const response=await fetch('/api/remove-head',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify({sample:latest.sample,worm_id:worm,anchor_id:anchor.id})});
-        const result=await response.json();if(!response.ok)throw Error(result.error);location.reload();
+        const result=await response.json();if(!response.ok)throw Error(result.error);await window.StudioWorkspace.refreshSession(result);
       }catch(e){text('head-review-message',e.message);remove.disabled=false;}};
       row.append(jump,remove,note);target.append(row);
     }
@@ -320,7 +342,8 @@ window.StudioResults = (() => {
       const state=await(await fetch('/api/progress')).json();
       const body=decision==='undo'?{sample:latest.sample,review_id:identityEdge.review.id}:{sample:latest.sample,link_id:identityEdge.id,decision};
       const response=await fetch(decision==='undo'?'/api/remove-identity-review':'/api/review-identity',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':state.token},body:JSON.stringify(body)});
-      const result=await response.json();if(!response.ok)throw Error(result.error);location.reload();
+      const result=await response.json();if(!response.ok)throw Error(result.error);
+      el('identity-dialog').close();await window.StudioWorkspace.refreshSession(result);
     }catch(error){text('identity-message',error.message);}
   }
   for(const decision of ['same','different','unknown'])el('identity-'+decision).onclick=()=>identitySubmit(decision);
@@ -332,7 +355,12 @@ window.StudioResults = (() => {
     if (video.hasAttribute('src') && video.readyState >= 1) video.currentTime = (frame + .25) / timeline.fps;
     draw(frame, true);
   }
-  function sync(time) { if (timeline && pending === null) draw(Math.floor(time * timeline.fps + 1e-4)); }
+  function sync(time,seeked){
+    const target=pending;
+    if(seeked)pending=null;
+    if(!timeline || (!seeked && target!==null))return false;
+    return draw(target ?? Math.floor(time*timeline.fps+1e-4),seeked);
+  }
   document.addEventListener('keydown', event => {
     const panel = el('result-video-details'), target = event.target;
     if (!visible || !panel.open || !video.hasAttribute('src') || video.error || event.defaultPrevented ||
@@ -358,14 +386,8 @@ window.StudioResults = (() => {
       else video.currentTime = (frame + .25) / fps;
     }
   });
-  video.addEventListener('timeupdate', () => { if (!video.paused) sync(video.currentTime); });
-  video.addEventListener('seeked', () => { const target = pending; pending = null; if (target !== null) draw(target, true); else sync(video.currentTime); });
   video.addEventListener('play', () => { pending = null; });
   video.addEventListener('loadedmetadata', () => { if (pending !== null && timeline) video.currentTime = (pending + .25) / timeline.fps; });
-  if ('requestVideoFrameCallback' in video) {
-    const tick = (_, metadata) => { if (!video.paused) sync(metadata.mediaTime); video.requestVideoFrameCallback(tick); };
-    video.requestVideoFrameCallback(tick);
-  }
   video.addEventListener('error', () => {
     el('result-video-message').hidden = false;
     text('result-video-message', '视频暂时无法播放。仍可用下方帧控件查看质量和指标，或导出视频到本机播放。');
@@ -409,6 +431,7 @@ window.StudioResults = (() => {
     const version = ++revision; controller?.abort(); controller = new AbortController();
     const activeController = controller;
     timeline = null; pending = null; position = 0; ranges = [];headAnchors={};
+    updateHeadButtons();
     showEvents(null);
     stopIdentity();identityReport={edges:[]};identityEdge=null;el('identity-open').disabled=true;el('identity-open').hidden=true;
     el('result-original').checked=false;
@@ -477,7 +500,7 @@ window.StudioResults = (() => {
       renderPhenotypes.setTimeline(result);
       if(!fullDetails){el("results-load-state").hidden=true;timeline=null;return;}
       el('head-auto').hidden=result.head_detection_mode==='taper_seed';el('head-auto').disabled=false;text('head-auto-message','');
-      window.ResultPlayer.configure(result,frame=>sync(frame/result.fps));
+      window.ResultPlayer.configure(result,sync);
       if (!data.summaryOnly) {
         const anchorsResponse=await fetch('/api/head-anchors?run='+encodeURIComponent(data.sample),{cache:'no-store',signal:activeController.signal});
         const anchorsResult=await anchorsResponse.json();if(!anchorsResponse.ok)throw Error(anchorsResult.error||'锚点读取失败');
@@ -511,7 +534,7 @@ window.StudioResults = (() => {
     }
     latest = data;
     if (data.status !== 'complete') {
-      if (key) { key = ''; revision++; controller?.abort(); timeline = null; showEvents(null); video.pause(); }
+      if (key) { key = ''; revision++; controller?.abort(); timeline = null; updateHeadButtons(); showEvents(null); video.pause(); }
       return;
     }
     const nextKey = JSON.stringify([data.sample, data.artifacts, !!data.summaryOnly, data.group]);

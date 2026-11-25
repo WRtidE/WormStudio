@@ -987,6 +987,7 @@ def create_server(annotation=None, progress=None):
                             if progress.data['status'] not in ('ready','complete','failed','cancelled') or progress.next_ready.is_set():
                                 raise ValueError('请先保存当前标注或等待当前处理结束')
                             if action == 'start': progress.batch.start()
+                            elif action == 'retry-dispatch': progress.batch.retry_dispatch()
                             elif action == 'remove': progress.batch.remove(body.get('id'))
                             elif action == 'retry': progress.batch.retry(body.get('id'))
                             elif action == 'retry-one': progress.batch.retry(body.get('id'), start=True, group=body.get('group'))

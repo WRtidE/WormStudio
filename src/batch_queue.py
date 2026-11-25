@@ -12,6 +12,7 @@ class BatchQueue:
         self.items = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else []
         self.running = False
         self.active = None
+        self.dispatch_error = ''
         self.selected_samples = None
         self.results_path = self.path.with_name(self.path.stem + '.results.json')
         self.result_samples = []
@@ -31,10 +32,10 @@ class BatchQueue:
             if item['status'] == 'running':
                 item.update(status='pending', error='上次处理被中断，等待重新启动')
 
-    def persist(self):
+    def persist(self, items=None):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(self.items, ensure_ascii=False, indent=2), encoding='utf-8')
+        temporary.write_text(json.dumps(self.items if items is None else items, ensure_ascii=False, indent=2), encoding='utf-8')
         temporary.replace(self.path)
 
     def add(self, config):
@@ -99,7 +100,7 @@ class BatchQueue:
                 history.append(dict(id=group['id'], created=group['created'], name=Path(members[0]['video_path']).name,
                                     videos=len(videos), total=len(members),
                                     complete=sum(i['status'] == 'complete' for i in members)))
-        return dict(running=self.running, items=items,
+        return dict(running=self.running, dispatch_error=self.dispatch_error, items=items,
                     result_items=[by_sample[sample] for sample in self.result_samples if sample in by_sample],
                     group_id=current, groups=history)
 
@@ -129,6 +130,7 @@ class BatchQueue:
         self.result_samples = list(group)
         self.groups = groups
         self.selected_samples = selected
+        self.dispatch_error = ''
         self.running = True
 
     def persist_groups(self, group, groups):
@@ -144,12 +146,24 @@ class BatchQueue:
         if item is None:
             self.running = False
             return None
-        item.update(status='running', error='')
+        started = dict(item, status='running', error='')
+        try:
+            self.persist([started if entry is item else entry for entry in self.items])
+        except OSError as error:
+            self.running = False
+            self.dispatch_error = f"{self.summary(item)['name']} 仍待处理，无法保存队列状态：{error}"
+            return None
+        item.update(started)
         self.active = item
-        self.persist()
         config = copy.deepcopy(item['config'])
         config['_resume_saved'] = True
         return config
+
+    def retry_dispatch(self):
+        if not self.dispatch_error:
+            raise ValueError('没有等待重试的队列写入')
+        self.dispatch_error = ''
+        self.running = True
 
     def finish(self, status, error='', cancelled=False, result_sample=None, previous_sample=None):
         item = self.active
@@ -172,6 +186,8 @@ class BatchQueue:
             if item is not None and item['status'] not in ('failed', 'cancelled', 'pending'):
                 item = None
         if item is not None:
+            if self.dispatch_error and item is self.next_pending():
+                self.dispatch_error = ''
             item.update(status=status if status in ('complete', 'failed', 'cancelled') else 'failed', error=error or '')
             if result_sample and status == 'complete': item['result_sample'] = result_sample
             if item is self.active: self.active = None
@@ -189,6 +205,7 @@ class BatchQueue:
         if self.running:
             raise ValueError('请先停止批处理')
         item = next((i for i in self.items if i['id'] == identifier), None)
+        dispatch_item = self.next_pending() if self.dispatch_error else None
         if item and any(item['config']['sample'] in g['samples'] for g in self.groups):
             summary = dict(self.summary(item), removed=True)
             if summary['status'] == 'pending':
@@ -197,6 +214,8 @@ class BatchQueue:
             self.persist_groups(self.result_samples, self.groups)
         self.items = [i for i in self.items if i['id'] != identifier]
         self.persist()
+        if dispatch_item is not None and item is dispatch_item:
+            self.dispatch_error = ''
 
     def retry(self, identifier, start=False, group=None):
         if self.running:

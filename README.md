@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.15/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="#windows-可选-gpu-加速">GPU 加速</a>
@@ -28,14 +28,14 @@
 
 ## 下载与启动
 
-Windows 当前稳定版为 **v1.1.15**。下载约 **161 MB** 的桌面包，首次打开时由软件准备运行环境和模型。Apple 芯片 Mac 使用 **v1.0.3** 离线包。[Windows 版本说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.1.15) · [下载文件 SHA-256 校验清单](https://github.com/WRtidE/WormStudio/releases/download/v1.1.15/SHA256SUMS.txt)
+Windows 当前稳定版为 **v1.1.16**。下载约 **161 MB** 的桌面包，首次打开时由软件准备运行环境和模型。Apple 芯片 Mac 使用 **v1.0.3** 离线包。[Windows 版本说明](https://github.com/WRtidE/WormStudio/releases/tag/v1.1.16) · [下载文件 SHA-256 校验清单](https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/SHA256SUMS.txt)
 
 | 电脑 | 下载 | 如何启动 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v1.1.15 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.15/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
+| Windows 64 位（x64） | [Windows v1.1.16 在线版，约 161 MB](https://github.com/WRtidE/WormStudio/releases/download/v1.1.16/WormStudio-Windows-x64.zip) | 右键 ZIP，选择“全部解压”，打开 `WormStudio` 文件夹并双击 `WormStudio.exe`，等待首次准备完成。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 桌面包](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压后将 `WormStudio.app` 拖入“应用程序”。首次启动按包内“先读我.txt”操作，选择“准备并打开”。 |
 
-Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。GPU 组件优先从国内镜像下载，失败时自动切换备用源。运行组件和模型由程序自动下载，无需逐一手动选择附件。
+Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 **4.14 GiB**，均已包含模型。建议系统盘分别预留 **5 GiB / 12 GiB** 空间。下载中断可继续，准备完成后分析可离线进行。已有完整组件时，再次启动直接进入工作台。GPU 组件优先从国内镜像下载，失败时自动切换备用源。运行组件和模型由程序自动下载，无需逐一手动选择附件。
 
 ## 用练习视频完成第一次分析
 
@@ -53,7 +53,7 @@ Windows 首次需要联网下载组件：CPU 约 **1.12 GiB**，NVIDIA GPU 约 *
 4. **开始分析。** 点击 **下一步：确认并开始**，核对后点 **保存并开始处理**。在 **进度** 页查看跟踪、姿态分析和导出的进展。
 5. **回看结果。** 处理完成后打开 **结果 → 查看分析视频**，点击播放或逐帧查看。核对虫体轮廓和中线后，可在同一页导出需要的文件。
 
-## 单虫标注与摆头测量（Windows v1.1.15）
+## 单虫标注与摆头测量（Windows v1.1.16）
 
 - **先用原图确认轮廓。** 如果虫体旁多圈进了一块槽壁，用擦除工具去掉误选区域。轮廓包进虫身外侧的灰影时，可选 **按原图边缘细化**。固定机位下，活动虫体与培养柱粘连时，可试 **抑制固定背景**，点 **重新预测** 后对照原片检查细尾和静止的虫段。
 - **测摆头时先标头端。** 在 **头尾标记** 中按槽选择 **随机抽 2 帧** 或 **随机抽 3 帧**，放大清晰画面后点击头端，模糊帧可以跳过。结果页可在视频旁复核头尾轨迹。单向摆动按次计，完整往返周期频率用 Hz 表示，摆幅用角度表示。缺测会中断周期统计。

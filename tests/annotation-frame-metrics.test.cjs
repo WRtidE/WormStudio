@@ -8,6 +8,7 @@ function fixture(){
  $('#scale').value='2';
  const worm={confirmed:true,mask:{toDataURL:()=> 'mask-png'}};
  const context=vm.createContext({$,document:{createElement:node},state:{frame:4},selected:1,objects:new Map([[1,worm]]),roi:[0,0,100,100],calibrationPending:false,step:2,busy:false,saved:false,poly:[],chamberLabel:id=>'线虫 '+id,setBusy:value=>{context.busy=value},draw(){},annotationPost:async()=>({frame:4,pose_available:true,metrics:[{key:'area',label:'当前帧面积',value:0,unit:'μm²'}]})});
+ context.encodedMask=canvas=>canvas.toDataURL();
  context.Option=class{constructor(text,value){this.text=text;this.value=value;}};
  vm.runInContext(source.slice(start,end),context);return{context,nodes,worm,run:code=>vm.runInContext(code,context)};
 }

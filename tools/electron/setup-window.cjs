@@ -10,6 +10,12 @@ async function showSetup({electron, manifest, directory, platform, onReady, fetc
     icon:path.join(__dirname,'../../web/wormstudio-icon.png'),
     show:false,autoHideMenuBar:true,backgroundColor:'#fbfcfa',
     webPreferences:{preload:path.join(__dirname,'setup-preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
+  let shown = false;
+  function reveal() {
+    if (shown || window.isDestroyed()) return;
+    shown = true;
+    window.show();
+  }
   let opening = false, readyTimer;
   const open = async () => {
     if (opening || setup.state.phase !== 'ready' || window.isDestroyed()) return;
@@ -18,10 +24,17 @@ async function showSetup({electron, manifest, directory, platform, onReady, fetc
     try { await onReady(setup.result, window); }
     catch (error) { opening = false; setup.update({phase:'error',title:'工作台启动失败',error:error.message}); }
   };
-  const setup = new Setup({manifest, directory, platform, gpu, fetch:fetch || ((url,options) => net.fetch(url,options)),
+  const fetchAsset = fetch || ((url, options) => net.fetch(url, options));
+  const setup = new Setup({manifest, directory, platform, gpu,
+    fetch:(url, options) => {
+      // A ready runtime may still need a replacement for a missing or damaged model.
+      reveal();
+      return fetchAsset(url, options);
+    },
     notify:state => {
       clearTimeout(readyTimer);
       if (window.isDestroyed()) return;
+      if ((state.phase === 'downloading' && !state.reused) || state.phase === 'error') reveal();
       window.webContents.send('setup:changed',state);
       if (state.phase === 'ready' && autoOpen) readyTimer = setTimeout(() => void open(), state.reused ? 0 : 1500);
     }});
@@ -41,7 +54,7 @@ async function showSetup({electron, manifest, directory, platform, onReady, fetc
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.once('closed', () => { clearTimeout(readyTimer); void setup.stop(); ipcMain.removeHandler('setup:state'); ipcMain.removeHandler('setup:action'); });
   await window.loadFile(page);
-  window.show();
+  if (gpu || !autoOpen) reveal();
   void setup.start();
   return {window, setup};
 }

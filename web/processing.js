@@ -6,7 +6,7 @@ const labels={pending:'等待中',running:'处理中',complete:'已完成',reuse
 function duration(seconds){if(!Number.isFinite(seconds))return '未记录';seconds=Math.max(0,Math.floor(seconds));const m=Math.floor(seconds/60),s=seconds%60;return m>=60?`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
 function text(id,value){$(id).textContent=AnalysisPresentation.text(value)}
 function validFrames(row,key){const n=row[key],total=row.frames;return n===null||n===undefined||!total?'—':`${n} / ${total} · ${(100*n/total).toFixed(1)}%`}
-function sessionFinished(data){return terminal.has(data.status)&&!data.batch?.running;}
+function sessionFinished(data){return terminal.has(data.status)&&!data.batch?.running&&!AnalysisPresentation.awaitingDispatch(data);}
 function drawBatch(data,items){
  const panel=$('#batch-progress');
  panel.hidden=items.length<2;
@@ -40,7 +40,10 @@ function draw(data){
  const prefix=current?.chamber_id!=null?'槽 '+current.chamber_id+' · ':'';
  const finished=terminal.has(data.status), row=data.stages[data.active];
  const title=data.status==='complete'?'处理完成':data.status==='failed'?'处理遇到问题':data.status==='cancelled'?'处理已停止':row?`第 ${data.active+1} / ${data.stages.length} 步 · ${AnalysisPresentation.stage(row)}`:'正在准备处理';
- text('#progress-title',prefix+title+(finished&&data.batch?.running?'，正在更新队列':''));
+ const dispatchError=AnalysisPresentation.awaitingDispatch(data)&&data.batch.dispatch_error;
+ $('#dispatch-failure').hidden=!dispatchError;
+ if(dispatchError)$('#dispatch-error').textContent=dispatchError;
+ text('#progress-title',dispatchError?'队列等待重试':prefix+title+(finished&&data.batch?.running?'，正在更新队列':''));
  const scope=items.length<2?'总':current?.chamber_id!=null?'本槽':'本项';
  text('#percent-label',scope+'进度');text('#elapsed-label',scope+'耗时');
  const quality=data.quality,needsReview=quality?.needs_review>0;
@@ -77,6 +80,17 @@ async function poll(){
  catch(error){document.body.classList.add('offline');$('#offline-notice').hidden=false;text('#connection-state','连接中断')}
  finally{clearTimeout(timeout);if(!stopped)setTimeout(poll,1000)}
 }
+$('#retry-dispatch').onclick=async event=>{
+ const button=event.currentTarget;
+ button.disabled=true;
+ try{
+  const response=await fetch('/api/batch',{method:'POST',headers:{'Content-Type':'application/json','X-Annotation-Token':latest.token},body:JSON.stringify({action:'retry-dispatch'})});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error);
+  draw(data);
+ }catch(error){$('#dispatch-error').textContent=error.message;}
+ finally{button.disabled=false;}
+};
 $('#new-video').onclick=()=>{ window.location.href='/select-video' };
  $('#review-video').onclick=()=>{ window.location.href='/review' };
 

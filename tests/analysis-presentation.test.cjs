@@ -39,6 +39,7 @@ test('the progress page keeps polling across chamber handoffs, failures and a re
  const frames=[
   ['running',23,['running','pending','pending']],
   ['complete',23,['running','pending','pending']],
+  ['complete',23,['complete','pending','pending'],'disk full'],
   null,
   ['preparing',24,['complete','running','pending']],
   ['failed',24,['complete','failed','pending']],
@@ -50,11 +51,17 @@ test('the progress page keeps polling across chamber handoffs, failures and a re
   document:{body:element(),querySelector:dom,createElement:element,createTextNode:String},
   AnalysisPresentation:presentation,ResultNavigation:nav,AbortController,
   setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id)},
-  async fetch(){
+  async fetch(route,options){
+   if(route==='/api/batch'){
+    assert.deepEqual(JSON.parse(options.body),{action:'retry-dispatch'});
+    assert.equal(options.headers['X-Annotation-Token'],'session-token');
+    last={...last,batch:{...last.batch,running:true,dispatch_error:''}};
+    return {ok:true,json:async()=>last};
+   }
    const f=frames.shift();if(!f)throw Error('offline');
-   const [status,id,states]=f;
+   const [status,id,states,dispatch_error]=f;
    const items=states.map((state,i)=>({chamber_id:23+i,sample:String(23+i),status:state,video_path:'222324.mp4'}));
-   last={status,sample:String(id),stages:[],active:null,percent:0,batch:{running:!!frames.length,result_items:items},preview_run:status==='preparing'?null:'run-'+id};
+   last={status,sample:String(id),token:'session-token',stages:[],active:null,percent:0,batch:{running:!!frames.length&&!dispatch_error,dispatch_error,result_items:items},preview_run:status==='preparing'?null:'run-'+id};
    return {ok:true,json:async()=>last};
   }});
  await vm.runInContext(fs.readFileSync(require.resolve('../web/processing.js'),'utf8'),ctx);
@@ -63,6 +70,11 @@ test('the progress page keeps polling across chamber handoffs, failures and a re
  assert.equal(presentation.sessionView(last),'progress');
  assert.equal(dom('#finish-session').hidden,true);assert.equal(dom('#result-card').hidden,true);
  assert.match(dom('#batch-progress-count').textContent,/1 \/ 3/);
+ await tick();assert.equal(presentation.sessionView(last),'progress');
+ assert.equal(dom('#dispatch-failure').hidden,false);assert.equal(dom('#dispatch-error').textContent,'disk full');
+ assert.equal(dom('#finish-session').hidden,true);
+ await dom('#retry-dispatch').onclick({currentTarget:dom('#retry-dispatch')});
+ assert.equal(dom('#dispatch-failure').hidden,true);
  await tick();assert.equal(dom('#offline-notice').hidden,false);
  await tick();assert.match(dom('#progress-title').textContent,/槽 24/);
  assert.equal(dom('#offline-notice').hidden,true);
@@ -71,5 +83,5 @@ test('the progress page keeps polling across chamber handoffs, failures and a re
  await tick();assert.equal(timers.size,0);
  assert.equal(dom('#result-card').hidden,false);
  assert.deepEqual(dom('#batch-progress-items').children.map(n=>n.dataset.status),['complete','failed','complete']);
- assert.deepEqual(previews,['run-23','run-23',null,'run-24','run-25','run-25']);
+ assert.deepEqual(previews,['run-23','run-23','run-23','run-23',null,'run-24','run-25','run-25']);
 });

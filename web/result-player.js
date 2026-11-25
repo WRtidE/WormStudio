@@ -4,7 +4,7 @@ window.ResultPlayer=(()=>{
   const player=canvas.closest('.result-player'), fullscreenButton=el('result-fullscreen');
   const ctx=canvas.getContext('2d'),math=window.ResultViewport;
   let transform=null,focus=false,box=null,visible=false,pointers=new Map(),vw=0,vh=0;
-  let frameInfo=null,crop=null,frameCount=0,fps=12,callback=null;
+  let frameInfo=null,crop=null,fps=12,updateTimeline=null;
   let frames=[],currentFrame=0,showTrails=false;
   const dimensions=()=>[video.videoWidth,video.videoHeight];
   function bounds(){
@@ -132,14 +132,26 @@ window.ResultPlayer=(()=>{
   el('result-play').onclick=async()=>{if(video.paused){if(video.ended)video.currentTime=0;try{await video.play();}catch{el('result-focus-note').textContent='视频未能播放，请重新读取结果或下载视频。';}}else video.pause();};
   const playLabel=()=>{el('result-play').textContent=video.paused?'播放':'暂停';el('result-play').setAttribute('aria-pressed',String(!video.paused));};
   for(const name of ['play','pause','ended'])video.addEventListener(name,playLabel);
-  for(const name of ['loadeddata','seeked'])video.addEventListener(name,()=>{if(!transform)fit();paint();});
+  video.addEventListener('loadeddata',()=>{if(!transform)fit();else paint();});
   video.addEventListener('loadedmetadata',fit);
   new ResizeObserver(resize).observe(canvas);
+  function present(time,seeked=false){
+    // A new timeline row paints its overlays and video together. Video-only
+    // playback and repeated media timestamps still need the decoded image.
+    const drawn=updateTimeline?.(time,seeked);
+    if(!transform)fit();
+    else if(!drawn)paint();
+  }
+  video.addEventListener('seeked',()=>present(video.currentTime,true));
   if('requestVideoFrameCallback' in video){
-    const tick=(_,m)=>{if(visible&&!video.paused){callback?.(Math.min(frameCount-1,Math.floor(m.mediaTime*fps+1e-4)));paint();}video.requestVideoFrameCallback(tick);};video.requestVideoFrameCallback(tick);
-  }else video.addEventListener('timeupdate',paint);
+    const tick=(_,metadata)=>{
+      if(visible&&!video.paused)present(metadata.mediaTime);
+      video.requestVideoFrameCallback(tick);
+    };
+    video.requestVideoFrameCallback(tick);
+  }else video.addEventListener('timeupdate',()=>{if(visible&&!video.paused)present(video.currentTime);});
   return {
-    configure(info,onFrame){frames=info.frames;crop=info.crop_xyxy;frameCount=info.frame_count;fps=info.fps;callback=onFrame;},
+    configure(info,onFrame){frames=info.frames;crop=info.crop_xyxy;fps=info.fps;updateTimeline=onFrame;},
     frame(row,index){currentFrame=index;
       const previous=box;frameInfo=row;
       if(focus){
@@ -148,14 +160,14 @@ window.ResultPlayer=(()=>{
           if(transform&&previous&&next){
             const oldFit=math.fit(...dimensions(),vw,vh,previous),newFit=math.fit(...dimensions(),vw,vh,next);
             const relative=transform.s/oldFit.s,dx=transform.x-(vw/2-(previous[0]+previous[2])/2*transform.s),dy=transform.y-(vh/2-(previous[1]+previous[3])/2*transform.s);
-            const s=newFit.s*relative;transform={s,x:vw/2-(next[0]+next[2])/2*s+dx,y:vh/2-(next[1]+next[3])/2*s+dy};box=next;apply();
-          }else fit();
+            const s=newFit.s*relative;transform={s,x:vw/2-(next[0]+next[2])/2*s+dx,y:vh/2-(next[1]+next[3])/2*s+dy};box=next;return apply();
+          }else return fit();
         }
       }
       paint();
     },
     source(){transform=null;},
-    reset(){frames=[];currentFrame=0;video.pause();focus=false;box=null;frameInfo=null;transform=null;pointers.clear();fit();},
+    reset(){frames=[];currentFrame=0;updateTimeline=null;video.pause();focus=false;box=null;frameInfo=null;transform=null;pointers.clear();fit();},
     setVisible(value){
       visible=value;
       if(value) resize();

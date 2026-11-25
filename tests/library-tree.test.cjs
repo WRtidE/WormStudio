@@ -1,5 +1,85 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const studio=fs.readFileSync(path.join(__dirname,'../web/studio.js'),'utf8');
+function studioPart(start,end){
+ const a=studio.indexOf(start),b=studio.indexOf(end,a+1);
+ assert.ok(a>=0&&b>a,start);return studio.slice(a,b);
+}
+
+test('tree edits keep pending uploads and uploads registered during a tree request',async()=>{
+ const pending={id:'local',parent:'sub',signature:'large',persisting:true};
+ const saved={id:'saved',path:'saved.mp4',name:'old'};
+ let reply;
+ const c=vm.createContext({
+  files:[saved,pending],folders:[{id:'top'},{id:'sub',parent:'top'}],selectedId:'local',stagedIds:[],
+  organizing:false,folderImport:false,progress:{token:'session'},selected:()=>pending,
+  renderActions(){},renderFiles(){},renderDetails(){},status(){},jsonRequest:()=>new Promise(resolve=>{reply=resolve})
+ });
+ vm.runInContext(studioPart('async function treeMutation(','async function importFiles('),c);
+ await assert.rejects(c.treeMutation({op:'remove',id:'top'}),/尚未保存/);
+ await assert.rejects(c.treeMutation({op:'move',id:'saved',before:'local'}),/尚未保存/);
+ const rename=c.treeMutation({op:'rename',id:'saved',name:'new'});
+ reply({files:[{...saved,name:'new'},{id:'registered',parent:'sub',signature:'large'}],folders:c.folders});
+ await rename;
+ assert.equal(c.files.length,2);assert.equal(c.files[0],saved);assert.equal(saved.name,'new');assert.equal(c.files[1],pending);
+ const collapse=c.treeMutation({op:'collapse',id:'sub'});
+ Object.assign(pending,{id:'registered',path:'large.mp4',persisting:false});c.selectedId=pending.id;
+ reply({files:[saved],folders:c.folders});await collapse;
+ assert.equal(c.files.length,2);assert.equal(c.files[1],pending);assert.equal(c.selectedId,'registered');
+});
+
+test('a saved video starts and progress refreshes while the next upload is pending',async()=>{
+ const nodes=new Map(),requests=[],uploads=[],ready={status:'ready',batch:{running:false},token:'token'};
+ const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',firstChild:{},close(){}});return nodes.get(id)};
+ const c=vm.createContext({$, $$:()=>[],files:[],folders:[],terminal:['ready','complete','failed','cancelled'],
+  busy:false,localFile:false,connected:true,progress:ready,view:'preview',mode:'phenotype',initialized:true,
+  resultRevision:0,pollNumber:0,appliedPoll:0,organizing:false,folderImport:false,pendingUploads:0,importQueue:Promise.resolve(),
+  currentSample:'',setupSession:null,historyGroup:'',pickedSample:'',analysisId:null,selectedId:null,analysisItem:null,
+  explorer:{destination:null,replaceId(){}},window:{},frame:{dataset:{}},channel:{flush:async()=>{}},
+  AnalysisPresentation:require('../web/analysis-presentation.js'),ResultNavigation:require('../web/result-navigation.js'),
+  videoExtensions:/\.mp4$/,imageExtensions:/\.png$/,URL:{createObjectURL:()=>null},crypto:require('node:crypto'),
+  renderDetails(){},renderFiles(){},renderLinkedRuns(){},renderBatch(){},renderResultNavigation(){},status(){},
+  editingSetup:()=>false,preview(){},persistSelection(){},batchSelection:()=>[],selected:()=>c.files.find(f=>f.id===c.selectedId),
+  selectFile(id){c.selectedId=id},showView(next){c.view=next},
+  upload(item){return new Promise((resolve,reject)=>uploads.push({item,resolve,reject}))},
+  async jsonRequest(route,options){
+   requests.push(route);
+   if(route==='/api/new-video'){
+    const {video_path}=JSON.parse(options.body);
+    assert.equal(video_path,'saved/one.mp4');return {file:c.files[0]};
+   }
+   assert.equal(route,'/api/progress');return c.serverState;
+  }
+ });
+ const run=script=>vm.runInContext(script,c);
+ run(studioPart('const canStart =','function sizeLabel')+studioPart('function renderActions()','async function batchAction')+
+  studioPart('async function importFiles(','async function droppedFiles(')+studioPart('function queueImport(','function upload(')+
+  studioPart('async function prepareToLeave()','function renderLinkedRuns()')+
+  studioPart('async function start(item','frame.addEventListener(\'load\''));
+ c.serverState=ready;c.incoming=['one.mp4','two.mp4'].map(name=>({name,size:10,lastModified:1}));
+ const batch=run('importFiles(incoming)');
+ const tick=()=>new Promise(r=>setImmediate(r));
+ await tick();assert.equal(c.pendingUploads,2);
+ uploads[0].resolve({id:'one',path:'saved/one.mp4'});
+ await tick();assert.equal(c.pendingUploads,1);
+ assert.equal($('#start-analysis').disabled,false);
+ c.selectedId=c.files[1].id;run('renderActions()');assert.equal($('#start-analysis').disabled,true);
+ c.selectedId='one';c.serverState={...ready,status:'running',percent:47};
+ await run('poll()');assert.equal(c.progress.percent,47);
+ assert.equal($('#cancel-run').hidden,false);
+ c.serverState=ready;await run('poll()');
+ assert.equal($('#cancel-run').hidden,true);
+ const file=c.files[0];await run('start(selected(), selected().path)');
+ assert.equal(c.view,'annotation');
+ uploads[1].reject(Error('disk full'));await batch;
+ await tick();assert.equal(c.files[1].persistError,'disk full');assert.equal(c.files[0],file);
+ c.selectedId=c.files[1].id;$('#retry-import').onclick();await tick();
+ assert.equal(uploads[2].item,c.files[1]);
+ uploads[2].resolve({id:'two',path:'saved/two.mp4'});await c.importQueue;
+ assert.equal(c.files.length,2);assert.equal(c.files[1].persistError,false);
+ assert.equal(requests.filter(r=>r==='/api/new-video').length,1);
+ assert.deepEqual(uploads.map(u=>u.item.name),['one.mp4','two.mp4','two.mp4']);
+});
 function fixture(filter='video'){
  class Element{
   constructor(tag='div'){this.tagName=tag;this.children=[];this.dataset={};this.attrs={};this.style={setProperty(){}};this.classList={toggle(){},add(){},remove(){},contains(){return false}};this.isConnected=true;}

@@ -75,6 +75,47 @@ class BatchTests(unittest.TestCase):
         restored.finish('complete')
         self.assertEqual(restored.take()['scale_um_per_px'], 6)
 
+    def test_dispatch_write_failure_retries_original_group_through_http(self):
+        for sample in ('unrelated', 'first', 'second'):
+            self.add(sample)
+        self.queue.start(samples=['first', 'second'])
+        path = self.queue.path
+        before = path.read_bytes()
+        group = self.queue.snapshot()['group_id']
+        with patch.object(Path, 'replace', side_effect=OSError('disk full')) as replace:
+            self.assertIsNone(self.queue.take())
+            self.assertIsNone(self.queue.active)
+            self.assertFalse(self.queue.running)
+            self.assertIsNone(self.queue.take())
+            replace.assert_called_once()
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.queue.items[1]['status'], 'pending')
+
+        progress = PipelineProgress()
+        progress.batch = self.queue
+        progress.data['status'] = 'ready'
+        with patch.object(manual, 'ROOT', self.root):
+            progress.bind_server(manual.create_server(progress=progress))
+            self.addCleanup(progress.close)
+            base = progress.url.removesuffix('/progress')
+            with urllib.request.urlopen(base + '/api/progress') as response:
+                failure = json.load(response)['batch']
+            self.assertIn('disk full', failure['dispatch_error'])
+            self.assertIn('first.mp4', failure['dispatch_error'])
+            request = urllib.request.Request(base + '/api/batch', b'{"action":"retry-dispatch"}',
+                                             {'X-Annotation-Token': progress.token})
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(json.load(response)['batch']['dispatch_error'], '')
+            self.assertEqual(progress.wait()['sample'], 'first')
+            self.assertEqual(json.loads(path.read_text('utf-8'))[1]['status'], 'running')
+            self.assertIsNone(self.queue.take())
+            self.queue.finish('complete')
+            self.assertEqual(self.queue.take()['sample'], 'second')
+            self.queue.finish('complete')
+        self.assertIsNone(self.queue.take())
+        self.assertEqual(self.queue.snapshot()['group_id'], group)
+        self.assertEqual(self.queue.items[0]['status'], 'pending')
+
     def test_queue_and_worker_keep_independent_nested_configuration(self):
         config = dict(sample='one', video='one.mp4', groups=[dict(worms=[dict(points=[[10, 20]])])])
         self.queue.add(config)

@@ -294,18 +294,65 @@ function electronFixture() {
   const handlers = new Map();
   class BrowserWindow extends EventEmitter {
     constructor() {
-      super(); this.destroyed = false;
+      super(); this.destroyed = false; this.shows = 0;
       this.webContents = Object.assign(new EventEmitter(),{
         mainFrame:{}, send() {}, setWindowOpenHandler() {}
       });
     }
     isDestroyed() {return this.destroyed;}
     async loadFile(file) {this.webContents.mainFrame.url = pathToFileURL(file).href;}
-    show() {}
+    show() {this.shows++;}
     destroy() {this.destroyed = true;this.emit('closed');}
   }
   return {BrowserWindow,ipcMain:{handle:(name,fn) => handlers.set(name,fn),removeHandler:name => handlers.delete(name)},handlers};
 }
+
+test('normal startup shows installation once, opens offline silently, and reveals a model repair', async t => {
+  const directory = await folder(t), f = fixture(), electron = electronFixture(), opened = [];
+  t.mock.timers.enable({apis:['setTimeout']});
+  const options = {...f, directory, electron, gpu:false, onReady:result => opened.push(result)};
+  async function launch() {
+    const {window,setup} = await showSetup(options);
+    const result = await setup.running;
+    assert.ok(result, setup.state.error);
+    t.mock.timers.tick(1500);
+    assert.deepEqual(opened.at(-1), result);
+    window.destroy();
+    return {result, shows:window.shows};
+  }
+  const first = await launch();
+  assert.equal(first.shows, 1);
+  assert.deepEqual(f.requests, ['common','cpu','model']);
+  f.clear();
+  const second = await launch();
+  assert.deepEqual(second, {result:first.result, shows:0});
+  assert.deepEqual(f.requests, []);
+  await fs.promises.writeFile(first.result.model, Buffer.alloc(f.manifest.model.size));
+  const repaired = await launch();
+  assert.deepEqual(repaired, first);
+  assert.deepEqual(f.requests, ['model']);
+  assert.equal(f.extracts, 2);
+  assert.equal(opened.length, 3);
+});
+
+test('an interrupted first installation stays visible and resumes on the next launch', async t => {
+  const directory = await folder(t), f = fixture(), electron = electronFixture();
+  const options = {...f,directory,electron,gpu:false,onReady:() => {}};
+  const first = await showSetup({...options,fetch:async url =>
+    url === f.manifest.model.url ? new Response('model') : f.fetch(url)});
+  assert.equal(await first.setup.running, null);
+  assert.equal(first.setup.state.phase, 'error');
+  assert.equal(first.window.shows, 1);
+  first.window.destroy();
+  const resumed = await showSetup({...options,fetch:async (url,request) => {
+    assert.equal(url, f.manifest.model.url);
+    assert.equal(request.headers.Range, 'bytes=5-');
+    return new Response(' weights',{status:206,headers:{'content-range':'bytes 5-12/13'}});
+  }});
+  assert.ok(await resumed.setup.running, resumed.setup.state.error);
+  assert.equal(resumed.window.shows, 1);
+  resumed.window.destroy();
+});
 
 test('manual launch failure cancels automatic launch and rejects premature or foreign IPC requests', async t => {
   const directory = await folder(t), f = fixture(), electron = electronFixture();
