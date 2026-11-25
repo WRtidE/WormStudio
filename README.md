@@ -1,8 +1,26 @@
-<p align="center"><img src="web/wormstudio-icon.png" width="96" height="96" alt="WormStudio 图标"></p>
+<p align="center">
+  <img src="web/wormstudio-icon.png" width="192" height="192" alt="WormStudio 项目图标">
+</p>
 
-# WormStudio
+<h1 align="center">WormStudio</h1>
 
-WormStudio 在本机分析线虫视频。要统计每个通道有多少次向上越线，选 **通道计数**。要跟踪虫体、测量体长和运动速度，选 **表征识别**。
+<p align="center">
+  <strong>线虫视频分析工作台</strong><br>
+  在本机统计通道越线次数，逐帧测量虫体姿态与运动。
+</p>
+
+<p align="center">
+  <a href="#下载与启动"><img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS-446958?style=flat" alt="支持 Windows 和 macOS"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases/latest"><img src="https://img.shields.io/github/v/release/WRtidE/WormStudio?label=版本&amp;color=216858" alt="最新发布版本"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases"><img src="https://img.shields.io/github/downloads/WRtidE/WormStudio/total?label=附件下载&amp;color=426889" alt="发布附件累计下载量"></a>
+  <a href="https://github.com/WRtidE/WormStudio/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/WRtidE/WormStudio/tests.yml?branch=main&amp;label=测试" alt="主分支自动化测试状态"></a>
+</p>
+
+<p align="center">
+  <b><a href="#下载与启动">下载桌面版</a></b> ·
+  <a href="#用练习视频完成第一次分析">观看操作动图</a> ·
+  <a href="docs/USER_GUIDE.md">使用指南</a>
+</p>
 
 ## 下载与启动
 
