@@ -1,25 +1,23 @@
 <p align="center">
-  <img src="web/wormstudio-icon.png" width="192" height="192" alt="WormStudio 项目图标">
+  <img src="web/wormstudio-icon.png" width="240" height="240" alt="WormStudio 项目图标">
 </p>
 
 <h1 align="center">WormStudio</h1>
 
+<p align="center"><em>🔬 在本机跟踪线虫，逐帧测量体态与运动</em></p>
+
 <p align="center">
-  <strong>线虫视频分析工作台</strong><br>
-  在本机统计通道越线次数，逐帧测量虫体姿态与运动。
+  <a href="#下载与启动"><img src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS-475569?style=flat-square" alt="桌面平台：Windows 和 macOS"></a>
+  <a href="docs/QUALITY_SCHEMA.md"><img src="https://img.shields.io/badge/SAM2-Large-007F73?style=flat-square" alt="跟踪模型：SAM2 Large"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases/latest"><img src="https://img.shields.io/github/v/release/WRtidE/WormStudio?style=flat-square&amp;color=2864A0" alt="GitHub 最新发布版本"></a>
+  <a href="https://github.com/WRtidE/WormStudio/releases"><img src="https://img.shields.io/github/downloads/WRtidE/WormStudio/total?style=flat-square&amp;color=784BA0" alt="GitHub 发布附件累计下载量"></a>
 </p>
 
 <p align="center">
-  <a href="#下载与启动"><img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS-446958?style=flat" alt="支持 Windows 和 macOS"></a>
-  <a href="https://github.com/WRtidE/WormStudio/releases/latest"><img src="https://img.shields.io/github/v/release/WRtidE/WormStudio?label=版本&amp;color=216858" alt="最新发布版本"></a>
-  <a href="https://github.com/WRtidE/WormStudio/releases"><img src="https://img.shields.io/github/downloads/WRtidE/WormStudio/total?label=附件下载&amp;color=426889" alt="发布附件累计下载量"></a>
-  <a href="https://github.com/WRtidE/WormStudio/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/WRtidE/WormStudio/tests.yml?branch=main&amp;label=测试" alt="主分支自动化测试状态"></a>
-</p>
-
-<p align="center">
-  <b><a href="#下载与启动">下载桌面版</a></b> ·
-  <a href="#用练习视频完成第一次分析">观看操作动图</a> ·
-  <a href="docs/USER_GUIDE.md">使用指南</a>
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v2.0.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
+  <a href="#用练习视频完成第一次分析">第一次分析</a> ·
+  <a href="docs/USER_GUIDE.md#windows-显卡加速检测">GPU 加速</a>
 </p>
 
 ## 下载与启动
