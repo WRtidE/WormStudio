@@ -33,7 +33,9 @@ def save_sequence(base,config,data,source,worm,gray,masks,started):
     from head_evidence import anchors_in_crop
     manual=anchors_in_crop(config.get('head_annotations',{}).get(str(worm)),config['crop_xyxy'],source['crop_xyxy'])
     guards = load_guards(data,[worm],source['frames'],required=bool(config.get('quality_schema_version') and manual))
-    device='cuda' if selected_device()=='cuda' else 'cpu'
+    device=selected_device()
+    if device not in ('cuda', 'mps'):
+        device = 'cpu'
     device_name=device_label(device)
     print(f'中线候选与头尾轨迹评分：{device_name}',flush=True)
     lines,facts,audit=solve(masks,gray,source['fps'],manual=manual,

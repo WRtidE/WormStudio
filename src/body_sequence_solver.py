@@ -9,21 +9,24 @@ from scipy.ndimage import distance_transform_edt, map_coordinates
 
 from body_sequence import select_body_sequence, BodySequenceBreak, enclosed_holes
 from framewise_pose import observed_pose
-from centerline_topology import prepare_topology, junction_candidates, hidden_loop_candidates
+from centerline_topology import prepare_topology, junction_candidates, hidden_loop_candidates, skeleton_graph_candidates
+from centerline_correspondence import overlap_link
 from body_geometry import local_field, candidate_score
+from elastic_curve import static_pillars, deformable_fit
 from head_recovery import appearance_vote, pose_parity, tracking_indices
 from marked_end_recovery import fingerprint, recover_marked_end
 from head_evidence import normalize_anchors
 from short_turns import recover_flanked_candidates
 from blurred_tips import locate_blurred_tips
 
-VERSION = 'sam2-body-sequence-v11-local-reseed'
+VERSION = 'sam2-body-sequence-v12-crossing-elastic'
 MIN_LENGTH_FRACTION = .85
 
 # Include the measurement geometry called by observed_pose, anchor normalization,
 # and image appearance, even though those dependencies are imported indirectly.
 SIGNATURE_FILES = ('body_sequence_solver.py', 'body_sequence.py', 'extract_body_sequence.py',
-                   'centerline_topology.py', 'framewise_pose.py', 'body_geometry.py',
+                   'centerline_topology.py', 'centerline_correspondence.py', 'elastic_curve.py',
+                   'framewise_pose.py', 'body_geometry.py',
                    'motion.py', 'head_recovery.py', 'head_appearance.py', 'head_tail.py',
                    'analyze_phenotypes.py', 'body_frame_cache.py', 'skeleton_geometry.py',
                    'head_evidence.py', 'tracking_data.py', 'image_io.py', 'serialization.py',
@@ -80,20 +83,29 @@ def visible_pillars(gray, masks, radius, *, holes=None):
     return result
 
 
+def _keep_candidates(candidates, mask, field, origin, reference, radius, device='cpu', relax_coiled=False):
+    min_inside = .90 if relax_coiled else .97
+    min_len = (.72 * reference - 2 * radius) if relax_coiled else (MIN_LENGTH_FRACTION * reference - 2 * radius)
+    max_len = (1.18 * reference + 2 * radius) if relax_coiled else (1.15 * reference + 2 * radius)
+    out = []
+    for c in candidates:
+        candidate_score(c, mask, field, origin, reference, radius, None, device=device)
+        if (c['inside_fraction'] < min_inside or c['reconstruction_iou'] < .55 or c['local_hairpin']
+                or not min_len <= c['length_px'] <= max_len):
+            continue
+        if any(min(np.linalg.norm(c['points'] - v['points'], axis=1).mean(),
+                   np.linalg.norm(c['points'][::-1] - v['points'], axis=1).mean()) < 1.5 for v in out):
+            continue
+        out.append(c)
+    return out
+
+
 def candidates_for(mask,reference,observed,device='cpu'):
     if not mask.any():return [],1.
     field,origin=local_field(mask)
     radius=max(1.,float(np.median(field[field>0]))*1.5)
-    def keep(candidates):
-        out=[]
-        for c in candidates:
-            candidate_score(c,mask,field,origin,reference,radius,None,device=device)
-            if (c['inside_fraction']<.97 or c['reconstruction_iou']<.55 or c['local_hairpin']
-                    or not MIN_LENGTH_FRACTION*reference-2*radius <= c['length_px'] <= 1.15*reference+2*radius):continue
-            if any(min(np.linalg.norm(c['points']-v['points'],axis=1).mean(),
-                       np.linalg.norm(c['points'][::-1]-v['points'],axis=1).mean())<1.5 for v in out):continue
-            out.append(c)
-        return out
+    def keep(candidates, relax_coiled=False):
+        return _keep_candidates(candidates, mask, field, origin, reference, radius, device=device, relax_coiled=relax_coiled)
     if observed is not None:
         kept=keep([dict(points=observed,name='clear_observation',connection_cost=0.,endpoint_observed=[True,True])])
         if kept:return kept,radius
@@ -107,21 +119,36 @@ def candidates_for(mask,reference,observed,device='cpu'):
             candidate.update(name=f'zone{zone}_'+candidate['name'], endpoint_observed=[True, True])
         raw.extend(choices)
     raw.extend(hidden_loop_candidates(topology, reference))
-    if not raw:
-        for scale in (.5, .35):
-            small = cv2.resize(mask.astype('uint8'), None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST) > 0
-            topology = prepare_topology(small, prune=True)
-            if topology is None:
-                continue
-            choices, _, _ = junction_candidates(topology, 1.25)
-            for candidate in choices:
-                candidate['endpoint_observed'] = [True, True]
-            choices.extend(hidden_loop_candidates(topology, reference*scale))
-            for candidate in choices:
-                candidate['points'] = (candidate['points']+.5)/scale-.5
-                candidate['name'] = f'scale{scale}_'+candidate['name']
-            raw.extend(choices)
-    return keep(raw),radius
+    kept = keep(raw)
+    if kept:
+        return kept, radius
+    graph_raw = skeleton_graph_candidates(topology, reference)
+    kept = keep(graph_raw, relax_coiled=True)
+    if kept:
+        return kept, radius
+    for scale in (.5, .35):
+        small = cv2.resize(mask.astype('uint8'), None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST) > 0
+        scaled_topo = prepare_topology(small, prune=True)
+        if scaled_topo is None:
+            continue
+        choices, _, _ = junction_candidates(scaled_topo, 1.25)
+        for candidate in choices:
+            candidate['endpoint_observed'] = [True, True]
+        choices.extend(hidden_loop_candidates(scaled_topo, reference*scale))
+        for candidate in choices:
+            candidate['points'] = (candidate['points']+.5)/scale-.5
+            candidate['name'] = f'scale{scale}_'+candidate['name']
+        kept = keep(choices)
+        if kept:
+            return kept, radius
+        scaled_graph = skeleton_graph_candidates(scaled_topo, reference * scale)
+        for candidate in scaled_graph:
+            candidate['points'] = (candidate['points']+.5)/scale-.5
+            candidate['name'] = f'scale{scale}_'+candidate['name']
+        kept = keep(scaled_graph, relax_coiled=True)
+        if kept:
+            return kept, radius
+    return [], radius
 
 
 def recover_short_observations(frames, observed, masks, reference, fps, device='cpu'):
@@ -182,21 +209,108 @@ def taper_side(radii):
     return int(np.argmax(ratios))
 
 
+def _biophysical_orientation(lines, masks, clear_frames, votes=None):
+    """Combine anterior taper, forward locomotion bias, and lateral tip foraging on long tracks."""
+    if len(clear_frames) < 15:
+        return None, {}
+    if votes is None:
+        votes = [[], []]
+        for i in clear_frames:
+            field, origin = local_field(masks[i])
+            radii = map_coordinates(field, (lines[i] - origin).T[::-1], order=1, mode='constant')
+            s = taper_side(radii)
+            if s is not None:
+                votes[s].append(i)
+    n_t = len(votes[0]) + len(votes[1])
+    t_score = (len(votes[0]) - len(votes[1])) / n_t if n_t else 0.0
+    t_vote = (0 if t_score > 0 else 1) if (n_t >= 5 and abs(t_score) >= 0.25) else None
+
+    projs, sw0, sw1 = [], [], []
+    for i, j in zip(clear_frames, clear_frames[1:]):
+        if j != i + 1:
+            continue
+        v = lines[j].mean(0) - lines[i].mean(0)
+        d = lines[i, 0] - lines[i, 25]
+        dn = float(np.linalg.norm(d))
+        if dn > 1e-6:
+            projs.append(float(np.dot(v, d / dn)))
+        mid_v = lines[j, 50] - lines[i, 50]
+        t0 = lines[i, 0] - lines[i, 15]
+        n0_len = float(np.linalg.norm(t0))
+        t1 = lines[i, -1] - lines[i, -16]
+        n1_len = float(np.linalg.norm(t1))
+        if n0_len > 1e-6 and n1_len > 1e-6:
+            u0, u1 = t0 / n0_len, t1 / n1_len
+            sw0.append(abs(float(np.dot((lines[j, 0] - lines[i, 0]) - mid_v, [-u0[1], u0[0]]))))
+            sw1.append(abs(float(np.dot((lines[j, -1] - lines[i, -1]) - mid_v, [-u1[1], u1[0]]))))
+
+    projs_arr = np.asarray(projs, float)
+    active = projs_arr[np.abs(projs_arr) > 1.5]
+    m_score = float(np.mean(np.sign(active))) if len(active) else 0.0
+    m_vote = (0 if m_score > 0 else 1) if (len(active) >= 15 and abs(m_score) >= 0.15) else None
+
+    s0 = float(np.median(sw0)) if sw0 else 0.0
+    s1 = float(np.median(sw1)) if sw1 else 0.0
+    f_score = (s0 - s1) / max(s0 + s1, 1e-6)
+    f_vote = (0 if f_score > 0 else 1) if (len(sw0) >= 15 and max(s0, s1) >= 3.0 and abs(f_score) >= 0.15) else None
+
+    decisive = [v for v in (t_vote, m_vote, f_vote) if v is not None]
+    side = decisive[0] if (len(decisive) >= 2 and len(set(decisive)) == 1) else None
+    return side, dict(
+        taper=round(t_score, 3), taper_n=n_t,
+        loco=round(m_score, 3), loco_n=int(len(active)),
+        forage=round(f_score, 3), decisive_votes=len(decisive),
+    )
+
+
+def _verify_auto_seed_orientation(lines, facts, masks, guards):
+    """Correct single-frame auto_taper_seed inversions when >=2 trajectory cues unanimously disagree."""
+    audit = []
+    comps = sorted({
+        tuple(f['component']) for f in facts
+        if f and f['head_known'] and not f.get('manual_lineage') and not f.get('anchor_conflict')
+        and f.get('head_source') == 'auto_taper_seed'
+    })
+    for lo, hi in comps:
+        span = range(lo, hi + 1)
+        if guards and any(
+            not guards[i]['identity_valid'] or not guards[i]['mask_valid']
+            or guards[i].get('source_frame_invalid') or guards[i]['identity_segment'] != guards[lo]['identity_segment']
+            for i in span
+        ):
+            continue
+        clear_frames = [
+            i for i in span
+            if facts[i]['candidate'] == 'clear_observation' and facts[i]['head_observed'] and facts[i]['tail_observed']
+        ]
+        side, evidence = _biophysical_orientation(lines, masks, clear_frames)
+        if side == 1:
+            _orient_component(lines, facts, lo, hi, True, 'biophysical_multi_cue_consensus')
+            audit.append(dict(component=[lo, hi], flipped=True, **evidence))
+        elif side == 0:
+            audit.append(dict(component=[lo, hi], flipped=False, **evidence))
+    return audit
+
+
 def reseed_clear_components(lines,facts,masks,components,guards):
-    """Orient a still-unassigned continuous track from multiple measured taper observations."""
+    """Orient a still-unassigned continuous track from multiple measured taper or biophysical cues."""
     audit=[]
     for lo,hi in components:
         span=range(lo,hi+1)
-        if hi-lo<2 or any(facts[i]['head_known'] or facts[i]['anchor_conflict']
-                or facts[i]['candidate']!='clear_observation'
-                or not (facts[i]['head_observed'] and facts[i]['tail_observed']) for i in span):
+        if hi-lo<2 or any(facts[i]['head_known'] or facts[i]['anchor_conflict'] for i in span):
             continue
         if guards and any(not guards[i]['identity_valid'] or not guards[i]['mask_valid']
                 or guards[i].get('source_frame_invalid') or guards[i]['identity_segment']!=guards[lo]['identity_segment']
                 for i in span):
             continue
+        clear_frames = [
+            i for i in span
+            if facts[i]['candidate']=='clear_observation' and facts[i]['head_observed'] and facts[i]['tail_observed']
+        ]
+        if len(clear_frames) < 3:
+            continue
         votes=[[],[]]
-        for i in span:
+        for i in clear_frames:
             field,origin=local_field(masks[i])
             radii=map_coordinates(field,(lines[i]-origin).T[::-1],order=1,mode='constant')
             side=taper_side(radii)
@@ -204,14 +318,29 @@ def reseed_clear_components(lines,facts,masks,components,guards):
                 votes[side].append(i)
         side=int(len(votes[1])>len(votes[0]))
         support=votes[side]
-        # A neighbouring pair plus a later or earlier observation must agree.
-        accepted=len(support)>=3 and not votes[1-side] and any(b==a+1 for a,b in zip(support,support[1:]))
-        audit.append(dict(component=[lo,hi],votes=votes,accepted=accepted))
+        other=votes[1-side]
+        # A neighbouring pair plus a later or earlier observation must agree; long
+        # tracks tolerate rare single-frame taper noise when overwhelming consensus holds.
+        has_pair=any(b==a+1 for a,b in zip(support,support[1:]))
+        strict_small=len(support)>=3 and not other
+        overwhelming_long=len(support)>=6 and len(support)>=5*len(other)
+        accepted=has_pair and (strict_small or overwhelming_long)
+        source='local_taper_consensus'
+        bio_evidence={}
+        if not accepted and len(clear_frames) >= 15:
+            bio_side, bio_evidence = _biophysical_orientation(lines, masks, clear_frames, votes=votes)
+            if bio_side is not None:
+                side = bio_side
+                accepted = True
+                source = 'biophysical_multi_cue_consensus'
+        audit.append(dict(component=[lo,hi],votes=votes,accepted=accepted,source=source,biophysical=bio_evidence))
         if accepted:
             if side:
                 lines[lo:hi+1]=lines[lo:hi+1,::-1].copy()
+                for i in span:
+                    facts[i]['head_observed'],facts[i]['tail_observed']=facts[i]['tail_observed'],facts[i]['head_observed']
             for i in span:
-                facts[i].update(head_known=True,head_source='local_taper_consensus',manual_lineage=False)
+                facts[i].update(head_known=True,head_source=source,manual_lineage=False)
     return audit
 
 
@@ -277,6 +406,252 @@ def recover_native_observations(frames, observed, masks, gray, reference, fps, e
     return attempts
 
 
+def _fit_elastic_candidates(mask, neighbor_bases, reference, radius, pillars, device='cpu'):
+    """Fit and validate elastic coil candidates seeded from adjacent solved frames."""
+    field, origin = local_field(mask)
+    cand_list = []
+    for base in neighbor_bases:
+        fit = deformable_fit(
+            mask, base['points'], reference, radius,
+            pillars=pillars, neighbor_points=base['points'], device=device, steps=95,
+        )
+        if fit is None:
+            continue
+        end_a_clear = float(np.linalg.norm(fit[50:] - fit[0], axis=1).min()) > 1.5 * radius
+        end_b_clear = float(np.linalg.norm(fit[:51] - fit[-1], axis=1).min()) > 1.5 * radius
+        cand_list.append(dict(
+            points=fit,
+            name='elastic_contact_fit',
+            connection_cost=0.15,
+            endpoint_observed=[bool(end_a_clear), bool(end_b_clear)],
+        ))
+    return _keep_candidates(cand_list, mask, field, origin, reference, radius, device=device, relax_coiled=True)
+
+
+def recover_elastic_contacts(frames, masks, reference, radii, excluded, pillars, device='cpu'):
+    """Propagate arc-length and pillar-constrained elastic curves into coiled contact gaps."""
+    from collections import deque
+
+    valid_areas = [int(masks[i].sum()) for i, c in enumerate(frames) if c and c[0]['name'] == 'clear_observation']
+    if not valid_areas:
+        valid_areas = [int(masks[i].sum()) for i, m in enumerate(masks) if i not in excluded and m.any()]
+    if not valid_areas:
+        return []
+    ref_area = float(np.median(valid_areas))
+    med_radius = float(np.median(radii)) if radii else 8.0
+    n = len(masks)
+    h, w = masks[0].shape if n else (0, 0)
+
+    def valid_silhouette(idx):
+        if idx in excluded or not masks[idx].any():
+            return False
+        mask_u8 = masks[idx].astype(np.uint8, copy=False)
+        area = int(mask_u8.sum())
+        if area < 0.55 * ref_area:
+            return False
+        x, y, bw, bh = cv2.boundingRect(mask_u8)
+        if x <= 0 or y <= 0 or x + bw >= w or y + bh >= h:
+            return False
+        n_labels, _, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+        if n_labels <= 1:
+            return False
+        largest = int(stats[1:, cv2.CC_STAT_AREA].max())
+        return largest >= 0.55 * ref_area and largest >= 0.85 * area
+
+    attempts = []
+    # Phase 1: augment heuristic non-clear boundary frames bordering a clear observation
+    # so uncoiling transitions retain a temporally smooth candidate.
+    for target in range(n):
+        if not frames[target] or any(c['name'] == 'clear_observation' for c in frames[target]):
+            continue
+        if not valid_silhouette(target):
+            continue
+        clear_nbs = [
+            frames[nb][0] for nb in (target - 1, target + 1)
+            if 0 <= nb < n and frames[nb] and frames[nb][0]['name'] == 'clear_observation'
+        ]
+        if not clear_nbs:
+            continue
+        r_t = float(radii[target]) if radii[target] > 1.0 else med_radius
+        kept = _fit_elastic_candidates(masks[target], clear_nbs, reference, r_t, pillars, device=device)
+        added = 0
+        for cand in kept:
+            if any(min(np.linalg.norm(cand['points'] - v['points'], axis=1).mean(),
+                       np.linalg.norm(cand['points'][::-1] - v['points'], axis=1).mean()) < 1.5
+                   for v in frames[target]):
+                continue
+            frames[target].insert(0, cand)
+            added += 1
+        if len(frames[target]) > 6:
+            frames[target] = frames[target][:6]
+        if added:
+            attempts.append(dict(frame=target, source='clear_boundary', accepted=True, candidates=added))
+
+    # Phase 2: bidirectional wave propagation into empty coiled frames.
+    frontier = deque(i for i in range(n) if frames[i])
+    queued = set(frontier)
+    while frontier:
+        src = frontier.popleft()
+        for target in (src - 1, src + 1):
+            if not (0 <= target < n) or frames[target] or not valid_silhouette(target):
+                continue
+            r_t = float(radii[target]) if radii[target] > 1.0 else med_radius
+            bases = [frames[nb][0] for nb in (target - 1, target + 1) if 0 <= nb < n and frames[nb]]
+            kept = _fit_elastic_candidates(masks[target], bases, reference, r_t, pillars, device=device)
+            attempts.append(dict(frame=target, source=src, accepted=bool(kept), candidates=len(kept)))
+            if kept:
+                frames[target] = kept[:4]
+                if target not in queued:
+                    queued.add(target)
+                    frontier.append(target)
+    return attempts
+
+
+def _same_identity_span(facts_lo, a, b, excluded, guards):
+    """Ensure no excluded or guard-invalid frame separates a reference frame from a target span."""
+    lo, hi = min(a, b), max(a, b)
+    if any(i in excluded for i in range(lo, hi + 1)):
+        return False
+    if guards is None:
+        return True
+    seg = guards[facts_lo]['identity_segment']
+    return all(
+        guards[i]['identity_valid'] and guards[i]['mask_valid']
+        and not guards[i].get('source_frame_invalid') and guards[i]['identity_segment'] == seg
+        for i in range(lo, hi + 1)
+    )
+
+
+def _orient_component(output, facts, lo, hi, flip, source, **extra):
+    for i in range(lo, hi + 1):
+        if flip:
+            output[i] = output[i, ::-1]
+            facts[i]['head_observed'], facts[i]['tail_observed'] = facts[i]['tail_observed'], facts[i]['head_observed']
+        facts[i].update(head_known=True, head_source=source, manual_lineage=False, **extra)
+
+
+def _propagate_short_gap_links(output, facts, gray, masks, components, excluded, guards, fps, point_count):
+    """Propagate head orientation across <=0.5s gaps via pose parity, flow, or body overlap."""
+    indices = tracking_indices(point_count)
+    max_gap = int(np.ceil(.5 * fps))
+    changed = True
+    while changed:
+        changed = False
+        for lo, hi in components:
+            if facts[lo]['head_known'] or facts[lo]['anchor_conflict']:
+                continue
+            prev_ref = next((i for i in range(lo - 1, max(-1, lo - max_gap - 1), -1) if facts[i]), None)
+            next_ref = next((i for i in range(hi + 1, min(len(facts), hi + max_gap + 1)) if facts[i]), None)
+            candidates = []
+            if prev_ref is not None and facts[prev_ref]['head_known']:
+                candidates.append((prev_ref, lo, range(lo, min(hi + 1, lo + 3))))
+            if next_ref is not None and facts[next_ref]['head_known']:
+                candidates.append((next_ref, hi, range(hi, max(lo - 1, hi - 3), -1)))
+            for ref, adj, sample_span in candidates:
+                if not _same_identity_span(lo, ref, adj, excluded, guards):
+                    continue
+                votes = [pose_parity(output[ref], output[i], indices) for i in sample_span]
+                useful = [v for v in votes if v is not None]
+                if len(set(useful)) == 1:
+                    motion_checked = False
+                    if len(useful) == 1:
+                        if (votes[0] is None or not facts[ref].get('manual_lineage')
+                                or not all(facts[i]['head_observed'] and facts[i]['tail_observed'] for i in (ref, adj))
+                                or not flow_supports_order(gray, masks, ref, adj, output[ref],
+                                                           output[adj][::-1] if votes[0] else output[adj], indices)):
+                            useful = []
+                        else:
+                            motion_checked = True
+                    if useful:
+                        extra = dict(preceding_reference=ref, body_votes=len(useful))
+                        if motion_checked:
+                            extra['flow_order_supported'] = True
+                        _orient_component(output, facts, lo, hi, useful[0] == 1, 'short_gap_body_candidate', **extra)
+                        changed = True
+                        break
+                if all(facts[i]['head_observed'] and facts[i]['tail_observed'] for i in (ref, adj)):
+                    match = overlap_link(output[ref], output[adj])
+                    if (match is not None and match['overlap'] >= 0.55
+                            and match['margin'] >= 0.25 and match['rms_bl'] <= 0.05):
+                        _orient_component(output, facts, lo, hi, bool(match['flip']),
+                                          'short_gap_body_candidate', preceding_reference=ref, body_votes=1)
+                        changed = True
+                        break
+
+
+def _recover_appearance_components(output, facts, masks, gray, marks, components, excluded, guards):
+    """Orient remaining components iteratively using nearby appearance references."""
+    n = len(output)
+    fp_cache = {}
+
+    def feat(i):
+        if i not in fp_cache:
+            fp_cache[i] = fingerprint(gray[i], masks[i], output[i])
+        return fp_cache[i]
+
+    seed = next((a['frame'] for a in marks if facts[a['frame']] and facts[a['frame']]['head_known']), None)
+    if seed is None:
+        return None
+    refs = [i for i in range(max(0, seed - 3), min(n, seed + 4))
+            if facts[i] and facts[i]['head_known'] and _same_identity_span(seed, seed, i, excluded, guards)]
+    global_tmpl = np.median([feat(i) for i in refs], axis=0) if refs else None
+
+    for _ in range(4):
+        progressed = False
+        known_clear = [
+            i for i, f in enumerate(facts)
+            if f and f['head_known'] and f['candidate'] == 'clear_observation'
+            and f['head_observed'] and f['tail_observed']
+        ]
+        for lo, hi in components:
+            if facts[lo]['head_known'] or facts[lo]['anchor_conflict']:
+                continue
+            mid = 0.5 * (lo + hi)
+            local_pool = sorted(known_clear, key=lambda i: abs(i - mid))
+            local_refs = []
+            for idx in local_pool:
+                span_lo, span_hi = min(idx, lo), max(idx, hi)
+                if _same_identity_span(lo, span_lo, span_hi, excluded, guards):
+                    local_refs.append(idx)
+                    if len(local_refs) >= 8:
+                        break
+            seed_ok = _same_identity_span(lo, min(seed, lo), max(seed, hi), excluded, guards)
+            candidates = []
+            if local_refs:
+                tmpl = np.median([feat(i) for i in local_refs], axis=0)
+                if not (global_tmpl is not None and seed_ok and appearance_vote(tmpl, global_tmpl) < -0.35):
+                    candidates.append(tmpl)
+            if global_tmpl is not None and seed_ok:
+                candidates.append(global_tmpl)
+            if not candidates:
+                continue
+
+            sample = [
+                i for i in range(lo, hi + 1)
+                if facts[i]['candidate'] == 'clear_observation'
+                and facts[i]['head_observed'] and facts[i]['tail_observed']
+            ]
+            if len(sample) < 3:
+                sample = [i for i in range(lo, hi + 1) if facts[i]['head_observed'] and facts[i]['tail_observed']]
+            if len(sample) < 3:
+                continue
+            sample_feats = [feat(i) for i in sample]
+            for tmpl in candidates:
+                votes = [appearance_vote(tmpl, sf) for sf in sample_feats]
+                useful = np.array([v for v in votes if abs(v) >= .3])
+                if len(useful) < 3 or abs(useful.mean()) < .45 or np.mean(np.sign(useful) == np.sign(useful.mean())) < .75:
+                    continue
+                _orient_component(
+                    output, facts, lo, hi, useful.mean() < 0, 'multi_frame_appearance_candidate',
+                    appearance_support=len(useful), appearance_score=float(abs(useful.mean())),
+                )
+                progressed = True
+                break
+        if not progressed:
+            break
+    return seed
+
+
 def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=True,progress=None,guards=None,device='cpu'):
     """Return 101-point geometry, per-frame endpoint evidence and sequence audit.
 
@@ -303,6 +678,8 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
         if progress:progress(i+1,n,'生成完整虫体与交叉支路候选',.15+.4*(i+1)/max(n,1))
     recover_short_observations(frames, observed, masks, reference, fps, device=device)
     recovery = recover_native_observations(frames,observed,masks,gray,reference,fps,excluded,point_count,device=device)
+    pillars_static = static_pillars(gray, float(np.median(radii)) if radii else 10.)
+    elastic_recovery = recover_elastic_contacts(frames, masks, reference, radii, excluded, pillars_static, device=device)
     marks=[dict(a) for a in normalize_anchors(manual,n)]
     for a in marks:a['human']=True
     if not marks and auto_seed:
@@ -382,57 +759,20 @@ def solve(masks,gray,fps,manual=None,point_count=13,source_invalid=(),auto_seed=
         if 'rejected_at' in window and facts[window['rejected_at']]:
             facts[window['rejected_at']]['correspondence_break_before']=True
     head_links = recover_marked_end(output,facts,masks,gray,fps,marks,excluded,guards)
+    bio_checks = _verify_auto_seed_orientation(output, facts, masks, guards) if auto_seed else []
     components=sorted({tuple(f['component']) for f in facts if f and not f['head_known'] and not f['anchor_conflict']})
-    for lo,hi in components:
-        previous=next((i for i in range(lo-1,max(-1,lo-int(np.ceil(.5*fps))-1),-1) if facts[i]),None)
-        if previous is None or not facts[previous]['head_known']:continue
-        if any(i in excluded for i in range(previous,lo+1)):continue
-        indices = tracking_indices(point_count)
-        votes=[pose_parity(output[previous],output[i],indices) for i in range(lo,min(hi+1,lo+3))]
-        useful=[v for v in votes if v is not None]
-        if len(set(useful)) != 1:
-            continue
-        motion_checked = False
-        if len(useful) == 1:
-            if (votes[0] is None or not facts[previous].get('manual_lineage')
-                    or not all(facts[i]['head_observed'] and facts[i]['tail_observed'] for i in (previous, lo))
-                    or not flow_supports_order(gray, masks, previous, lo, output[previous],
-                                               output[lo][::-1] if votes[0] else output[lo], indices)):
-                continue
-            motion_checked = True
-        for i in range(lo,hi+1):
-            if useful[0]==1:
-                output[i]=output[i,::-1]
-                facts[i]['head_observed'],facts[i]['tail_observed']=facts[i]['tail_observed'],facts[i]['head_observed']
-            facts[i].update(head_known=True,head_source='short_gap_body_candidate',manual_lineage=False,
-                            preceding_reference=previous,body_votes=len(useful))
-            if motion_checked:
-                facts[i]['flow_order_supported'] = True
+    _propagate_short_gap_links(output, facts, gray, masks, components, excluded, guards, fps, point_count)
     # A frozen seed template supplies provisional recovery, not a new human mark.
-    seed=next((a['frame'] for a in marks if facts[a['frame']] and facts[a['frame']]['head_known']),None)
-    refs=[] if seed is None else [i for i in range(max(0,seed-3),min(n,seed+4))
-                                 if facts[i] and facts[i]['head_known'] and not any(j in excluded for j in range(min(seed,i),max(seed,i)+1))]
-    template=np.median([fingerprint(gray[i],masks[i],output[i]) for i in refs],axis=0) if refs else None
-    if template is not None:
-        for lo,hi in components:
-            if facts[lo]['head_known'] or any(i in excluded for i in range(min(seed,lo),max(seed,hi)+1)):continue
-            votes=[appearance_vote(template,fingerprint(gray[i],masks[i],output[i]))
-                   for i in range(lo,hi+1) if facts[i]['candidate']=='clear_observation']
-            useful=np.array([v for v in votes if abs(v)>=.3])
-            if len(useful)<3 or abs(useful.mean())<.45 or np.mean(np.sign(useful)==np.sign(useful.mean()))<.75:continue
-            for i in range(lo,hi+1):
-                if useful.mean()<0:
-                    output[i]=output[i,::-1]
-                    facts[i]['head_observed'],facts[i]['tail_observed']=facts[i]['tail_observed'],facts[i]['head_observed']
-                facts[i].update(head_known=True,head_source='multi_frame_appearance_candidate',manual_lineage=False,
-                    appearance_support=len(useful),appearance_score=float(abs(useful.mean())))
+    seed = _recover_appearance_components(output, facts, masks, gray, marks, components, excluded, guards)
     candidate_links=[] if seed is None else recover_flanked_candidates(
         output,facts,fps,seed,excluded,guards,lambda i:fingerprint(gray[i],masks[i],output[i]))
     local_seeds=reseed_clear_components(output,facts,masks,components,guards) if auto_seed else []
+    _propagate_short_gap_links(output, facts, gray, masks, components, excluded, guards, fps, point_count)
     if seed is not None:
         locate_blurred_tips(output,facts,gray,masks,guards,excluded)
     return output,facts,dict(version=VERSION,reference_length_px=reference,tracking_point_count=point_count,
-                            anchors=marks,windows=windows,recovery=recovery,head_reacquisition=head_links,
+                            anchors=marks,windows=windows,recovery=recovery,elastic_recovery=elastic_recovery,
+                            biophysical_checks=bio_checks,head_reacquisition=head_links,
                             flanked_candidates=candidate_links,local_reseeding=local_seeds)
 
 

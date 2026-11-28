@@ -33,14 +33,15 @@ def sampled_mask_radii(mask, points, bounds, device):
         if len(pixels):
             dilated = cv2.dilate(local.astype(np.uint8), np.ones((3,3), np.uint8))
             rim = np.argwhere(dilated.astype(bool) & ~local)
-            target = torch.as_tensor(pixels, device=device)
-            nearest = torch.full((len(pixels),), torch.iinfo(torch.int64).max, device=device)
-            for start in range(0, len(rim), 1024):
-                edge = torch.as_tensor(rim[start:start+1024], device=device)
-                dy = target[:, None, 0] - edge[:, 0]
-                dx = target[:, None, 1] - edge[:, 1]
-                nearest = torch.minimum(nearest, (dx.square() + dy.square()).amin(1))
-            distances[tuple(pixels.T)] = np.sqrt(nearest.cpu().numpy())
+            if len(rim):
+                target = torch.as_tensor(pixels, device=device)
+                nearest = torch.full((len(pixels),), torch.iinfo(torch.int64).max, device=device)
+                for start in range(0, len(rim), 1024):
+                    edge = torch.as_tensor(rim[start:start+1024], device=device)
+                    dy = target[:, None, 0] - edge[:, 0]
+                    dx = target[:, None, 1] - edge[:, 1]
+                    nearest = torch.minimum(nearest, (dx.square() + dy.square()).amin(1))
+                distances[tuple(pixels.T)] = np.sqrt(nearest.cpu().numpy())
     return ndi.map_coordinates(distances, coords, order=1, mode='constant')
 
 

@@ -28,6 +28,7 @@ def selected_device():
         return 'cpu'
     if mode == 'mps':
         if torch.backends.mps.is_available():
+            os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
             return 'mps'
         raise RuntimeError('Metal GPU 不可用，请使用 CPU 启动入口。')
     if torch.cuda.is_available():
@@ -35,6 +36,7 @@ def selected_device():
     if mode == 'cuda':
         raise RuntimeError('GPU 不可用，请使用 CPU 启动入口。')
     if torch.backends.mps.is_available():
+        os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
         return 'mps'
     return 'cpu'
 

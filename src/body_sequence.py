@@ -5,11 +5,44 @@ from scipy.ndimage import map_coordinates
 from scipy.ndimage import binary_fill_holes,label
 
 from head_recovery import tracking_indices, pose_parity
+from centerline_correspondence import overlap_link
 from motion import lk_step
 
 
 def huber_squared(distance,xp=np):
     return xp.where(distance<=2,distance**2,4*distance-4)
+
+
+def flow_contradicts(state, target, direction, indices, length):
+    """Return True only when reliable outer-body flow actively disagrees with this orientation."""
+    use = state['good_f' if direction == 'forward' else 'good_b']
+    outer = (indices <= 33) | (indices >= 67)
+    if not (use & outer).any():
+        return False
+    predicted = state[direction]
+    error = np.linalg.norm(predicted - target, axis=1)
+    opposite = np.linalg.norm(predicted - target[::-1], axis=1)
+    contradicts = use & outer & (opposite <= .12 * length) & (opposite + .15 * length < error)
+    return bool(contradicts.any())
+
+
+def curve_correspondence_ok(earlier, later, length):
+    """Bounded continuity fallback when sparse LK loses a fast-moving or uncoiling tip."""
+    a, b = earlier['points'], later['points']
+    shift = np.linalg.norm(b.mean(0) - a.mean(0))
+    if shift > .50 * length:
+        return False
+    match = overlap_link(a, b)
+    if match is not None and match['flip'] == 0:
+        return True
+    # Also accept bounded per-point displacement when flow is absent (not contradicting).
+    disp = np.linalg.norm(b[[0, -1]] - a[[0, -1]], axis=1)
+    mean_d = float(np.linalg.norm(b - a, axis=1).mean())
+    if disp.max() <= .40 * length and mean_d <= .22 * length:
+        return True
+    contact = (earlier.get('name', '') != 'clear_observation') or (later.get('name', '') != 'clear_observation')
+    return bool(contact and shift <= .18 * length and disp.min() <= .15 * length
+                and disp.max() <= .55 * length and mean_d <= .24 * length)
 
 
 def flow_matches(state, target, direction, indices, length):
@@ -65,7 +98,7 @@ def loop_transition(left,right,center):
     delta=np.arctan2(np.sin(delta),np.cos(delta))
     residual=turn_b[None,:]-turn_a[:,None]-(delta[:,:,1]-delta[:,:,0])
     looped=(np.abs(turn_a[:,None])>np.pi)&(np.abs(turn_b[None,:])>np.pi)
-    return looped&(np.abs(residual)>np.pi),turn_a,turn_b
+    return looped&(np.abs(residual)>np.pi)&(np.abs(turn_b[None,:]-turn_a[:,None])>1.25*np.pi),turn_a,turn_b
 
 
 def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=(),anchor=None,anchors=(),device='cpu',
@@ -77,11 +110,17 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
     """
     indices=tracking_indices(point_count)
     xp=np
-    if device=='cuda':
+    is_torch=device in ('cuda','mps')
+    if is_torch:
         import torch
         xp=torch
     def array(values):
-        return torch.as_tensor(values,device=device) if device=='cuda' else np.asarray(values)
+        if not is_torch:
+            return np.asarray(values)
+        arr=np.asarray(values)
+        if device=='mps' and arr.dtype.kind=='f':
+            arr=arr.astype(np.float32)
+        return torch.as_tensor(arr,device=device)
     if len(frames)<2 or len(frames)!=len(gray) or any(not c for c in frames):
         raise ValueError('Body sequence requires an observed candidate in every frame')
     states=[]
@@ -105,7 +144,7 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
             p=samples[k]
             for reverse in (False,True):
                 order=slice(None,None,-1) if reverse else slice(None)
-                state.append(dict(candidate=k,reverse=reverse,points=c['points'][order].copy(),
+                state.append(dict(candidate=k,reverse=reverse,name=c.get('name',''),points=c['points'][order].copy(),
                     sampled=p[order],unary=.4*c['unary'],
                     forward=None if forward is None else forward[k,order],
                     backward=None if backward is None else backward[k,order],
@@ -129,7 +168,7 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
             return xp.where(counts>=4,1.2*penalties/xp.where(counts>0,counts,1),0.)
         cost+=motion_cost(left,b,'forward','good_f')
         cost+=motion_cost(right,a,'backward','good_b').T
-        if device=='cuda':cost=cost.cpu().numpy()
+        if is_torch:cost=cost.cpu().numpy()
         # A finite cost is not proof of correspondence. A weak image may use
         # unambiguous geometry; a large motion needs support in both images.
         for j, earlier in enumerate(left):
@@ -140,7 +179,12 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
                              for s in (earlier, later))
                 if not (flow_matches(earlier, later['sampled'], 'forward', indices, length)
                         and flow_matches(later, earlier['sampled'], 'backward', indices, length)):
-                    cost[j,k] = np.inf
+                    if (not flow_contradicts(earlier, later['sampled'], 'forward', indices, length)
+                            and not flow_contradicts(later, earlier['sampled'], 'backward', indices, length)
+                            and curve_correspondence_ok(earlier, later, length)):
+                        cost[j,k] += 2.5
+                    else:
+                        cost[j,k] = np.inf
         checks=[]
         centers=list(pillar_centers) or persistent_loop_centers(masks[i],masks[i+1],radius)
         for center in centers:
@@ -180,13 +224,13 @@ def select_body_sequence(frames,gray,masks,radius,point_count=13,pillar_centers=
             penalty=.08*huber_squared(acceleration,xp).mean(-1)+.3*huber_squared(acceleration[:,:,:,[0,-1]],xp).mean(-1)
             combined=cost[:,:,None]+penalty
             chosen=combined.argmin(0)
-            ptr[:,part]=chosen.cpu().numpy() if device=='cuda' else chosen
+            ptr[:,part]=chosen.cpu().numpy() if is_torch else chosen
             next_cost[:,part]=xp.amin(combined,axis=0)
         pointers.append(ptr)
         cost=next_cost+transition+array(unary[i])[None,:]
         if not xp.isfinite(cost).any():
             raise BodySequenceBreak(i)
-    if device=='cuda':cost=cost.cpu().numpy()
+    if is_torch:cost=cost.cpu().numpy()
     final_costs=[float(cost[:,np.arange(cost.shape[1])%2==reverse].min()) for reverse in (0,1)]
     a,b=np.unravel_index(cost.argmin(),cost.shape)
     if not np.isfinite(cost[a,b]):

@@ -25,11 +25,12 @@ def geometry_quality(p, device='cpu'):
     peak=float(np.degrees(abs(sums[k])))
     # Check non-neighbouring segments together, preserving row-major pair order.
     xp=np
-    if device=='cuda':
+    if device in ('cuda', 'mps'):
         import torch
         xp=torch
-        p=torch.as_tensor(p,device=device)
-        v=torch.as_tensor(v,device=device)
+        dtype = torch.float32 if device == 'mps' else torch.float64
+        p=torch.as_tensor(p,device=device,dtype=dtype)
+        v=torch.as_tensor(v,device=device,dtype=dtype)
     a,b=v[:,None],v[None,:]
     c=p[None,:-1]-p[:-1,None]
     cross=a[...,0]*b[...,1]-a[...,1]*b[...,0]
@@ -223,4 +224,175 @@ def hidden_loop_candidates(topology, length_ref):
             q=np.column_stack([np.interp(query,s,extended[:,k]) for k in (0,1)])+[x0,y0]
             out.append(dict(points=q,name=f'hidden_loop_{int(reverse)}_{fraction}',connection_cost=cost,
                             endpoint_observed=[True,False]))
+    return out
+
+
+def _tangent(pts, at_start=True):
+    if len(pts) < 2:
+        return np.array([1.0, 0.0])
+    step = min(len(pts) - 1, 5)
+    v = (pts[step] - pts[0]) if at_start else (pts[-1] - pts[-1 - step])
+    norm = float(np.linalg.norm(v))
+    return v / norm if norm > 1e-8 else np.array([1.0, 0.0])
+
+
+def skeleton_graph_candidates(topology, length_ref, max_candidates=8):
+    """Enumerate valid centerline paths across multi-branch/spur/multi-loop skeletons."""
+    local, sk, degree, radius, offset = topology
+    if not np.isfinite(length_ref) or length_ref <= 0 or not sk.any():
+        return []
+    comp_labels, n_comp = ndi.label(sk, np.ones((3, 3), dtype=int))
+    if n_comp > 1:
+        sizes = np.bincount(comp_labels.ravel())
+        sizes[0] = 0
+        main_id = int(sizes.argmax())
+        if sizes[main_id] < 0.70 * sk.sum():
+            return []
+        sk = comp_labels == main_id
+        degree = ndi.convolve(sk.astype(int), np.ones((3, 3), dtype=int), mode='constant') - sk
+
+    br_labels, n_br = ndi.label(sk & (degree > 2), np.ones((3, 3), dtype=int))
+    end_yx = np.argwhere(sk & (degree == 1))
+    n_end = len(end_yx)
+    if n_end == 0 or (n_br == 0 and n_end == 2):
+        return []
+
+    node_id = np.full(sk.shape, -1, dtype=int)
+    for b in range(1, n_br + 1):
+        node_id[br_labels == b] = b - 1
+    for idx, (ey, ex) in enumerate(end_yx):
+        node_id[ey, ex] = n_br + idx
+
+    h, w = sk.shape
+    visited_chain = np.zeros(sk.shape, dtype=bool)
+    raw_edges = []
+    seen_direct = set()
+
+    def neighbors8(y, x):
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if not (dy or dx):
+                    continue
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < h and 0 <= nx < w and sk[ny, nx]:
+                    yield ny, nx
+
+    for y, x in np.argwhere(node_id >= 0):
+        u = int(node_id[y, x])
+        for ny, nx in neighbors8(y, x):
+            nv = int(node_id[ny, nx])
+            if nv >= 0:
+                if nv != u:
+                    pair = (min(u, nv), max(u, nv))
+                    if pair not in seen_direct:
+                        seen_direct.add(pair)
+                        pts = np.array([[x, y], [nx, ny]], dtype=float)
+                        raw_edges.append((u, nv, pts))
+                continue
+            if visited_chain[ny, nx]:
+                continue
+            chain = [(x, y), (nx, ny)]
+            visited_chain[ny, nx] = True
+            py, px = y, x
+            cy, cx = ny, nx
+            end_node = None
+            while True:
+                nexts = [(ay, ax) for ay, ax in neighbors8(cy, cx)
+                         if (ay, ax) != (py, px) and (node_id[ay, ax] >= 0 or not visited_chain[ay, ax])]
+                # Prefer continuing along degree-2 chain before jumping back to node u.
+                next_nodes = [(ay, ax) for ay, ax in nexts if node_id[ay, ax] >= 0]
+                next_chain = [(ay, ax) for ay, ax in nexts if node_id[ay, ax] < 0]
+                if next_chain:
+                    ay, ax = next_chain[0]
+                    visited_chain[ay, ax] = True
+                    chain.append((ax, ay))
+                    py, px = cy, cx
+                    cy, cx = ay, ax
+                elif next_nodes:
+                    # Avoid immediate 1-step bounce back to the exact starting pixel if another node exists.
+                    chosen = next((p for p in next_nodes if p != (y, x)), next_nodes[0])
+                    ay, ax = chosen
+                    end_node = int(node_id[ay, ax])
+                    chain.append((ax, ay))
+                    break
+                else:
+                    break
+            if end_node is not None:
+                pts = np.asarray(chain, dtype=float)
+                if u != end_node or len(pts) >= max(8, int(round(radius))):
+                    raw_edges.append((u, end_node, pts))
+
+    if not raw_edges:
+        return []
+
+    adj = {i: [] for i in range(n_br + n_end)}
+    edge_lengths = []
+    for e_idx, (u, v, pts) in enumerate(raw_edges):
+        arc_len = float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
+        edge_lengths.append(arc_len)
+        d_out = _tangent(pts, at_start=True)
+        d_in = _tangent(pts, at_start=False)
+        adj[u].append((e_idx, v, pts, arc_len, d_out, d_in))
+        adj[v].append((e_idx, u, pts[::-1].copy(), arc_len, -d_in, -d_out))
+
+    major_len = sum(l for l in edge_lengths if l >= 1.5 * radius) or sum(edge_lengths)
+    min_len = 0.72 * length_ref - 2.0 * radius
+    max_len = 1.18 * length_ref + 2.0 * radius
+    bridge_limit = 4.5 * radius
+
+    proposals = []
+
+    def search(u, prev_e, prev_dir_in, cum_len, turn_pen, used, seq_ids, seq_pts):
+        if len(proposals) >= 80 or len(seq_ids) > 18 or cum_len > max_len:
+            return
+        if seq_ids and u >= n_br:
+            if cum_len >= min_len:
+                covered = sum(edge_lengths[e] for e in set(seq_ids) if edge_lengths[e] >= 1.5 * radius)
+                cov = covered / max(major_len, 1.0)
+                if cov >= 0.65:
+                    score = turn_pen + 3.0 * (1.0 - min(1.0, cov)) + 1.5 * abs(cum_len / length_ref - 1.0)
+                    proposals.append((score, turn_pen, [p for p in seq_pts]))
+            return
+        for e_idx, v, pts, e_len, d_out, d_in in adj[u]:
+            count = used.get(e_idx, 0)
+            is_bridge = (u < n_br and v < n_br and u != v and e_len <= bridge_limit)
+            if count >= (2 if is_bridge and e_idx != prev_e else 1):
+                continue
+            step_pen = 0.0
+            if prev_dir_in is not None:
+                dot = float(np.dot(prev_dir_in, d_out))
+                if dot < -0.55:
+                    continue
+                step_pen = 1.0 - dot
+            used[e_idx] = count + 1
+            seq_ids.append(e_idx)
+            seq_pts.append(pts)
+            search(v, e_idx, d_in, cum_len + e_len, turn_pen + step_pen, used, seq_ids, seq_pts)
+            seq_ids.pop()
+            seq_pts.pop()
+            if count == 0:
+                del used[e_idx]
+            else:
+                used[e_idx] = count
+
+    for start in range(n_br, n_br + n_end):
+        search(start, -1, None, 0.0, 0.0, {}, [], [])
+
+    proposals.sort(key=lambda item: item[0])
+    out = []
+    for _, turn_pen, parts in proposals:
+        joined = np.vstack([parts[0], *[p[1:] for p in parts[1:]]])
+        try:
+            joined = smooth_chain(joined)
+            joined = extend_tip(extend_tip(joined, local)[::-1], local)[::-1]
+            line = resample(joined) + offset
+        except ValueError:
+            continue
+        if any(min(np.linalg.norm(line - v['points'], axis=1).mean(),
+                   np.linalg.norm(line[::-1] - v['points'], axis=1).mean()) < 2.5 for v in out):
+            continue
+        out.append(dict(points=line, name='skeleton_graph_path', connection_cost=float(turn_pen),
+                        endpoint_observed=[True, True]))
+        if len(out) >= max_candidates:
+            break
     return out

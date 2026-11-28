@@ -254,13 +254,11 @@ def recover_marked_end(lines, facts, masks, gray, fps, marks, excluded, guards):
                 or not all(facts[i]['head_observed'] and facts[i]['tail_observed'] for i in facts[lo]['anchor_frames'])):
             continue
         refs = clear_sample(facts, components[k],60)
-        if len(refs) < 3 or (len(refs) < 6 and len(roots)==1):
+        if len(refs) < 3:
             continue
         # Each disjoint reference set spans the marked track's range of postures.
-        templates = [np.median([feature(i) for i in refs[offset::3]],axis=0) for offset in range(3)]
+        templates = [np.median([feature(i) for i in refs[offset::3]],axis=0) for offset in range(min(3, len(refs)))]
         references[lo]=(refs,templates)
-        if len(refs)<6:
-            continue
         for step in (-1,1):
             source_flip = 0
             pending = []

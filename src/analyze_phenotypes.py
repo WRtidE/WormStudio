@@ -235,9 +235,10 @@ def analyze(sample,config,method='skeleton',wormtracer_source='wormtracer',*,def
     data,source,ids,get_mask,bad=load_sample(sample,fitted_mask_source(sample,wormtracer_source) if method!='skeleton' else None,root=ROOT)
     from platforms.device import selected_device
     from body_geometry import sampled_mask_radii
-    geometry_device = 'cuda' if method == 'body_sequence' and selected_device() == 'cuda' else 'cpu'
-    if geometry_device == 'cuda':
-        print('CUDA 计算逐帧中线交叉', flush=True)
+    selected = selected_device()
+    geometry_device = selected if method == 'body_sequence' and selected in ('cuda', 'mps') else 'cpu'
+    if geometry_device in ('cuda', 'mps'):
+        print(f'{geometry_device.upper()} 计算逐帧中线交叉', flush=True)
     output=ROOT/'outputs'/sample/('phenotypes-'+wormtracer_source if method!='skeleton' else 'phenotypes');output.mkdir(parents=True,exist_ok=True)
     scale,scale_info=calibration(sample,source,config)
     fps=source['fps'];n=source['frames'];all_rows=[];all_summaries=[];all_events=[];lines={}
