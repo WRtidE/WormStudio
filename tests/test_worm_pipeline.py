@@ -24,7 +24,7 @@ class PipelineTests(unittest.TestCase):
         if not writer.isOpened(): raise RuntimeError('Test video encoder unavailable')
         for _ in range(12): writer.write(np.zeros((80, 128, 3), np.uint8))
         writer.release()
-        cls.config = dict(sample='short-single', video=str(video), crop_xyxy=[0, 0, 127, 79],
+        cls.config = dict(sample='short-single', video=str(video), sam2_model='large', crop_xyxy=[0, 0, 127, 79],
                           scale_um_per_px=1.0, groups=[dict(name='whole', crop_xyxy=[0, 0, 127, 79],
                           anchor_frame=0, worms=[dict(id=7, points=[[30, 30]], labels=[1], box=[10, 10, 70, 60])])])
 
@@ -46,6 +46,18 @@ class PipelineTests(unittest.TestCase):
         c = copy.deepcopy(self.config)
         c['groups'][0]['worms'].append(copy.deepcopy(c['groups'][0]['worms'][0]))
         with self.assertRaises(ValueError): validate_config(c)
+
+    def test_current_single_worm_model_cannot_reuse_legacy_or_unverified_tracking(self):
+        from sam2_models import WORM21, model_spec, tracking_model_matches
+        c, _ = validate_config(dict(self.config,sam2_model=WORM21))
+        self.assertEqual(c['sam2_model'],WORM21)
+        spec = model_spec(WORM21)
+        saved = dict(sam2_model=WORM21,model=spec['label'],checkpoint=spec['checkpoint'],
+                     model_config=spec['config'],checkpoint_sha256=spec['sha256'])
+        self.assertTrue(tracking_model_matches(saved,WORM21))
+        self.assertFalse(tracking_model_matches(saved,'large'))
+        for key in saved:
+            self.assertFalse(tracking_model_matches({k:v for k,v in saved.items() if k!=key},WORM21),key)
 
     def test_wrong_frame_and_local_coordinate_rejected(self):
         for field, value in [('anchor_frame', 175), ('crop_xyxy', [0, 0, 200, 80])]:

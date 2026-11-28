@@ -22,6 +22,7 @@ from wormtracker.engine.mog2 import GpuDetectionError, MOG2Engine
 BASE = WormTrackerConfig.from_yaml(Path(__file__).parent/'wormtracker/defaults.yaml')
 FIELDS = ('num_channels', 'mask_top_ratio', 'tripwire_ratio', 'mask_bottom_ratio')
 DEFAULTS = {key: getattr(BASE, key) for key in FIELDS}
+GRID_VERSION = 2
 
 
 def settings(data):
@@ -37,12 +38,20 @@ def settings(data):
     return result
 
 
-def grid_for(frame, config):
+def legacy_grid(task):
+    version = task.get('grid_version', 1)
+    if version not in (1, GRID_VERSION):
+        raise ValueError('不支持这次计数使用的通道网格版本')
+    return version == 1
+
+
+def grid_for(frame, config, legacy=False, *, refine=True):
     return get_interpolated_grid(frame, config.num_channels, config.x_margin, wall_ratio=config.wall_ratio,
-                                 refine_walls=config.wall_refine, wall_peak_half_width=config.wall_peak_half_width)
+                                 refine_walls=refine and config.wall_refine, wall_peak_half_width=config.wall_peak_half_width,
+                                 legacy=legacy)
 
 
-def reference_for(source, config):
+def reference_for(source, config, legacy=False):
     cap = cv2.VideoCapture(str(source))
     try:
         # An opening title or a blank exposure should not become a permanent
@@ -58,14 +67,12 @@ def reference_for(source, config):
             if not ok:
                 continue
             try:
-                grid = grid_for(frame, config)
+                grid = grid_for(frame, config, legacy)
                 widths = np.diff(grid['channel_bounds'], axis=1).ravel()
                 span = grid['channel_bounds'][-1][1] - grid['channel_bounds'][0][0]
                 if (len(widths) != config.num_channels or widths.min() < 0.45 * np.median(widths)
                         or span < 0.7 * (grid['roi_right'] - grid['roi_left'])):
-                    grid = get_interpolated_grid(frame, config.num_channels, config.x_margin,
-                                                 wall_ratio=config.wall_ratio, refine_walls=False,
-                                                 wall_peak_half_width=config.wall_peak_half_width)
+                    grid = grid_for(frame, config, legacy, refine=False)
                 reference = ChannelGridReference(frame, grid, config.tripwire_ratio)
                 reference.locate(frame)
                 return reference
@@ -76,15 +83,15 @@ def reference_for(source, config):
         cap.release()
 
 
-def locate_grid(frame, config, reference):
+def locate_grid(frame, config, reference, legacy=False):
     if reference is None:
-        return grid_for(frame, config)
+        return grid_for(frame, config, legacy)
     try:
         return reference.locate(frame)
     except RuntimeError:
         # A camera cut can invalidate the template. Require a complete, plausible
         # layout before resuming independent wall detection.
-        grid = grid_for(frame, config)
+        grid = grid_for(frame, config, legacy)
         widths = np.diff(grid['channel_bounds'], axis=1).ravel()
         typical = reference.grid['channel_width']
         if len(widths) != config.num_channels or np.any((widths < typical * .55) | (widths > typical * 1.65)):
@@ -130,7 +137,7 @@ def jpeg(frame, limit, quality, *, width_only=False):
 
 def picture(frame, grid):
     h, w = frame.shape[:2]
-    return dict(width=w, height=h, image=jpeg(frame, 1000, 78, width_only=True),
+    return dict(width=w, height=h, image=jpeg(frame, 1000, 78, width_only=True), grid_method=grid.get('grid_method'),
                 bounds=[[int(a), int(b)] for a, b in grid['channel_bounds']])
 
 
@@ -182,7 +189,8 @@ class ChannelFrameReader:
             self.close()
             self.capture = cv2.VideoCapture(str(source))
             self.config = WormTrackerConfig.from_dict(dict(BASE.to_dict(), **task['settings']))
-            self.reference = reference_for(source, self.config) if task.get('grid_registration') else None
+            self.legacy = legacy_grid(task)
+            self.reference = reference_for(source, self.config, self.legacy) if task.get('grid_registration') else None
             self.next_frame = 1
             self.event_index = 0
             self.counts = [0] * self.config.num_channels
@@ -201,7 +209,7 @@ class ChannelFrameReader:
                 raise ValueError(f'无法读取第 {number} 帧')
             self.next_frame = number+1
             try:
-                grid = locate_grid(frame, self.config, self.reference)
+                grid = locate_grid(frame, self.config, self.reference, self.legacy)
             except RuntimeError:
                 grid = {'channel_bounds': []}
             while self.event_index < len(events) and events[self.event_index]['frame'] <= number:
@@ -254,8 +262,9 @@ class ChannelCounts:
             if not ok:
                 raise ValueError('无法读取视频首帧')
             try:
-                reference = reference_for(path, config) if task is None or task.get('grid_registration') else None
-                grid = locate_grid(frame, config, reference)
+                legacy = task is not None and legacy_grid(task)
+                reference = reference_for(path, config, legacy) if task is None or task.get('grid_registration') else None
+                grid = locate_grid(frame, config, reference, legacy)
             except RuntimeError:
                 grid = {'channel_bounds': []}
             return picture(frame, grid)
@@ -332,7 +341,8 @@ class ChannelCounts:
     def start_run(self, file, path, run, params):
         stat = path.stat()
         state = dict(source_stamp=[stat.st_size, stat.st_mtime_ns], id=run, file=file, name=path.name,
-                     settings=params, status='running', frame=0, frames=0, counts=[0]*params['num_channels'], events=[])
+                     grid_version=GRID_VERSION, settings=params, status='running', frame=0, frames=0,
+                     counts=[0]*params['num_channels'], events=[])
         folder = self.folder(file)/run
         save(folder/'state.json', state)
         self.launch(path, folder, state)
@@ -478,7 +488,8 @@ class ChannelCounts:
             length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS)
             fps = fps if fps > 0 and math.isfinite(fps) else None
-            reference = reference_for(source, config)
+            legacy = legacy_grid(state)
+            reference = reference_for(source, config, legacy)
             engine.prime(startup_background(source, config.init_frame_index))
             while True:
                 with self.condition:
@@ -494,7 +505,7 @@ class ChannelCounts:
                 idx += 1
                 previous_events = len(events)
                 try:
-                    grid = locate_grid(frame, config, reference)
+                    grid = locate_grid(frame, config, reference, legacy)
                 except RuntimeError:
                     grid = {'channel_bounds': []}
                     engine.reset()

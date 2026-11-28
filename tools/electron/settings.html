@@ -29,7 +29,11 @@
     <div id="gpu-row" hidden>
       <div class="row"><span>NVIDIA 显卡加速</span><button id="gpu" aria-describedby="gpu-status">检测 GPU</button></div>
       <p id="gpu-status" role="status" hidden></p>
-      <button id="gpu-install" hidden>启用离线加速包…</button>
+      <div id="gpu-transfer" hidden>
+        <progress id="gpu-progress" aria-label="GPU 组件下载进度"></progress>
+        <span id="gpu-bytes"></span>
+      </div>
+      <button id="gpu-install" class="primary" aria-describedby="gpu-status" hidden>安装 GPU 加速组件</button>
     </div>
   </div></section>
 </main></body></html>

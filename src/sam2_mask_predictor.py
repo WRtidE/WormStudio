@@ -7,8 +7,7 @@ import cv2
 import numpy as np
 
 from image_io import png
-from resource_paths import sam2_checkpoint
-from sam2_models import input_contrast, model_spec
+from sam2_models import WORM21, checkpoint_path, input_contrast, model_spec
 
 
 class MaskPredictor:
@@ -63,9 +62,10 @@ class MaskPredictor:
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             spec=model_spec(self.model_size)
-            checkpoint = sam2_checkpoint(spec['checkpoint'])
+            checkpoint = checkpoint_path(spec, verify=True)
             if not checkpoint.is_file(): raise RuntimeError(f'找不到 SAM2 权重：{checkpoint}')
-            model = build_sam2(spec['config'], str(checkpoint), device=device)
+            model = build_sam2(spec['config'], str(checkpoint), device=device,
+                               apply_postprocessing=self.model_size != WORM21)
             self.predictor = SAM2ImagePredictor(model)
         contrast = input_contrast(body.get('sam2_input_contrast', 'none'))
         view = (tuple(roi), contrast)

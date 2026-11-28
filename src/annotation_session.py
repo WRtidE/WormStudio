@@ -18,7 +18,7 @@ from image_io import png
 from input_validation import annotation_mask, valid_sample_name
 from platforms.system import is_darwin
 from resource_paths import PROJECT_ROOT
-from sam2_models import input_contrast
+from sam2_models import input_contrast, input_model, model_spec, single_worm_default
 from sam2_mask_predictor import MaskPredictor, annotation_worker
 
 
@@ -107,8 +107,8 @@ class Annotation:
         self.token = secrets.token_urlsafe(24)
         self.done = threading.Event()
         self.result = None
-        self.model_size = settings.get('sam2_model','large')
-        if self.model_size not in ('large','tiny'): raise ValueError('SAM2_MODEL 必须为 large 或 tiny')
+        self.model_size = input_model(settings,root=root)
+        self.model = model_spec(self.model_size)
         self.local_predictor = None
         self.worker = None
         self.connection = None
@@ -120,7 +120,7 @@ class Annotation:
         settings = dict(sample=fresh_sample(video.stem, root/'outputs'), video=str(video.resolve()),
                         crop_xyxy=None, scale_um_per_px=None, measurement_mode='pixels', groups=[], review_intervals=[],
                         centerline_method=CURRENT_METHOD,
-                        sam2_model='large', analysis_profile='current', head_detection=CURRENT_HEAD_DETECTION)
+                        sam2_model=single_worm_default(root), analysis_profile='current', head_detection=CURRENT_HEAD_DETECTION)
         return cls(settings, root=root, preview_seconds=preview_seconds)
 
     def predict(self, body, *, token=None):
@@ -186,6 +186,8 @@ class Annotation:
         if record['input'] != self.identity:
             return None  # Show the new input and preserve the old record on save.
         config = record['config']
+        if config.get('sam2_model','large') != self.model_size:
+            return None
         if not all(Path(w['mask_path']).is_file() for w in config['groups'][0]['worms']):
             return None
         selection = self.output/'last-selection.json'
@@ -210,7 +212,8 @@ class Annotation:
             width=self.image.shape[1],height=self.image.shape[0],token=self.token,
             measurement_mode=self.settings.get('measurement_mode','physical'),scale_um_per_px=self.settings.get('scale_um_per_px'),video_name=Path(self.video).name,
             frame_count=self.n,frame_seconds=self.frame_seconds if math.isfinite(self.frame_seconds) and self.frame_seconds>=0 else None,
-            sam2_model=self.model_size,sam2_input_contrast=self.settings.get('sam2_input_contrast','none'),
+            sam2_model=self.model_size,sam2_model_size=self.model['size'],sam2_model_label=self.model['label'],
+            sam2_input_contrast=self.settings.get('sam2_input_contrast','none'),
             head_detection=self.settings.get('head_detection','twardis'),
             centerline_method=self.settings.get('centerline_method',CURRENT_METHOD),previous=None)
         if hasattr(self, 'correction_previous'):
@@ -287,7 +290,7 @@ class Annotation:
         if not entries: raise ValueError('请至少标注一条虫')
         if method=='body_sequence':
             if len(entries)!=1:raise ValueError('当前方法每次分析一条线虫')
-            if self.model_size!='large':raise ValueError('当前方法使用SAM2 Large')
+            if self.model['size']!='large':raise ValueError('当前方法使用SAM2 Large')
         masks = {}; ids = set(); heads={}
         for entry in entries:
             worm = entry.get('id')
@@ -335,6 +338,7 @@ class Annotation:
                 old_mask = cv2.imdecode(np.frombuffer(path.read_bytes(),np.uint8),cv2.IMREAD_GRAYSCALE) if path.is_file() else None
                 if old_mask is None or not np.array_equal(old_mask > 127, masks[worm]): same_masks = False; break
         same_inputs = (same_masks and old_record.get('input') == self.identity
+                       and old_config.get('sam2_model','large') == self.model_size
                        and old_config.get('crop_xyxy') == absolute and old_config.get('scale_um_per_px') == scale
                        and old_record.get('calibration') == calibration
                        and old_config.get('sam2_input_contrast','none') == contrast

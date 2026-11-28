@@ -27,6 +27,16 @@ def _smooth_worm_curve(t, amp_y=18.0, shift_x=0.0, shift_y=0.0):
     return np.column_stack([x, y])
 
 
+def _solver_devices():
+    import torch
+
+    yield 'cpu'
+    if torch.cuda.is_available():
+        yield 'cuda'
+    if torch.backends.mps.is_available():
+        yield 'mps'
+
+
 class CrossingAndHeadTests(unittest.TestCase):
     def test_skeleton_graph_candidates_handles_figure_eight_with_spur(self):
         # Construct an alpha self-crossing where both free tips extend past the crossing,
@@ -49,9 +59,7 @@ class CrossingAndHeadTests(unittest.TestCase):
         self.assertGreater(length, 0.72 * ref_len)
         self.assertLess(length, 1.18 * ref_len)
 
-    def test_deformable_fit_respects_pillar_and_mask_cpu_and_mps(self):
-        import torch
-
+    def test_deformable_fit_respects_pillar_and_mask(self):
         ts = np.linspace(-0.35 * np.pi, 1.35 * np.pi, 160)
         arc = np.column_stack([120.0 + 38.0 * np.cos(ts), 110.0 + 38.0 * np.sin(ts)])
         ref_len = float(np.linalg.norm(np.diff(arc, axis=0), axis=1).sum())
@@ -62,18 +70,16 @@ class CrossingAndHeadTests(unittest.TestCase):
 
         # Slightly perturbed initialization
         init_pts = resample(arc, 101) + np.array([4.0, -5.0])
-        devices = ['cpu']
-        if torch.backends.mps.is_available():
-            devices.append('mps')
-        for dev in devices:
-            fitted = deformable_fit(mask, init_pts, ref_len, 7.0, pillars=pillar, device=dev, steps=60)
-            self.assertIsNotNone(fitted, msg=f'deformable_fit failed on {dev}')
-            self.assertEqual(fitted.shape, (101, 2))
-            self.assertTrue(np.isfinite(fitted).all())
-            fit_len = float(np.linalg.norm(np.diff(fitted, axis=0), axis=1).sum())
-            self.assertAlmostEqual(fit_len / ref_len, 1.0, delta=0.18)
-            pillar_dist = np.linalg.norm(fitted - pillar[0, :2], axis=1).min()
-            self.assertGreater(pillar_dist, 17.5)
+        for device in _solver_devices():
+            with self.subTest(device=device):
+                fitted = deformable_fit(mask, init_pts, ref_len, 7.0, pillars=pillar, device=device, steps=60)
+                self.assertIsNotNone(fitted)
+                self.assertEqual(fitted.shape, (101, 2))
+                self.assertTrue(np.isfinite(fitted).all())
+                fit_len = float(np.linalg.norm(np.diff(fitted, axis=0), axis=1).sum())
+                self.assertAlmostEqual(fit_len / ref_len, 1.0, delta=0.18)
+                pillar_dist = np.linalg.norm(fitted - pillar[0, :2], axis=1).min()
+                self.assertGreater(pillar_dist, 17.5)
 
     def test_solve_bridges_coiled_crossing_and_preserves_head_continuity(self):
         # 9-frame smooth coiling sequence: frames 0-2 and 6-8 are clear tapered worms,
@@ -106,16 +112,18 @@ class CrossingAndHeadTests(unittest.TestCase):
             img[mask > 0] = np.clip(img[mask > 0].astype(int) - 55, 20, 230).astype(np.uint8)
             gray.append(img)
 
-        lines, facts, meta = solve(masks, gray, fps=12.0, auto_seed=True)
-        self.assertEqual(meta['version'], VERSION)
-        valid_count = sum(1 for f in facts if f is not None)
-        self.assertEqual(valid_count, 9)
-        components = {tuple(f['component']) for f in facts}
-        self.assertEqual(components, {(0, 8)})
-        self.assertTrue(all(f['head_known'] for f in facts))
-        # Anterior (head at index 0) stays on the left throughout smooth bending.
-        self.assertLess(lines[0, 0, 0], lines[0, -1, 0])
-        self.assertLess(lines[8, 0, 0], lines[8, -1, 0])
+        for device in _solver_devices():
+            with self.subTest(device=device):
+                lines, facts, meta = solve(masks, gray, fps=12.0, auto_seed=True, device=device)
+                self.assertEqual(meta['version'], VERSION)
+                valid_count = sum(1 for f in facts if f is not None)
+                self.assertEqual(valid_count, 9)
+                components = {tuple(f['component']) for f in facts}
+                self.assertEqual(components, {(0, 8)})
+                self.assertTrue(all(f['head_known'] for f in facts))
+                # Anterior (head at index 0) stays on the left throughout smooth bending.
+                self.assertLess(lines[0, 0, 0], lines[0, -1, 0])
+                self.assertLess(lines[8, 0, 0], lines[8, -1, 0])
 
     def test_select_body_sequence_handles_fast_tip_swing_without_dropping_flow(self):
         # Construct 3 frames where middle-to-last frame has a fast head swing across uniform background

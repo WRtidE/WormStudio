@@ -28,9 +28,9 @@ class OptionalIsolationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);config,_,_=make_fixture(root)
             release=threading.Event();entered=threading.Event()
-            def failing():entered.set();release.wait(5);raise PermissionError('simulated optional permission error')
+            def failing(model):entered.set();release.wait(5);raise PermissionError('simulated optional permission error')
             progress=PipelineProgress()
-            with patch.object(manual,'ROOT',root),patch('body_sequence_solver.availability',side_effect=failing):
+            with patch.object(manual,'ROOT',root),patch('sam2_models.availability',side_effect=failing):
                 annotation=manual.Annotation(config)
                 progress.bind_server(manual.create_server(annotation=annotation,progress=progress))
                 url=progress.url.removesuffix('/progress')

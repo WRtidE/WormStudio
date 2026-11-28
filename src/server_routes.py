@@ -259,7 +259,9 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                         data = identity_frame(root, sample, int(query.get('worm', ['0'])[0]), int(query.get('frame', ['-1'])[0]))
                     else:
                         data = identity_links(root, sample)
-                if progress.config is not config:
+                with progress.lock:
+                    changed = progress.config is not config
+                if changed:
                     self.respond(409, dict(error='结果会话已变化')); return
                 with self.server.outside_control():
                     self.respond(200, data, 'image/jpeg' if frame else 'application/json; charset=utf-8')
@@ -269,9 +271,11 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
         def get_head_anchors(self):
             from head_evidence import normalize_anchors
             sample=parse_qs(urlsplit(self.path).query).get('run',[''])[0]
-            if not progress.config or progress.config['sample']!=sample:
+            with progress.lock:
+                config = progress.config
+            if not config or config['sample']!=sample:
                 self.respond(409,dict(error='结果会话已变化'));return
-            self.respond(200,dict(sample=sample,anchors={w:normalize_anchors(a) for w,a in progress.config.get('head_annotations',{}).items()}))
+            self.respond(200,dict(sample=sample,anchors={w:normalize_anchors(a) for w,a in config.get('head_annotations',{}).items()}))
 
         def get_draft(self):
             annotation = self.server.annotation
@@ -361,7 +365,9 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                     if preview.shape[1] > 1280:
                         preview = cv2.resize(preview, (1280, round(preview.shape[0]*1280/preview.shape[1])))
                     data = png(preview)
-                if progress.run_id != run or progress.config is not config:
+                with progress.lock:
+                    changed = progress.run_id != run or progress.config is not config
+                if changed:
                     self.respond(409, dict(error='结果会话已改变')); return
                 with self.server.outside_control():
                     self.respond(200, data, 'image/png')
@@ -387,20 +393,22 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
         def get_algorithms(self):
             # Run outside /state and outside the single HTTP request thread.
             # Dependency checks must not freeze mask editing.
+            from sam2_models import availability, single_worm_default
+            annotation = self.server.annotation
+            model = annotation.model_size if annotation else single_worm_default(root)
+            probes = self.server.model_probes
             if (parse_qs(urlsplit(self.path).query).get('retry')==['1']
-                    and not getattr(self.server,'optional_probe',{}).get('checking')):
-                if hasattr(self.server,'optional_probe'):del self.server.optional_probe
-            if not hasattr(self.server, 'optional_probe'):
-                self.server.optional_probe = dict(available=False, checking=True, detail='正在检查分析组件…')
-                server = self.server
+                    and not probes.get(model,{}).get('checking')):
+                probes.pop(model,None)
+            if model not in probes:
+                probes[model] = dict(available=False, checking=True, detail='正在检查分析组件…')
                 def probe():
                     try:
-                        from body_sequence_solver import availability
-                        server.optional_probe = dict(availability(), checking=False)
+                        probes[model] = dict(availability(model), checking=False)
                     except Exception as exc:
-                        server.optional_probe = dict(available=False, checking=False, detail=f'分析组件检查失败：{exc}')
+                        probes[model] = dict(available=False, checking=False, detail=f'分析组件检查失败：{exc}')
                 threading.Thread(target=probe, daemon=True).start()
-            self.respond(200, dict(algorithm=self.server.optional_probe))
+            self.respond(200, dict(algorithm=probes[model]))
 
         def post_chamber_video(self):
             if self.headers.get('X-Annotation-Token') != progress.token:
@@ -455,7 +463,7 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                     progress.cancel_requested.set()
                     if progress.batch.active is None: progress.batch.running = False
                 else:
-                    if progress.data['status'] not in ('ready','complete','failed','cancelled') or progress.next_ready.is_set():
+                    if progress.idle_run() is None:
                         raise ValueError('请先保存当前标注或等待当前处理结束')
                     if action == 'start': progress.batch.start()
                     elif action == 'retry-dispatch': progress.batch.retry_dispatch()
@@ -521,39 +529,26 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
             self.respond(200, dict(removed=True)); return
 
         def post_result_action(self):
-            annotation = self.server.annotation
             if self.headers.get('X-Annotation-Token') != progress.token:
                 self.respond_before_body(403,dict(error='Invalid processing session')); return
             if self.path == '/api/cancel':
-                status = progress.snapshot()['status']
-                if status not in ('running','preparing'): raise ValueError('当前没有正在运行的任务')
-                progress.cancel_requested.set()
-                if annotation and status == 'preparing':
-                    annotation.result = None
-                    annotation.done.set()
-                    progress.fail('已取消标注；保存过的草稿仍可恢复', cancelled=True)
+                progress.cancel()
                 self.respond_before_body(200,dict(cancelling=True));return
-            if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled') or progress.next_ready.is_set():
-                raise ValueError('请先结束当前任务')
-            if progress.batch and progress.batch.running: raise ValueError('请先停止批处理')
+            with progress.lock:
+                run = progress.idle_run()
+                config = progress.config
+            if run is None: raise ValueError('请先结束当前任务或停止批处理')
             size=int(self.headers.get('Content-Length','0'))
             if not 0<size<=8192: raise ValueError('任务请求无效')
             body=json.loads(self.rfile.read(size))
             from workspace_sessions import reopen,load_config
-            if self.path=='/api/open-run': reopen(progress,root,body.get('sample'))
+            sample = body.get('sample')
+            if self.path=='/api/open-run': reopen(progress,root,sample,expected_run=run)
             elif self.path=='/api/refresh-video':
-                sample=body.get('sample')
-                if (sample!=progress.data.get('sample') or not progress.data.get('history_reopened')
-                        or not progress.data.get('legacy_video') or progress.data.get('read_only')):
-                    raise ValueError('请先打开需要更新视频的历史结果')
-                if 'source-video' not in progress.artifacts or not progress.artifacts['source-video'].is_file():
-                    raise ValueError('请先将原视频放回原来的位置')
-                progress.next_settings={'_refresh_video':sample}
-                progress.data.update(status='preparing',detail='正在准备重新导出标注视频')
-                progress.next_ready.set()
+                progress.queue_result(sample, run)
             else:
                 if self.path in ('/api/confirm-head','/api/auto-head','/api/remove-head','/api/review-identity','/api/remove-identity-review'):
-                    if not progress.config or body.get('sample')!=progress.config['sample']:
+                    if not config or sample != config['sample']:
                         raise ValueError('当前结果已改变，请重新加载后复核')
                     from workspace_sessions import confirm_head
                     if self.path=='/api/auto-head':
@@ -574,13 +569,7 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                         from workspace_sessions import remove_head
                         settings=remove_head(root,body.get('sample'),body.get('worm_id'),body.get('anchor_id'))
                 else: _,settings=load_config(root,body.get('sample'))
-                progress.path=None
-                progress.preview_dir=None
-                progress.cancel_requested.clear()
-                progress.server.annotation=None
-                progress.next_settings=dict(settings,_resume_saved=True)
-                progress.data.update(status='preparing',sample=settings['sample'],detail='正在恢复保存的任务')
-                progress.next_ready.set()
+                progress.queue_result(sample, run, settings)
             self.respond(200,dict(ok=True));return
 
         def post_annotation_action(self):
@@ -615,25 +604,29 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
         def post_reannotate(self):
             if self.headers.get('X-Annotation-Token') != progress.token:
                 self.respond_before_body(403, dict(error='Invalid processing session')); return
-            if progress.snapshot()['status'] not in ('complete','failed','cancelled') or not progress.config:
+            with progress.lock:
+                run = progress.idle_run()
+                config = progress.config if progress.data['status'] != 'ready' else None
+                start_on_submit = progress.batch is not None
+            if run is None or not config:
                 self.respond_before_body(409, dict(error='当前没有可重新标注的已结束任务')); return
             size = int(self.headers.get('Content-Length', '0'))
             if not 0 < size <= 8192: raise ValueError('标注帧请求无效')
             frame = json.loads(self.rfile.read(size)).get('frame')
             if type(frame) is not int: raise ValueError('请选择整数帧号')
             from run_storage import fresh_sample
-            settings = dict(progress.config, sample=fresh_sample(progress.config['sample'], root/'outputs'),
-                            previous_sample=progress.config['sample'], crop_xyxy=None, groups=[], review_intervals=[])
+            settings = dict(config, sample=fresh_sample(config['sample'], root/'outputs'),
+                            previous_sample=config['sample'], crop_xyxy=None, groups=[], review_intervals=[])
             candidate = annotation_type(settings, frame=frame, root=root)
-            candidate.start_on_submit = progress.batch is not None
-            progress.queue_video(candidate)
+            candidate.start_on_submit = start_on_submit
+            progress.queue_video(candidate, expected_run=run)
             self.respond(200, dict(annotation_url='/')); return
 
         def post_open_video(self):
-            annotation = self.server.annotation
             if self.headers.get('X-Annotation-Token') != progress.token:
                 self.respond_before_body(403, dict(error='Invalid processing session')); return
-            if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled'):
+            run = progress.idle_run()
+            if run is None:
                 self.respond_before_body(409, dict(error='当前任务尚未结束')); return
             uploaded = None
             sequence = []
@@ -661,17 +654,11 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                 folder = root/'input_videos'/secrets.token_hex(8)
                 folder.mkdir(parents=True)
                 uploaded = video = folder/filename
-                initial_run = progress.run_id
-                initial_config = progress.config
                 try:
                     from workspace_library import receive_file
                     with self.server.outside_control():
                         receive_file(video, self.rfile, size)
-                    if (progress.closed.is_set() or progress.run_id != initial_run or progress.config is not initial_config
-                            or self.server.annotation is not annotation or progress.next_ready.is_set()
-                            or (progress.batch and progress.batch.running)
-                            or progress.snapshot()['status'] not in ('ready','complete','failed','cancelled')):
-                        raise ValueError('上传期间任务已改变，请重新选择视频')
+                    progress.require_idle(run)
                 except Exception:
                     video.unlink(missing_ok=True); folder.rmdir(); raise
             try:
@@ -681,27 +668,30 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
                     candidate.chamber_mode = True
                     sequence = sequence or [video]
                 if sequence: candidate.sequence = (sequence, [])
+                from workspace_library import register
+                deferred = bool(sequence) or (self.path == '/api/new-video' and body.get('batch') is True)
+                with progress.lock:
+                    progress.require_idle(run)
+                    if deferred and progress.batch is None: raise ValueError('请使用 Worm Studio 启动批处理')
+                    candidate.start_on_submit = bool(self.path == '/api/new-video' and body.get('edit_setup') is True
+                                                     and progress.batch and not deferred)
+                    library_file = register(root, video)
+                    progress.queue_video(candidate, deferred=deferred, expected_run=run)
             except Exception:
                 if uploaded:
                     uploaded.unlink(missing_ok=True); uploaded.parent.rmdir()
                 raise
-            from workspace_library import register
-            library_file = register(root, video)
-            deferred = bool(sequence) or (self.path == '/api/new-video' and body.get('batch') is True)
-            if deferred and progress.batch is None: raise ValueError('请使用 Worm Studio 启动批处理')
-            candidate.start_on_submit = bool(self.path == '/api/new-video' and body.get('edit_setup') is True
-                                             and progress.batch and not deferred)
-            progress.queue_video(candidate, deferred=deferred)
             self.respond(200, dict(annotation_url='/', video_name=video.name, file=library_file)); return
 
         def post_close(self):
             if self.headers.get('X-Annotation-Token') != progress.token:
                 self.respond_before_body(403, dict(error='Invalid processing session')); return
-            if progress.batch and progress.batch.running:
-                self.respond_before_body(409, dict(error='请先停止批处理')); return
-            if progress.snapshot()['status'] not in ('ready','complete','failed','cancelled'):
+            with progress.lock:
+                idle = progress.idle_run() is not None
+                if idle:
+                    progress.closed.set()
+            if not idle:
                 self.respond_before_body(409, dict(error='处理仍在进行，请等待完成')); return
-            progress.closed.set()
             self.respond_before_body(200, dict(closed=True))
             return
 
@@ -749,10 +739,7 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
             save_draft(annotation, dict(submitted=True))
             if progress:
                 if getattr(annotation, 'start_on_submit', False):
-                    with progress.lock:
-                        progress.config = copy.deepcopy(annotation.result)
-                        progress.next_settings = dict(annotation.result, _resume_saved=True)
-                        progress.next_ready.set()
+                    progress.submit_annotation(annotation)
                     annotation.release_predictor()
                     result['progress_url'] = '/progress'
                 elif getattr(annotation, 'batch_deferred', False):
@@ -973,4 +960,5 @@ def create_server(annotation=None, progress=None, *, root=PROJECT_ROOT, annotati
     from chamber_videos import ChamberVideos
     server.chamber_videos = ChamberVideos(root)
     server.annotation = annotation
+    server.model_probes = {}
     return server

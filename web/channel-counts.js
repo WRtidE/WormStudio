@@ -371,6 +371,11 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles, 
     if (drawnPhoto) { viewport.layout(drawnPhoto.width, drawnPhoto.height); draw(); }
   }).observe(svg);
 
+  function gridNotice(photo) {
+    if (!photo) return '';
+    if (!photo.bounds.length) return '首帧未识别到通道边界，请核对通道数。';
+    return photo.grid_method === 'equidistant' ? '通道壁峰值不足以确定边界，当前按等距划分，请核对网格。' : '';
+  }
   async function loadSetup() {
     const version = ++setupRevision;
     setupPhoto = null; setupError = ''; notice('count-message',''); render();
@@ -378,7 +383,7 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles, 
       const photo = await request(route('setup', {channels:draft.num_channels}));
       if (version !== setupRevision) return;
       setupPhoto = photo;
-      if (page==='setup') notice('count-message',photo.bounds.length?'':'首帧未识别到通道边界，请核对通道数。');
+      if (page==='setup') notice('count-message',gridNotice(photo));
     } catch (error) {
       if (version !== setupRevision) return;
       setupError = error.message;
@@ -523,8 +528,7 @@ window.createChannelWorkspace = function ({request, token, openVideo, getFiles, 
   function changePage(next) {
     if (next === page) return;
     page=next;
-    const setupNotice=setupPhoto && !setupPhoto.bounds.length ? '首帧未识别到通道边界，请核对通道数。' : '';
-    notice('count-message',page==='setup'?setupNotice:task?.error || task?.warning);
+    notice('count-message',page==='setup'?gridNotice(setupPhoto):task?.error || task?.warning);
     if (page==='setup' && !setupPhoto && file.available) void loadSetup(); else render();
   }
   function chooseRun(id, channel=null) {

@@ -36,6 +36,40 @@ def crossing_video(path, frames=130, up_start=27):
 
 
 class ChannelIntegration(unittest.TestCase):
+    def test_review_and_replay_use_the_grid_version_of_the_original_run(self):
+        from channel_runs import new_run
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video = root/'lanes.avi'
+            crossing_video(video, frames=8)
+            service = ChannelCounts(root)
+            file = register(root, video)['id']
+            try:
+                current = new_run()
+                with patch.object(service, 'launch'):
+                    service.start_run(file, video, current, dict(num_channels=4))
+                state = read(service.folder(file)/current/'state.json')
+                self.assertEqual(state['grid_version'], 2)
+                old = dict(state, id=new_run(), frame=3, status='interrupted')
+                del old['grid_version']
+                bounds = []
+                for task, method in [(state, 'peaks'), (old, 'equidistant')]:
+                    folder = service.folder(file)/task['id']
+                    with patch.object(service, 'launch'):
+                        service.resume_run(video, task)
+                    final = service._count_video(video, folder, dict(state=task, paused=False), None, False)
+                    task.update(final)
+                    save(folder/'state.json', task)
+                    preview = service.setup(file, 4, run=task['id'])
+                    reviewed = service.frames(file, task['id'], 1, 1)['frames'][0]
+                    for image in (final['picture'], preview, reviewed):
+                        self.assertEqual(image['grid_method'], method)
+                        self.assertEqual(image['bounds'], preview['bounds'])
+                    bounds.append(preview['bounds'])
+                self.assertNotEqual(*bounds)
+            finally:
+                service.close()
+
     def test_gpu_failure_after_crossing_replays_on_cpu_without_duplicate_events(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

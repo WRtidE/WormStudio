@@ -50,12 +50,13 @@ def replay_model(config):
     import torch
     from compute_device import selected_device, inference_context
     from sam2.build_sam import build_sam2_video_predictor
-    from resource_paths import sam2_checkpoint
-    from sam2_models import model_spec
+    from sam2_models import WORM21, checkpoint_path, model_spec
     from sam2_frames import init_tracking_state, propagate_frames, refine_mask_edges, sam2_input_transform
-    spec = model_spec(config.get('sam2_model', 'large'))
+    model_id = config.get('sam2_model', 'large')
+    spec = model_spec(model_id)
     device = selected_device()
-    model = build_sam2_video_predictor(spec['config'], str(sam2_checkpoint(spec['checkpoint'])), device=device,
+    model = build_sam2_video_predictor(spec['config'], str(checkpoint_path(spec,verify=True)), device=device,
+        apply_postprocessing=model_id != WORM21,
         hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
 
     def predict(cap, box, indices, seed):

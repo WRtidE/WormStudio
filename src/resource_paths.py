@@ -48,9 +48,9 @@ def motion_constraints_path(project=PROJECT_ROOT):
     return local if local.is_file() else project / 'config/motion_constraints.json'
 
 
-def sam2_checkpoint(filename):
+def sam2_checkpoint(filename, *, override='WORMSTUDIO_SAM2_CHECKPOINT'):
     """Find weights without requiring the development machine's folder layout."""
-    explicit = os.environ.get('WORMSTUDIO_SAM2_CHECKPOINT')
+    explicit = os.environ.get(override)
     if explicit:
         return Path(explicit).expanduser().resolve()
     paths = [PROJECT_ROOT / 'models' / filename,

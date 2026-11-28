@@ -9,6 +9,19 @@ import resource_paths as paths
 
 
 class PortableResources(unittest.TestCase):
+    def test_adapter_uses_its_own_override_and_rejects_different_weights(self):
+        from sam2_models import WORM21, checkpoint_path, model_spec
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
+            spec = model_spec(WORM21)
+            root = Path(folder)
+            (root/'models').mkdir()
+            adapted = root/'models'/spec['checkpoint']
+            adapted.write_bytes(b'wrong checkpoint')
+            os.environ['WORMSTUDIO_SAM2_CHECKPOINT']=str(root/'older.pt')
+            with patch.object(paths,'PROJECT_ROOT',root):
+                self.assertEqual(checkpoint_path(spec),adapted)
+                with self.assertRaisesRegex(ValueError,'SHA-256'):
+                    checkpoint_path(spec,verify=True)
     def test_manual_constraints_stay_local(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'config').mkdir()

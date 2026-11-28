@@ -1,5 +1,8 @@
 'use strict';
 const path = require('node:path');
+const fs = require('node:fs');
+const {createHash} = require('node:crypto');
+const os = require('node:os');
 const {execFile} = require('node:child_process');
 const execute = require('node:util').promisify(execFile);
 
@@ -37,6 +40,10 @@ async function extractWheel(archive, destination, signal) {
     {env, windowsHide:true, signal, timeout:600000, maxBuffer:1024*1024});
 }
 async function probe(runtime, backend, signal) {
+  return probePython(path.join(runtime, host().python), backend, signal, path.join(runtime,'sam2'));
+}
+
+async function probePython(python, backend, signal, sam2) {
   const script = `import json,sys,torch,torchvision,numpy,cv2,scipy,matplotlib,sam2
 device='cuda' if sys.argv[1]=='cuda' else 'cpu'
 if device=='cuda' and not torch.cuda.is_available(): raise RuntimeError('GPU 运算不可用，请更新驱动或选择 CPU')
@@ -44,13 +51,69 @@ x=torch.ones((8,8),device=device); assert torch.isfinite(x@x).all()
 boxes=torch.tensor([[0.,0.,2.,2.],[0.,0.,1.,1.]],device=device)
 assert torchvision.ops.nms(boxes,torch.tensor([.9,.5],device=device),.5).numel()==2
 print(json.dumps({'device':device,'torch':torch.__version__}))`;
-  const env = {...process.env, PYTHONPATH:path.join(runtime,'sam2'), PYTHONNOUSERSITE:'1', PYTHONUTF8:'1', PYTHONDONTWRITEBYTECODE:'1'};
+  const env = {...process.env, PYTHONNOUSERSITE:'1', PYTHONUTF8:'1', PYTHONDONTWRITEBYTECODE:'1'};
   delete env.PYTHONHOME;
+  if (sam2) env.PYTHONPATH = sam2;
+  else delete env.PYTHONPATH;
   try {
-    return await execute(path.join(runtime, host().python), ['-B', '-c', script, backend], {env, windowsHide:true, signal, timeout:120000, maxBuffer:1024*1024});
+    return await execute(python, ['-B', '-c', script, backend], {env, windowsHide:true, signal, timeout:120000, maxBuffer:1024*1024});
   } catch (error) {
     const reason = (error.stderr || error.message).trim().split(/\r?\n/).at(-1);
     throw Error('运行环境验证失败：'+reason, {cause:error});
   }
 }
-module.exports = {host, detect, extract, extractWheel, probe};
+
+// A checkout owns its uv environment. Keep the running CPU interpreter available
+// while building the locked CUDA environment, including across failed retries.
+function workspaceGpu(workspace, basePython, {run = execute, verify = probePython} = {}) {
+  const hash = createHash('sha256').update(path.resolve(basePython).toLowerCase());
+  for (const name of ['pyproject.toml','uv.lock','.python-version']) {
+    const file = path.join(workspace,name);
+    if (!fs.existsSync(file)) return null;
+    hash.update(fs.readFileSync(file));
+  }
+  const directory = path.join(workspace,'.venv-gpu',hash.digest('hex').slice(0,16));
+  const python = path.join(directory,'Scripts','python.exe');
+  const marker = path.join(directory,'wormstudio-cuda-ready');
+  const readyPython = () => fs.existsSync(marker) && fs.existsSync(python) ? python : null;
+  async function install(signal, progress, withWheels) {
+    if (readyPython()) return;
+    await fs.promises.rm(marker,{force:true});
+    const localUv = path.join(os.homedir(),'.local','bin','uv.exe');
+    const uv = process.env.UV || (fs.existsSync(localUv) ? localUv : 'uv.exe');
+    const env = {...process.env, UV_PROJECT_ENVIRONMENT:directory};
+    delete env.VIRTUAL_ENV;
+    const options = {cwd:workspace, env, signal, windowsHide:true, maxBuffer:4*1024*1024};
+    const helper = path.join(workspace,'tools/release/windows_gpu.py');
+    const {stdout} = await run(basePython,['-I','-B',helper,'--workspace-gpu-assets',workspace],options);
+    try {
+      await withWheels(JSON.parse(stdout),async (links,requirements) => {
+        progress('正在安装已校验的 GPU 组件…');
+        if (!fs.existsSync(python)) await run(uv,['venv','--allow-existing','--managed-python',directory],options);
+        // Install as indexed distributions so the subsequent locked sync can
+        // reuse them and still resolve and check all other project dependencies.
+        await run(uv,['pip','install','--python',python,'--no-cache','--no-deps','--no-index','--find-links',links,
+          '--require-hashes','-r',requirements],options);
+      });
+      await run(uv,['sync','--locked','--extra','cuda','--managed-python'],options);
+    } catch (error) {
+      if (error.code === 'ENOENT' && error.path === uv) throw Error('找不到项目的 uv 安装器。请使用 Windows 在线发行版安装 GPU 组件。');
+      const detail = String(error.stderr || error.message).trim().slice(-600);
+      throw Error('GPU 组件安装未完成，可重试。'+detail, {cause:error});
+    }
+    progress('正在验证显卡矩阵运算和图像算子…');
+    await verify(python,'cuda',signal);
+    signal.throwIfAborted();
+    await fs.promises.writeFile(marker,'cuda');
+  }
+  return {readyPython, install};
+}
+async function gpuOffer(state, message, mode, hardware = detect) {
+  // The legacy probe reports "incompatible" for a CPU venv or online layout
+  // that lacks the portable offline kit's metadata in its expected location.
+  if (!mode || !['available','prepared','incompatible'].includes(state)) return {state,message};
+  const device = await hardware('win32-x64');
+  if (device.backend !== 'cuda') return {state:'cpu',message:device.detail};
+  return {state:mode, message:`已检测到 ${device.name}，当前使用 CPU。可安装与此版本匹配的 GPU 加速组件。`};
+}
+module.exports = {host, detect, extract, extractWheel, probe, workspaceGpu, gpuOffer};

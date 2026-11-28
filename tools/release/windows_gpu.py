@@ -11,6 +11,8 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
+from urllib.parse import quote, unquote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
 
@@ -26,6 +28,31 @@ BASE_PACKAGES = ('torch-2.7.0', 'torchvision-0.22.0')
 CHUNK = 4 * 1024 * 1024
 GPU_PARTS = ('WormStudio-GPU-cu128-part1.zip', 'WormStudio-GPU-cu128-part2.zip')
 PART_BYTES = 1600 * 1024**2
+# The PyTorch index omits sizes in uv.lock. These byte counts identify the
+# published files by digest; the downloader also checks their full SHA-256.
+WHEEL_BYTES = {WHEELS['torch-2.7.0+cu128-cp311-cp311-win_amd64.whl']: 3338323327,
+               WHEELS['torchvision-0.22.0+cu128-cp311-cp311-win_amd64.whl']: 7638343}
+GPU_MIRRORS = ('https://mirror.sjtu.edu.cn/pytorch-wheels/cu128/',
+               'https://mirrors.aliyun.com/pytorch-wheels/cu128/')
+
+
+def locked_gpu_downloads(source):
+    lock = tomllib.loads((source / 'uv.lock').read_text(encoding='utf-8'))
+    packages = [p for p in lock['package'] if p['name'] in ('torch', 'torchvision') and p['version'].endswith('+cu128')]
+    if len(packages) != 2:
+        raise ValueError('Missing pinned CUDA packages in uv.lock')
+    assets = []
+    for package in packages:
+        wheel = next(w for w in package['wheels'] if 'cp311-cp311-win_amd64.whl' in w['url'])
+        filename = unquote(urlsplit(wheel['url']).path.rsplit('/', 1)[1])
+        if filename != f"{package['name']}-{package['version']}-cp311-cp311-win_amd64.whl":
+            raise ValueError('GPU wheel name does not match the locked package')
+        sha = wheel['hash'].removeprefix('sha256:')
+        mirrors = [base + quote(filename) for base in GPU_MIRRORS]
+        assets.append(dict(filename=filename, requirement=f"{package['name']}=={package['version']}",
+                           label=package['name'], sha256=sha, size=wheel.get('size', WHEEL_BYTES.get(sha)),
+                           url=mirrors[0], fallbackUrls=[*mirrors[1:], wheel['url']]))
+    return assets
 
 
 @contextmanager
@@ -404,6 +431,8 @@ if __name__ == '__main__':
             extract_runtime_wheels([archive], Path(sys.argv[3]), lambda *_: None)
     elif sys.argv[1:2] == ['--status-json']:
         print(json.dumps(detect(Path(sys.executable), probe_runtime)))
+    elif sys.argv[1:2] == ['--workspace-gpu-assets']:
+        print(json.dumps(locked_gpu_downloads(Path(sys.argv[2]))))
     elif sys.argv[1:2] == ['--probe']:
         print(json.dumps(probe_runtime(sys.argv[2])))
     else:

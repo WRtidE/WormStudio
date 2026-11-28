@@ -17,6 +17,20 @@ from worm_pipeline import validate_config
 
 
 class ManualAnnotationTests(unittest.TestCase):
+    def test_installed_single_worm_preference_reaches_annotation_and_saved_task(self):
+        from sam2_models import WORM21, input_model
+        (self.root/'config').mkdir(exist_ok=True)
+        (self.root/'config/single_worm_model.local.json').write_text(json.dumps(dict(sam2_model=WORM21)))
+        annotation = manual.Annotation.from_video(Path(self.settings['video']),root=self.root)
+        state = annotation.initial_state()
+        self.assertEqual((state['sam2_model'],state['sam2_model_size']),(WORM21,'large'))
+        annotation = manual.Annotation(self.settings)
+        annotation.save(self.body)
+        self.assertEqual(annotation.previous()['sam2_model'],WORM21)
+        old = manual.Annotation(dict(self.settings,sam2_model='large'))
+        self.assertIsNone(old.previous())
+        self.assertEqual(input_model(dict(_resume_saved=True),root=self.root),'large')
+        self.assertEqual(input_model({'groups':[{'worms':[{},{}]}]},root=self.root),'large')
     def test_preview_timestamp_selects_the_displayed_variable_duration_frame(self):
         from annotation_session import preview_frame_at
         capture = MagicMock()

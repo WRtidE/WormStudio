@@ -30,7 +30,7 @@ uv sync --locked --extra cpu --managed-python
 
 `pyproject.toml` 是源码开发依赖的维护入口，`uv.lock` 记录各平台与 CPU/CUDA 分支的完整解析版本及下载摘要。安装使用 `--locked`，配置与锁文件不一致时会报错。PyTorch 继续使用 2.7.0 / torchvision 0.22.0；CPU 和 CUDA 包分别来自官方专用索引，其它依赖使用 PyPI。配置方式参考 [uv 的 PyTorch 集成说明](https://docs.astral.sh/uv/guides/integration/pytorch/)。
 
-SAM2 会从固定提交 `2b90b9f5ceec907a1c18123530e92e794ad901a4` 自动构建并安装，无需手动克隆或 editable 安装。构建使用所选环境的 PyTorch，配置中的 `SAM2_BUILD_CUDA=0` 跳过可选 CUDA 扩展；主模型仍可使用 GPU，部分扩展后处理不可用。项目使用 SAM2 Hiera 权重，不混用 SAM2.1 权重。
+SAM2 会从固定提交 `2b90b9f5ceec907a1c18123530e92e794ad901a4` 自动构建并安装，无需手动克隆或 editable 安装。构建使用所选环境的 PyTorch，配置中的 `SAM2_BUILD_CUDA=0` 跳过可选 CUDA 扩展；主模型仍可使用 GPU，部分扩展后处理不可用。单虫任务可按[模型说明](MODELS.md)启用本地 SAM 2.1 Large 线虫适配权重，程序为每一代权重选择对应的网络配置。
 
 ## 2. 下载权重
 

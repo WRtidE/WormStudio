@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v2.0.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
+  <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v2.1.0/WormStudio-Windows-x64.zip">下载 Windows 在线版</a></strong> ·
   <strong><a href="https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip">下载 Mac 版</a></strong> ·
   <a href="#用练习视频完成第一次分析">第一次分析</a> ·
   <a href="docs/USER_GUIDE.md#windows-显卡加速检测">GPU 加速</a>
@@ -24,10 +24,10 @@
 
 | 电脑 | 下载 | 第一次打开 |
 | --- | --- | --- |
-| Windows 64 位（x64） | [Windows v2.0.0 在线版，约 170 MB](https://github.com/WRtidE/WormStudio/releases/download/v2.0.0/WormStudio-Windows-x64.zip) | 右键 ZIP 选 **全部解压**，打开文件夹，双击 `WormStudio.exe`。 |
+| Windows 64 位（x64） | [Windows v2.1.0 在线版，约 170 MB](https://github.com/WRtidE/WormStudio/releases/download/v2.1.0/WormStudio-Windows-x64.zip) | 右键 ZIP 选 **全部解压**，打开文件夹，双击 `WormStudio.exe`。 |
 | Apple 芯片 Mac（macOS 14 及以上） | [Mac v1.0.3 离线版](https://github.com/WRtidE/WormStudio/releases/download/v1.0.3/WormStudio-Mac-arm64.zip) | 解压，将 `WormStudio.app` 拖入“应用程序”，按包内《先读我》选择 **准备并打开**。 |
 
-Windows 首次启动需要联网。默认 CPU 组件约 1.12 GiB，建议预留 5 GiB 磁盘空间。下载中断后可继续，准备完成后可离线分析。[显卡加速说明](docs/USER_GUIDE.md#windows-显卡加速检测) · [版本与校验文件](https://github.com/WRtidE/WormStudio/releases/tag/v2.0.0)
+Windows 首次启动需要联网。默认 CPU 组件约 1.12 GiB，建议预留 5 GiB 磁盘空间。下载中断后可继续，准备完成后可离线分析。[显卡加速说明](docs/USER_GUIDE.md#windows-显卡加速检测) · [版本与校验文件](https://github.com/WRtidE/WormStudio/releases/tag/v2.1.0)
 
 ## 用练习视频完成第一次分析
 

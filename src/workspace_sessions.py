@@ -59,6 +59,7 @@ def load_config(root, sample):
     if not base.is_relative_to((root/'outputs').resolve()): raise ValueError('任务路径超出结果目录')
     config=json.loads((base/'pipeline-config.json').read_text(encoding='utf-8'))
     if config['sample']!=sample: raise ValueError('任务配置名称不匹配')
+    config.setdefault('sam2_model','large')
     return base,config
 
 
@@ -221,7 +222,7 @@ def derive_geometry_run(root,sample,config=None):
     return config
 
 
-def restore_saved_timing(progress,base,sample):
+def saved_timing(base,sample):
     # Historical durations must come from the completed record, never the active
     # session's clock (which may belong to a different video).
     import math
@@ -235,8 +236,7 @@ def restore_saved_timing(progress,base,sample):
     def recorded_number(key):
         value = saved.get(key)
         return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
-    progress.started=progress.ended=progress.active_started=None
-    progress.data.update(history_reopened=True, saved_elapsed_seconds=recorded_number('elapsed_seconds'),
+    return dict(history_reopened=True, saved_elapsed_seconds=recorded_number('elapsed_seconds'),
                          saved_finished_at=recorded_number('finished_at'), device=saved.get('device') or '')
 
 
@@ -297,7 +297,7 @@ def archived_result(base, config, finished):
                 artifacts=[dict(key=k, label=label, filename=path.name) for k, (label, path) in artifacts.items()])
 
 
-def reopen(progress,root,sample):
+def reopen(progress,root,sample,*,expected_run=None):
     base,config=load_config(root,sample)
     from centerline_methods import display_method, method_source
     report=base/('phenotypes-'+method_source(config['centerline_method']))/'summary.json'
@@ -306,23 +306,18 @@ def reopen(progress,root,sample):
     state=json.loads((base/'pipeline-state.json').read_text(encoding='utf-8'))
     completed=[(k,v) for k,v in state.get('stages',{}).items() if v.get('status')=='complete']
     if not any(k=='metrics' for k,_ in completed): raise ValueError('指标阶段尚未完成')
-    progress.path=progress.event_path=progress.log_path=None
-    restore_saved_timing(progress,base,sample)
-    progress.preview_dir=None
-    progress.artifacts={};progress.frame_metrics=None;progress.config=config
-    progress.data.update(sample=sample,video_name=Path(config['video']).name,
-        frames=summary['worms'][0]['frames'],fps=summary['fps'],worm_count=len(summary['worms']),
-        method=display_method(config['centerline_method'])['label'],output_dir=str(base),read_only=False,
-        error=None,notice='已重新打开保存结果，未重新计算或改写历史文件。',artifacts=[])
-    progress.data['stages']=[dict(name=k,phase=k,label=k,status='complete',fraction=1,seconds=v.get('seconds',0))
+    saved = saved_timing(base, sample)
+    saved.update(frames=summary['worms'][0]['frames'],fps=summary['fps'],worm_count=len(summary['worms']),
+        method=display_method(config['centerline_method'])['label'],output_dir=str(base),
+        notice='已重新打开保存结果，未重新计算或改写历史文件。')
+    saved['stages']=[dict(name=k,phase=k,label=k,status='complete',fraction=1,seconds=v.get('seconds',0))
         for k,v in completed if k in ('metrics','export')]
     from result_overlay import OVERLAY_VERSION
     exported = any(k=='export' for k,_ in completed)
     video = next(path for key, _, path, _ in result_video_files(base,config) if key=='video')
-    progress.data['legacy_video'] = (exported and video.is_file() and summary.get('overlay_version') != OVERLAY_VERSION
+    saved['legacy_video'] = (exported and video.is_file() and summary.get('overlay_version') != OVERLAY_VERSION
                                      and video != annotated_video_path(report.parent,sample, clean=True))
-    progress.finish(base,config,'export' if exported else 'metrics')
-    progress.server.annotation=None
+    progress.finish(base,config,'export' if exported else 'metrics', saved=saved, expected_run=expected_run)
 
 
 def refresh_saved_video(progress, root, sample):
@@ -344,9 +339,9 @@ def refresh_saved_video(progress, root, sample):
             progress.begin(0,log)
             run_stage(stage,log,progress)
         finally:
-            progress.path=progress.preview_dir=progress.log_path=progress.event_path=None
-    with progress.lock:
-        reopen(progress,root,sample)
+            with progress.lock:
+                progress.path=progress.preview_dir=progress.log_path=progress.event_path=None
+    reopen(progress,root,sample)
 
 
 def save_draft(annotation,body):

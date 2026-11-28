@@ -13,19 +13,16 @@ import shutil
 import sys
 from stat import S_ISREG
 import tarfile
-import tomllib
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import urlsplit
 from zipfile import ZipFile, ZIP_DEFLATED
 
 if __package__:
-    from .windows_gpu import runtime_file, runtime_members
+    from .windows_gpu import locked_gpu_downloads, runtime_file, runtime_members
 else:
-    from windows_gpu import runtime_file, runtime_members
+    from windows_gpu import locked_gpu_downloads, runtime_file, runtime_members
 
 MAX_PART = 1400 * 1024**2
 TORCH_PREFIXES = ('torch', 'torchvision', 'torchgen', 'functorch')
-GPU_MIRRORS = ('https://mirror.sjtu.edu.cn/pytorch-wheels/cu128/',
-               'https://mirrors.aliyun.com/pytorch-wheels/cu128/')
 
 
 def digest(file):
@@ -85,24 +82,17 @@ def tree_entries(root, relative):
 
 
 def gpu_assets(source, directory):
-    lock = tomllib.loads((source/'uv.lock').read_text(encoding='utf-8'))
-    packages = [p for p in lock['package'] if p['name'] in ('torch', 'torchvision') and p['version'].endswith('+cu128')]
-    if len(packages) != 2:
-        raise ValueError('Missing pinned CUDA packages in uv.lock')
     assets = []
-    for number, package in enumerate(packages, 1):
-        wheel = next(w for w in package['wheels'] if 'cp311-cp311-win_amd64.whl' in w['url'])
-        name = unquote(urlsplit(wheel['url']).path.rsplit('/', 1)[1])
-        file = directory/name
-        sha = wheel['hash'].removeprefix('sha256:')
-        if digest(file) != sha:
-            raise ValueError(f'Wheel checksum mismatch: {name}')
+    downloads = locked_gpu_downloads(source)
+    for number, asset in enumerate(downloads, 1):
+        file = directory/asset['filename']
+        if digest(file) != asset['sha256']:
+            raise ValueError(f'Wheel checksum mismatch: {file.name}')
         with ZipFile(file) as archive:
             unpacked = sum(item.file_size for item in runtime_members(archive))
-        sources = [base + quote(name) for base in GPU_MIRRORS]
-        assets.append(dict(label=f'GPU 加速组件 · {number}/{len(packages)}', format='wheel',
-                           url=sources[0], fallbackUrls=[*sources[1:], wheel['url']],
-                           sha256=sha, size=file.stat().st_size, unpackedSize=unpacked))
+        assets.append(dict(label=f'GPU 加速组件 · {number}/{len(downloads)}', format='wheel',
+                           url=asset['url'], fallbackUrls=asset['fallbackUrls'],
+                           sha256=asset['sha256'], size=file.stat().st_size, unpackedSize=unpacked))
     return assets
 
 

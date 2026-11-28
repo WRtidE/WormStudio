@@ -8,7 +8,7 @@ const scratch=document.createElement('canvas');
 let scalePointMethod='manual';
 let calibrationPending=false,repairReturnStep=null,draftSaver=null,allowLeave=false;
 function readiness(){
- const algorithmIssue=analysisMethod()!=='body_sequence'?'':!state.chamber_mode&&objects.size!==1?'当前每次分析一条线虫，请保留需要分析的一条。':state.sam2_model!=='large'?'此任务的分析配置需要更新，请从文件列表重新开始标注。':state.algorithm?.checking?'正在检查分析组件，请稍候。':state.algorithm?.available!==true?'分析组件暂不可用，请检查本地安装后重新检查。':'';
+ const algorithmIssue=analysisMethod()!=='body_sequence'?'':!state.chamber_mode&&objects.size!==1?'当前每次分析一条线虫，请保留需要分析的一条。':state.sam2_model_size!=='large'?'此任务的分析配置需要更新，请从文件列表重新开始标注。':state.algorithm?.checking?'正在检查分析组件，请稍候。':state.algorithm?.available!==true?(state.algorithm?.detail||'分析组件暂不可用，请检查本地安装后重新检查。'):'';
  const check=annotationReadiness({scale:$('#scale').value,pixelMode:$('#pixel-mode').checked,calibrationPending,worms:[...objects.values()],method:analysisMethod(),chamberMode:state.chamber_mode,algorithmIssue});
  if(!state.chamber_mode&&analysisMethod()==='body_sequence'&&objects.size>1){const blocker=check.blockers.find(b=>b.key==='method');blocker.step=2;blocker.action='返回选择线虫';}
  return {...check,algorithmIssue:check.blockers.find(b=>b.key==='method')?.detail || algorithmIssue};
@@ -475,7 +475,7 @@ function refresh(){
  const r=roi||[0,0,W,H];refreshRegionChoice();
  $('#review-worms').textContent=`${confirmed} / ${objects.size} 条已确认`;$('#review-roi').textContent=`${r[2]-r[0]} × ${r[3]-r[1]} px`;$('#review-scale').textContent=$('#pixel-mode').checked?'仅像素单位（未标定）':+$('#scale').value>0?`${Number((+$('#scale').value).toPrecision(6))} μm/px`:'尚未标定';
  const check=readiness(),{algorithmIssue,ready}=check;
- $('#analysis-status').textContent=check.methodReady?'分析准备已完成，保存后自动处理。':algorithmIssue;
+ $('#analysis-status').textContent=check.methodReady?`${state.sam2_model_label} 已就绪，保存后自动处理。`:algorithmIssue;
  $('#retry-analysis').hidden=analysisMethod()!=='body_sequence'||!!state.algorithm?.checking||state.algorithm?.available===true;
  $('#add').hidden=!state.chamber_mode;
  if(state.chamber_mode){

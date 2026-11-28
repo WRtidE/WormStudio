@@ -28,8 +28,16 @@ def create_server(annotation=None, progress=None):
 
 
 def collect_annotation(settings, frame=0, reuse=True, check_only=False, open_browser=True, review_saved=True, progress=None):
+    # A queued editor may already have been saved or cancelled while the worker
+    # was loading dependencies. Its event and result belong to this dispatch.
+    handed_off = progress.worker_annotation if progress else None
     existing = getattr(progress.server, 'annotation', None) if progress and progress.server else None
-    annotation = existing if existing and not existing.done.is_set() and existing.settings == settings else Annotation(settings, frame)
+    if handed_off is not None:
+        annotation = handed_off
+    elif existing and not existing.done.is_set() and existing.settings == settings:
+        annotation = existing
+    else:
+        annotation = Annotation(settings, frame)
     if reuse:
         previous = annotation.previous()
         if previous is not None and (check_only or not review_saved):
@@ -40,7 +48,8 @@ def collect_annotation(settings, frame=0, reuse=True, check_only=False, open_bro
         return None
     reused_server = progress is not None and progress.server is not None
     server = progress.server if reused_server else create_server(annotation, progress)
-    server.annotation = annotation
+    if handed_off is None:
+        server.annotation = annotation
     server.timeout = .5
     url = f'http://127.0.0.1:{server.server_port}/'
     print(f'请在工作台完成标注并点击“保存并开始处理”：{url}', flush=True)

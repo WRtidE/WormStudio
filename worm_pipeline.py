@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
 from centerline_methods import CURRENT_METHOD, CURRENT_HEAD_DETECTION, analysis_method, method_source
-from resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, sam2_checkpoint, motion_constraints_path
+from resource_paths import PROJECT_ROOT as ROOT, ensure_runtime, motion_constraints_path
 
 if __name__ == '__main__':
     ensure_runtime()
@@ -17,7 +17,7 @@ SAMPLE_NAME = "experiment-01"  # 新视频或新参数建议使用新名字
 # False：使用下方 GROUPS 中的点标记或已有掩膜。
 MANUAL_ANNOTATION = True
 CENTERLINE_METHOD = CURRENT_METHOD
-SAM2_MODEL = "large"            # 点选分割和全视频跟踪统一使用：large / tiny
+SAM2_MODEL = None               # None 使用本机单虫默认模型；显式名称可复现已保存的配置
 ANNOTATION_FRAME = 0            # 选择较容易区分线虫的一帧，帧号从 0 开始
 HEAD_DETECTION = CURRENT_HEAD_DETECTION  # 首帧人工优先，否则按起始形状初始化；正式头摆仍需人工
 OPEN_BROWSER = True             # 自动打开外部浏览器；False 时打印网址
@@ -48,7 +48,7 @@ import re
 import subprocess
 import sys
 import time
-from sam2_models import input_contrast, model_spec, tracking_model_matches
+from sam2_models import checkpoint_path, input_contrast, input_model, model_spec, tracking_model_matches
 from platforms.system import check_memory_pressure, stage_wait_slice, terminate_children
 
 PHASES = ('tracking', 'cleanup', 'quality', 'fit', 'metrics', 'export')
@@ -58,7 +58,7 @@ def video_config():
     return dict(sample=SAMPLE_NAME, video=VIDEO_PATH, crop_xyxy=CROP_XYXY,
                 scale_um_per_px=UM_PER_PIXEL, scale_source=SCALE_SOURCE,
                 groups=GROUPS, review_intervals=REVIEW_INTERVALS,
-                centerline_method=CENTERLINE_METHOD, sam2_model=SAM2_MODEL,
+                centerline_method=CENTERLINE_METHOD, sam2_model=SAM2_MODEL or input_model({'groups': GROUPS}),
                 head_detection=HEAD_DETECTION)
 
 
@@ -173,9 +173,9 @@ def validate_config(config, relative_to=ROOT):
     c['centerline_method'] = analysis_method(c.get('centerline_method'))
     c.setdefault('head_detection', CURRENT_HEAD_DETECTION)
     if len(ids) != 1: raise ValueError('当前方法每次分析一条线虫，多虫请按培养槽分组')
-    if c.get('sam2_model', 'large') != 'large': raise ValueError('当前方法使用 SAM2 Large')
+    c['sam2_model'] = input_model(c)
+    if model_spec(c['sam2_model'])['size'] != 'large': raise ValueError('当前方法使用 SAM2 Large')
     if c.get('tracking_point_count', 13) != 13: raise ValueError('当前方法使用 13 个身体跟踪点')
-    c['sam2_model'] = model_spec(c.get('sam2_model', 'large'))['size']
     if 'sam2_input_contrast' in c:
         input_contrast(c['sam2_input_contrast'])
     from quality_schema import VERSION as QUALITY_VERSION
@@ -329,10 +329,12 @@ def compatible_identity(previous, current):
 def run_stage(stage, log, progress=None):
     env = dict(os.environ, PYTHONUTF8='1', PYTHONIOENCODING='utf-8', PYTHONUNBUFFERED='1')
     env['PYTHONPATH'] = str(ROOT / 'src') + os.pathsep + env.get('PYTHONPATH', '')
-    if progress and progress.event_path: env['WORM_PROGRESS_FILE'] = str(progress.event_path)
-    if progress and progress.preview_dir:
-        env['WORM_PREVIEW_DIR'] = str(progress.preview_dir)
-        env['WORM_PREVIEW_STAGE'] = progress.data['stages'][progress.data['active']]['label']
+    if progress:
+        with progress.lock:
+            if progress.event_path: env['WORM_PROGRESS_FILE'] = str(progress.event_path)
+            if progress.preview_dir:
+                env['WORM_PREVIEW_DIR'] = str(progress.preview_dir)
+                env['WORM_PREVIEW_STAGE'] = progress.data['stages'][progress.data['active']]['label']
     started = time.monotonic()
     last_report = started
     with log.open('w', encoding='utf-8') as handle:
@@ -388,6 +390,7 @@ def _main(progress, raw_override=None):
     parser.add_argument('--stop-after', choices=PHASES, default=STOP_AFTER)
     args = parser.parse_args()
     raw = raw_override or (json.loads(args.config.read_text(encoding='utf-8')) if args.config else video_config())
+    raw = dict(raw, sam2_model=input_model(raw, args.config))
     if raw_override is None:
         if args.video: raw['video'] = str(args.video.resolve())
         if args.sample: raw['sample'] = args.sample
@@ -395,8 +398,7 @@ def _main(progress, raw_override=None):
         import torch
         from compute_device import selected_device, device_label
         device = selected_device()
-        checkpoint=model_spec(raw.get('sam2_model','large'))['checkpoint']
-        required = sam2_checkpoint(checkpoint)
+        required = checkpoint_path(model_spec(raw['sam2_model']))
         if not required.is_file(): raise RuntimeError(f'缺少 SAM2 模型：{required}；请参阅 docs/INSTALL.md')
         import imageio_ffmpeg
         print(f'Python: {sys.executable}', flush=True)
@@ -451,8 +453,9 @@ def _main(progress, raw_override=None):
             notice = f'{reason}，已自动创建新结果目录并重新计算。旧结果保留在 {old_name}。'
             print(notice, flush=True)
     snapshot = base / 'pipeline-config.json'
-    defer_video = bool(config.get('chamber_id') and progress.batch and
-                       (progress.batch.active or progress.batch.group_for_result(config.get('previous_sample') or config['sample'])))
+    with progress.lock:
+        defer_video = bool(config.get('chamber_id') and progress.batch and
+                           (progress.batch.active or progress.batch.group_for_result(config.get('previous_sample') or config['sample'])))
     old_export = state.get('stages', {}).get('export', {})
     retry_export = (resume_saved and args.stop_after == 'export' and old_export.get('status') == 'failed'
                     and state.get('identity') == identity)
@@ -467,8 +470,7 @@ def _main(progress, raw_override=None):
     if args.check or CHECK_ONLY:
         print('配置、视频、计算设备和编码依赖检查通过。')
         return
-    progress.configure(config, info, stages, base, device_label(device))
-    progress.data['notice'] = notice
+    progress.configure(config, info, stages, base, device_label(device), notice=notice)
     if not args.no_progress_ui and progress.server is None:
         from electron_desktop import open_view
         from manual_worm_annotation import create_server
@@ -535,11 +537,12 @@ def _main(progress, raw_override=None):
         progress.done(index)
     state['completed_through'] = args.stop_after
     save_state(state_path, state)
-    progress.finish(base, config, args.stop_after)
+    followup = progress.finish(base, config, args.stop_after)
     if args.stop_after == 'export' and not defer_video:
         print(f'处理完成：{all_stages[-1]["outputs"][0]}', flush=True)
     else:
         print(f'已完成至 {args.stop_after}：{base}', flush=True)
+    return followup
 
 
 def main():

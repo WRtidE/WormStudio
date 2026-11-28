@@ -187,6 +187,44 @@ def _classify_gaps(
 # 敏感投影重算
 # ==========================================================
 
+def _refine_walls_from_peaks(
+    gradient: np.ndarray, roi_left: int, num_channels: int,
+    channel_width: float, wall_width: float, half_width: int,
+) -> Optional[tuple]:
+    """Match the one or two visible edges of each wall in chip coordinates."""
+    pitch = channel_width + wall_width
+    # Fraction of ROI rows carrying a vertical edge. Bound smoothing by the
+    # pitch so that neighboring walls in a dense chip remain distinguishable.
+    support = np.mean(gradient > 20, axis=0)
+    radius = min(5, round(pitch / 8))
+    signal = cv2.GaussianBlur(support[None, :], (2 * radius + 1, 1), 0).ravel()
+    padded = np.pad(signal, 1)
+    peaks = np.flatnonzero((signal >= .2) & (signal > padded[:-2]) & (signal >= padded[2:]))
+    if len(peaks) < num_channels + 1:
+        return None
+
+    faces = []
+    for index in range(num_channels + 1):
+        center = wall_width / 2 + index * pitch
+        # Disjoint windows preserve wall order and exclude the lane centers.
+        start, end = np.searchsorted(peaks, [center - .45 * pitch, center + .45 * pitch])
+        local = peaks[start:end]
+        if not local.size:
+            return None
+        # A thick edge can produce multiple comparable peaks. Take the faces
+        # facing the adjacent channels, even when the strongest two lie on one side.
+        heights = signal[local]
+        supported = local[heights >= .5 * heights.max()]
+        faces.append((roi_left + int(supported[0]), roi_left + int(supported[-1])))
+
+    channels = [(a[1], b[0]) for a, b in zip(faces, faces[1:])]
+    widths = [right - left for left, right in channels]
+    if min(widths) < .45 * channel_width:
+        return None
+    walls = [(left - half_width, right + half_width) for left, right in faces]
+    return channels, walls, float(np.mean(widths)), float(np.mean([r - l for l, r in walls]))
+
+
 def _recompute_projection(
     frame: np.ndarray,
     crop_top: float = 0.3,
@@ -207,7 +245,7 @@ def _recompute_projection(
     return np.convolve(col_sums, np.ones(smooth_size) / smooth_size, mode="same")
 
 
-def _refine_walls_from_peaks(
+def _legacy_wall_grid(
     frame: np.ndarray,
     roi_left: int,
     roi_right: int,
@@ -215,7 +253,7 @@ def _refine_walls_from_peaks(
     wall_ratio: float,
     wall_peak_half_width: int = 2,
 ) -> Optional[tuple]:
-    """用敏感投影取信号最强的 64 个峰作为墙壁中心，间隙分类生成网格。"""
+    """Reproduce the boundaries used to assign channel IDs in unversioned runs."""
     num_walls = num_channels + 1
     valid_width = roi_right - roi_left
     denominator = num_channels + (num_channels + 1) * wall_ratio
@@ -477,6 +515,8 @@ def get_interpolated_grid(
     wall_ratio: float = 0.2,
     refine_walls: bool = True,
     wall_peak_half_width: int = 2,
+    *,
+    legacy: bool = False,
 ) -> dict:
     """提取绝对物理网格坐标。
 
@@ -517,13 +557,14 @@ def get_interpolated_grid(
     mid_roi = gray[start_y:end_y, start_x:end_x]
 
     # Sobel 垂直边缘检测
-    sobelx = cv2.Sobel(mid_roi, cv2.CV_64F, 1, 0, ksize=3)
-    sobel_abs = np.uint8(np.absolute(sobelx))
+    gradient = cv2.Sobel(mid_roi, cv2.CV_16S, 1, 0, ksize=3)
+    sobel_abs = np.uint8(np.abs(gradient)) if legacy else cv2.convertScaleAbs(gradient)
     _, thresh = cv2.threshold(sobel_abs, edge_thresh, 255, cv2.THRESH_BINARY)
 
     # 垂直投影 + 平滑
     col_sums = np.sum(thresh, axis=0)
-    smoothed = np.convolve(col_sums, np.ones(15) / 15, mode="same")
+    window = 15 if legacy else min(15, max(1, (end_x - start_x) // (3 * num_channels)))
+    smoothed = np.convolve(col_sums, np.ones(window) / window, mode="same")
 
     # 定位有效边界
     threshold_val = np.max(smoothed) * signal_thresh_ratio
@@ -542,14 +583,17 @@ def get_interpolated_grid(
 
     # ---- 实时竖线峰值检测 ----
     if refine_walls and wall_ratio > 0:
-        refined = _refine_walls_from_peaks(
-            frame, roi_left, roi_right,
-            num_channels, wall_ratio,
-            wall_peak_half_width=wall_peak_half_width,
-        )
+        if legacy:
+            refined = _legacy_wall_grid(frame, roi_left, roi_right, num_channels, wall_ratio, wall_peak_half_width)
+        else:
+            refined = _refine_walls_from_peaks(
+                sobel_abs[:, valid_x_indices[0]:valid_x_indices[-1] + 1], roi_left, num_channels,
+                channel_width, wall_width, wall_peak_half_width,
+            )
         if refined is not None:
             channel_bounds, wall_bounds, channel_width, wall_width = refined
             return {
+                "grid_method": "peaks",
                 "roi_left": roi_left,
                 "roi_right": roi_right,
                 "channel_width": channel_width,
@@ -575,6 +619,7 @@ def get_interpolated_grid(
     wall_bounds.append((last_wall_center - hw, last_wall_center + hw))
 
     return {
+        "grid_method": "equidistant",
         "roi_left": roi_left,
         "roi_right": roi_right,
         "channel_width": channel_width,

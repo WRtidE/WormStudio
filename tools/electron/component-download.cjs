@@ -19,6 +19,10 @@ async function fileSize(file) {
   try { return (await fs.promises.stat(file)).size; }
   catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
 }
+async function verifiedFile(asset, directory, signal) {
+  const file = path.join(directory, asset.sha256);
+  return await fileSize(file) === asset.size && (await hashFile(file,signal)).digest('hex') === asset.sha256 ? file : null;
+}
 function validateAsset(asset) {
   if (!validUrl(asset.url) ||
       (asset.fallbackUrls !== undefined && (!Array.isArray(asset.fallbackUrls) || !asset.fallbackUrls.every(validUrl))) ||
@@ -46,7 +50,7 @@ async function transfer(asset, directory, {fetch, signal, progress = () => {}, i
   await fs.promises.mkdir(directory, {recursive:true});
   const target = path.join(directory, asset.sha256);
   const partial = target + '.partial';
-  if (await fileSize(target) === asset.size && (await hashFile(target, signal)).digest('hex') === asset.sha256) {
+  if (await verifiedFile(asset,directory,signal)) {
     progress(asset.size, true);
     return target;
   }
@@ -126,4 +130,45 @@ async function transfer(asset, directory, {fetch, signal, progress = () => {}, i
     if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
   }
 }
-module.exports = {download, validateAsset};
+// uv accepts wheels by distribution filename. Keep these temporary links
+// separate from the immutable downloads and resumable partials.
+async function withWorkspaceWheels(assets, {directory, shared, fetch, signal, progress}, install) {
+  for (const asset of assets) {
+    validateAsset(asset);
+    if (!/^[\w.+-]+\.whl$/.test(asset.filename) || !/^[\w-]+==[\w.+-]+$/.test(asset.requirement)) throw Error('GPU 组件名称无效');
+  }
+  const total = assets.reduce((n,a) => n+a.size,0);
+  let completed = 0, last = 0;
+  const update = (message,received) => progress(message,{received,total});
+  update('正在检查已有 GPU 组件…',0);
+  await fs.promises.mkdir(directory,{recursive:true});
+  const links = await fs.promises.mkdtemp(path.join(directory,'.uv-'));
+  try {
+    for (const asset of assets) {
+      const cached = await verifiedFile(asset,shared,signal);
+      let received = completed;
+      const file = cached || await download(asset,directory,{fetch,signal,
+        onRetry:() => update('正在切换下载源…',received), progress:(done,reused) => {
+          received = completed+done;
+          if (reused || Date.now()-last >= 150 || done === asset.size) {
+            update(reused ? '已校验本机组件' : '正在下载 '+asset.label,received);
+            last = Date.now();
+          }
+        }});
+      completed += asset.size;
+      update(cached ? '已校验本机组件' : '组件已就绪',completed);
+      const named = path.join(links,asset.filename);
+      try { await fs.promises.link(file,named); }
+      catch (error) {
+        if (!['EXDEV','EPERM','ENOTSUP','EACCES'].includes(error.code)) throw error;
+        await fs.promises.copyFile(file,named,fs.constants.COPYFILE_EXCL);
+      }
+    }
+    const requirements = path.join(links,'requirements.txt');
+    await fs.promises.writeFile(requirements,assets.map(a=>a.requirement+' --hash=sha256:'+a.sha256).join('\n'));
+    await install(links,requirements);
+  } finally {
+    await fs.promises.rm(links,{recursive:true,force:true});
+  }
+}
+module.exports = {download, validateAsset, withWorkspaceWheels};

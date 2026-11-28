@@ -27,6 +27,10 @@ function bind(id, event, action) {
     catch { el('message').hidden = false; el('message').textContent = '操作失败，请重试'; }
   });
 }
+let gpuAvailable = false;
+function checkOnOpen() {
+  if (gpuAvailable && !el('general').hidden && el('gpu-status').hidden) void el('gpu').onclick();
+}
 for (const id of ['general','updates']) {
   el(id+'-tab').onclick = () => {
     for (const pane of ['general','updates']) {
@@ -34,13 +38,39 @@ for (const id of ['general','updates']) {
       if (pane === id) el(pane+'-tab').setAttribute('aria-current','page');
       else el(pane+'-tab').removeAttribute('aria-current');
     }
+    if (id === 'general') checkOnOpen();
   };
 }
 bind('auto','change', () => api.auto(el('auto').checked));
 bind('check','click', () => api.check());
 bind('download','click', () => latest?.transfer?.status === 'done' ? (latest.canInstall ? api.install() : api.reveal()) : api.download());
 bind('workspace','click', () => api.workspace());
-api.gpuAvailable().then(available => { el('gpu-row').hidden = !available; });
+api.gpuAvailable().then(available => {
+  gpuAvailable = available;
+  el('gpu-row').hidden = !available;
+  checkOnOpen();
+});
+let gpuState;
+function renderGpu({state,message,transfer}) {
+  gpuState = state;
+  el('gpu-status').hidden = false;
+  el('gpu-status').textContent = message;
+  el('gpu').disabled = state === 'installing';
+  el('gpu-transfer').hidden = !transfer;
+  if (transfer) {
+    const {received,total} = transfer;
+    const percent = Math.floor(received/total*100);
+    el('gpu-progress').max = total;
+    el('gpu-progress').value = received;
+    const mib = n => (n/2**20).toLocaleString('zh-CN',{maximumFractionDigits:1});
+    el('gpu-bytes').textContent = `${percent}% · ${mib(received)} / ${mib(total)} MiB`;
+  }
+  const install = el('gpu-install');
+  install.hidden = !['available','prepared','online','online-active','workspace','installing'].includes(state);
+  install.disabled = state === 'installing';
+  install.textContent = ({workspace:'安装匹配的 GPU 加速组件', online:'下载并安装 GPU 加速','online-active':'查看安装窗口',
+    installing:transfer ? '正在准备组件…' : '正在安装…'})[state] || '启用离线加速包…';
+}
 el('gpu').onclick = async () => {
   const button = el('gpu');
   if (button.disabled) return;
@@ -51,32 +81,37 @@ el('gpu').onclick = async () => {
   status.hidden = false;
   el('gpu-install').hidden = true;
   try {
-    const result = await api.checkGpu();
-    status.textContent = result.message;
-    el('gpu-install').hidden = !['available', 'prepared', 'online'].includes(result.state);
-    el('gpu-install').textContent = result.state === 'online' ? '下载并安装 GPU 加速' : '启用离线加速包…';
+    renderGpu(await api.checkGpu());
   } catch {
-    status.textContent = '检测未完成，请稍后重新检测。';
+    renderGpu({state:'error',message:'检测未完成，请稍后重新检测。'});
   } finally {
     button.textContent = '重新检测';
-    button.disabled = false;
+    button.disabled = gpuState === 'installing';
   }
 };
 el('gpu-install').onclick = async () => {
+  const install = el('gpu-install');
+  if (install.disabled) return;
+  install.disabled = true;
+  const source = gpuState === 'workspace';
+  if (source) renderGpu({state:'installing',message:'正在准备匹配的 GPU 加速组件…'});
   try {
     const result = await api.openGpu();
-    el('gpu-status').textContent = result?.online ? '已打开 GPU 组件下载窗口，支持暂停和续传。安装完成后重启生效，当前任务继续使用 CPU。'
+    if (result?.state) renderGpu(result);
+    else if (gpuState !== 'online-active' && gpuState !== 'restart') el('gpu-status').textContent = result?.online ? '已打开 GPU 组件下载窗口，支持暂停和续传。安装完成后重启生效，当前任务继续使用 CPU。'
       : '已打开离线加速安装窗口。完成启用后重新打开工作台即可使用。';
   } catch {
-    el('gpu-status').textContent = '未能打开离线加速安装窗口，请重试。';
+    renderGpu({state:source ? 'workspace' : gpuState,message:'GPU 安装未能启动，请重试。'});
+  } finally {
+    install.disabled = gpuState === 'installing';
   }
 };
+api.onGpuStatus(renderGpu);
 api.onOpenUpdates(() => el('updates-tab').click());
 api.onChange(render);
 api.state().then(render);
 
 api.onGpuReady?.(backend => {
-  el('gpu-status').hidden = false;
-  el('gpu-status').textContent = backend === 'cuda' ? 'GPU 加速组件已就绪。完成当前任务后重启 WormStudio，即可使用显卡加速。' : '已保留 CPU 环境，可稍后再安装 GPU 加速。';
-  el('gpu-install').hidden = backend === 'cuda';
+  renderGpu(backend === 'cuda' ? {state:'restart',message:'GPU 加速组件已就绪。完成当前任务后重启 WormStudio，即可使用显卡加速。'}
+    : {state:'online',message:'已保留 CPU 环境，可稍后再安装 GPU 加速。'});
 });

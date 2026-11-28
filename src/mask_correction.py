@@ -89,7 +89,7 @@ def request_edit(progress, root, run, sequence, *, annotation_factory):
         if (tracking/'summary.json').is_file():
             summary=json.loads((tracking/'summary.json').read_text(encoding='utf-8-sig'))
             prepare_recovered_edit(source,summary,root/'outputs'/sample/'manual-initialization')
-        settings = dict(source, sample=sample,
+        settings = dict(source, sample=sample, sam2_model=source.get('sam2_model','large'),
                         previous_sample=source['sample'])
         settings.pop('identity_confirmations', None)
         candidate = annotation_factory(settings, frame=frame)

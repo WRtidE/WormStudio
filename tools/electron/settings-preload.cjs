@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('settings', {
   gpuAvailable: () => ipcRenderer.invoke('settings:gpu-available'),
   checkGpu: () => ipcRenderer.invoke('settings:gpu-check'),
   openGpu: () => ipcRenderer.invoke('settings:gpu-open'),
+  onGpuStatus: callback => ipcRenderer.on('settings:gpu-status', (_event, result) => callback(result)),
   onGpuReady: callback => ipcRenderer.on('settings:gpu-ready', (_event, backend) => callback(backend)),
   onChange: callback => ipcRenderer.on('updates:changed', (_event, state) => callback(state))
 });

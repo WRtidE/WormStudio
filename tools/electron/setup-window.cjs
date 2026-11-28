@@ -3,7 +3,7 @@ const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const {Setup} = require('./online-setup.cjs');
 
-async function showSetup({electron, manifest, directory, platform, onReady, fetch, autoOpen = true, gpu = false}) {
+async function showSetup({electron, manifest, directory, platform, onReady, onProgress, fetch, autoOpen = true, gpu = false}) {
   const {BrowserWindow, ipcMain, net} = electron;
   const page = path.join(__dirname,'setup.html');
   const window = new BrowserWindow({title:gpu ? 'WormStudio · 安装 GPU 加速' : 'WormStudio · 首次准备', width:600,height:480,minWidth:520,minHeight:480,useContentSize:true,
@@ -34,6 +34,7 @@ async function showSetup({electron, manifest, directory, platform, onReady, fetc
     notify:state => {
       clearTimeout(readyTimer);
       if (window.isDestroyed()) return;
+      onProgress?.(state);
       if ((state.phase === 'downloading' && !state.reused) || state.phase === 'error') reveal();
       window.webContents.send('setup:changed',state);
       if (state.phase === 'ready' && autoOpen) readyTimer = setTimeout(() => void open(), state.reused ? 0 : 1500);

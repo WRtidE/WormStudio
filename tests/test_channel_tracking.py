@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 
 from wormtracker.config import WormTrackerConfig
+from wormtracker.core.grid import get_interpolated_grid
 from wormtracker.core.grid_reference import ChannelGridReference
 from wormtracker.core.tracker import ChannelTracker
 from wormtracker.engine.mog2 import MOG2Engine
@@ -12,6 +13,52 @@ from wormtracker.engine.mog2 import MOG2Engine
 
 class ChannelTracking(unittest.TestCase):
     bounds = [(4, 44), (50, 90)]
+
+    def test_grid_follows_measured_edges_for_different_heights_and_lane_counts(self):
+        for lanes, height in [(1, 240), (2, 1080), (4, 480), (32, 720), (40, 360), (64, 240), (100, 240)]:
+            with self.subTest(lanes=lanes, height=height):
+                width = 280 + lanes * 42
+                frame = np.full((height, width, 3), 170, np.uint8)
+                expected = []
+                for i in range(lanes):
+                    # Vary positions and widths so equal subdivision cannot pass.
+                    left = 120 + i * 42 + 2 * (i % 3 - 1)
+                    right = left + 28 + i % 2
+                    frame[:, left-1:left+2] = 78
+                    frame[:, right-1:right+2] = 60
+                    expected.append((left, right))
+                # Strong chip-external structures on both sides of the search area.
+                frame[:, :32:3] = 0
+                frame[:, -32::3] = 0
+                grid = get_interpolated_grid(frame, lanes, (40/width, 40/width), wall_ratio=.12)
+                self.assertEqual(grid['grid_method'], 'peaks')
+                np.testing.assert_allclose(grid['channel_bounds'], expected, atol=1)
+
+    def test_grid_uses_the_requested_rows_and_falls_back_when_a_wall_is_missing(self):
+        frame = np.full((480, 600, 3), 175, np.uint8)
+        for left, right in [(80, 155), (190, 260), (295, 370), (409, 482)]:
+            frame[48:96, left-1:left+2] = 55
+            frame[48:96, right-1:right+2] = 55
+        options = dict(crop_ratio=(.1, .2), wall_ratio=.12)
+        grid = get_interpolated_grid(frame, 4, **options)
+        np.testing.assert_allclose(grid['channel_bounds'], [(80,155),(190,260),(295,370),(409,482)], atol=1)
+        frame[:, 250:305] = 175
+        self.assertEqual(get_interpolated_grid(frame, 4, **options),
+                         get_interpolated_grid(frame, 4, refine_walls=False, **options))
+
+    def test_dense_lanes_use_the_channel_facing_edge_of_each_wall(self):
+        for lanes, width, pitch in [(32, 640, 18), (100, 1920, 17)]:
+            with self.subTest(lanes=lanes):
+                frame = np.full((360, width, 3), 175, np.uint8)
+                expected = []
+                for i in range(lanes):
+                    left = (width - lanes * pitch) // 2 + i * pitch
+                    right = left + round(.65 * pitch) + i % 2
+                    frame[:, left-1:left+2] = frame[:, right-1:right+2] = 60
+                    expected.append((left, right))
+                grid = get_interpolated_grid(frame, lanes, (0, 0), wall_ratio=.12)
+                self.assertEqual(grid['grid_method'], 'peaks')
+                np.testing.assert_allclose(grid['channel_bounds'], expected, atol=1)
 
     def events(self, observations):
         config = WormTrackerConfig(init_frame_index=0, tripwire_ratio=0.5,

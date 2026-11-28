@@ -59,6 +59,20 @@ class ProgressTests(unittest.TestCase):
         p.fail('stopped')
         self.assertEqual(p.progress_response(queued['revision'], [])['status'], 'failed')
 
+    def test_completing_chamber_publishes_its_batch_result_in_the_same_snapshot(self):
+        from batch_queue import BatchQueue
+        p = self.progress
+        p.batch = BatchQueue(self.base/'batch.json')
+        config = dict(self.config, chamber_id=24)
+        p.batch.add_many([config], start_samples=[config['sample']])
+        p.batch.take()
+        p.configure(config, dict(ids=[7], frames=12), self.stages, self.base)
+        group, sample, members = p.finish(self.base, config, 'fit')
+        saved = json.loads((self.base/'pipeline-progress.json').read_text(encoding='utf-8'))
+        self.assertEqual((saved['status'], saved['batch']['items'][0]['status']), ('complete', 'complete'))
+        self.assertEqual((group, sample, members[0]['chamber_id']), (saved['batch']['group_id'], config['sample'], 24))
+        self.assertIsNotNone(p.idle_run())
+
     def test_actual_child_events_and_logs_reach_saved_status(self):
         log = self.base/'child.log'
         self.progress.begin(0, log)
@@ -116,8 +130,9 @@ class ProgressTests(unittest.TestCase):
         command = [sys.executable, '-c', "import time; time.sleep(1.5); print('finished')"]
         with patch('worm_pipeline.check_memory_pressure', return_value=True):
             run_stage(dict(name='tracking', command=command), log, self.progress)
-        self.assertEqual(log.read_text().count('警告级别'), 1)
-        self.assertIn('finished', log.read_text())
+        contents = log.read_text(encoding='utf-8')
+        self.assertEqual(contents.count('警告级别'), 1)
+        self.assertIn('finished', contents)
 
     def test_stale_or_incomplete_event_does_not_break_tracking(self):
         self.progress.begin(0, self.base/'one.log')

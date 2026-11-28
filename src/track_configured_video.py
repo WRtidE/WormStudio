@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import argparse
 from compute_device import selected_device, inference_context, device_label, release_device_cache
-from resource_paths import sam2_checkpoint
 from pipeline_progress import report_progress
 from live_preview import PreviewCrop, enabled as preview_enabled, report_tracking
 import csv
@@ -21,7 +20,7 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 from resource_paths import PROJECT_ROOT as ROOT
 from image_io import read_image, write_png
 from worm_colors import worm_color
-from sam2_models import model_spec, tracking_model_matches
+from sam2_models import WORM21, checkpoint_path, input_model, model_spec, tracking_model_matches
 from sam2_frames import init_tracking_state, propagate_frames, refine_mask_edges, sam2_input_transform
 
 
@@ -64,15 +63,16 @@ def main():
     parser.add_argument('--config',type=Path,required=True);parser.add_argument('--seeds-only',action='store_true')
     parser.add_argument('--group',help='Reprocess only one configured group, preserving the other tracks')
     args=parser.parse_args();config=json.loads(args.config.read_text(encoding='utf-8'))
-    spec=model_spec(config.get('sam2_model','large'))
+    model_id=input_model(config,args.config)
+    spec=model_spec(model_id)
     contrast = config.get('sam2_input_contrast', 'none')
     out=ROOT/'outputs'/config['sample']/'sam2-tracking';out.mkdir(parents=True,exist_ok=True)
     if args.group and not args.seeds_only:
         prior=json.loads((out/'summary.json').read_text(encoding='utf-8'))
         if prior.get('sam2_input_contrast', 'none') != contrast:
             raise ValueError('输入对比度设置已改变，请重新跟踪全部分组')
-        if not tracking_model_matches(prior,spec['size']):
-            raise ValueError('跟踪模型已改变，请使用新样本运行全部分组，避免混用 Tiny 和 Large 结果')
+        if not tracking_model_matches(prior,model_id):
+            raise ValueError('跟踪模型已改变，请使用新样本运行全部分组')
     with ExitStack() as resources:
         capture = cv2.VideoCapture(config['video'])
         resources.callback(capture.release)
@@ -89,9 +89,10 @@ def main():
                     for k in ('frame','worm_id','area_px','ambiguous_overlap_px'):row[k]=int(row[k])
                     if row['worm_id'] not in changed:rows.append(row)
         device=selected_device()
-        checkpoint=sam2_checkpoint(spec['checkpoint'])
+        checkpoint=checkpoint_path(spec,verify=True)
         print(f'视频跟踪模型：{spec["label"]}；权重：{checkpoint.name}；设备：{device_label(device)}',flush=True)
         model=build_sam2_video_predictor(spec['config'],str(checkpoint),device=device,
+            apply_postprocessing=model_id != WORM21,
             hydra_overrides_extra=['++model.non_overlap_masks=false','++model.non_overlap_masks_for_mem_enc=false'])
         amp_dtype=(torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device=='cuda' else torch.float32
         colors={w:worm_color(w) for w in ids}
@@ -220,10 +221,11 @@ def main():
         scale_um_per_px=config['scale_um_per_px'],scale_source=config['scale_source'],model=spec['label'],
         measurement_mode=config.get('measurement_mode','physical'),
         sam2_input_contrast=contrast,
-        sam2_model=spec['size'],model_config=spec['config'],checkpoint=spec['checkpoint'],
+        sam2_model=model_id,model_config=spec['config'],checkpoint=spec['checkpoint'],
         inference_precision=str(amp_dtype).removeprefix('torch.'),
         mask_overlap_allowed=True,initialization=config['groups'],review_intervals=config.get('review_intervals',[]),device=device_label(device),
         cuda_peak_memory_mb=torch.cuda.max_memory_allocated()/2**20 if device=='cuda' else 0)
+    if 'sha256' in spec:summary['checkpoint_sha256']=spec['sha256']
     (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(summary,ensure_ascii=False,indent=2),flush=True)
 

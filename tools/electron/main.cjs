@@ -3,6 +3,7 @@ const {app, BrowserWindow, Menu, dialog, shell, ipcMain, net} = require('electro
 const {pathToFileURL} = require('node:url');
 const {Updates} = require('./updates.cjs');
 const appUpdate = require('../../src/platforms/app_update.cjs');
+const gpuPlatform = require('../../src/platforms/online.cjs');
 const {DesktopShortcut} = require('../../src/platforms/desktop_shortcut.cjs');
 const {execFile, spawn} = require('node:child_process');
 const execFileAsync = require('node:util').promisify(execFile);
@@ -13,7 +14,11 @@ const {existsSync, readFileSync} = require('node:fs');
 const localPath = path.join(__dirname, 'local.json');
 const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, 'utf8')) : {};
 const workspace = process.env.WORM_STUDIO_WORKSPACE || local.workspace || path.resolve(__dirname, '../..');
-const python = process.env.WORM_STUDIO_PYTHON || local.python;
+const configuredPython = process.env.WORM_STUDIO_PYTHON || local.python;
+const onlineGpu = process.env.WORM_STUDIO_ONLINE === '1';
+const sourceGpu = process.platform === 'win32' && process.arch === 'x64' && configuredPython && !app.isPackaged && !onlineGpu
+  ? gpuPlatform.workspaceGpu(workspace, configuredPython) : null;
+const python = sourceGpu?.readyPython() || configuredPython;
 const viewer = process.env.WORM_STUDIO_VIEW_URL;
 if (viewer && !/^http:\/\/127\.0\.0\.1:\d+\/(?:progress)?$/.test(viewer)) throw Error('无效的本地页面地址');
 
@@ -82,48 +87,84 @@ function initUpdates() {
   const bundledPython = path.join(process.resourcesPath, 'analysis', 'python', 'python.exe');
   const canInstallGpu = () => gpuSupported() && path.resolve(python).toLowerCase() === bundledPython.toLowerCase();
   const gpuAbort = new AbortController();
-  let gpuCheck, gpuInstallation, gpuPrepared = false, stoppingGpu = false;
+  let gpuCheck, gpuInstallation, sourceInstall, installStatus, offered, gpuPrepared = false, stoppingGpu = false;
+  const restart = {state:'restart', message:'GPU 加速组件已就绪。完成当前任务后重启 WormStudio，即可使用显卡加速。'};
+  function publishGpuStatus(state, message, transfer) {
+    installStatus = {state,message,transfer};
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:gpu-status', installStatus);
+  }
   app.on('before-quit', event => {
-    if (!gpuInstallation || stoppingGpu) return;
+    if ((!gpuInstallation && !sourceInstall) || stoppingGpu) return;
     event.preventDefault();
     stoppingGpu = true;
-    void gpuInstallation.then(controller => controller.setup.stop()).catch(() => {}).finally(() => app.quit());
+    gpuAbort.abort();
+    const stopped = sourceInstall || gpuInstallation.then(controller => controller.setup.stop());
+    void stopped.catch(() => {}).finally(() => app.quit());
   });
   app.once('will-quit', () => gpuAbort.abort());
   handle('settings:gpu-available', fromSettings, gpuSupported);
   handle('settings:gpu-check', fromSettings, () => {
     if (!gpuSupported()) throw Error('当前平台无法执行 NVIDIA 检测');
-    if (gpuPrepared) return {state:'restart', message:'GPU 加速组件已就绪。完成当前任务后重启 WormStudio，即可使用显卡加速。'};
+    if (gpuPrepared) return restart;
+    if ((sourceInstall || gpuInstallation) && installStatus) return installStatus;
     if (!gpuCheck) {
+      offered = null;
       gpuCheck = execFileAsync(python, ['-B', '-X', 'utf8', gpuHelper, '--status-json'], {
         cwd:workspace, windowsHide:true, timeout:90000, signal:gpuAbort.signal,
-      }).then(({stdout}) => {
+      }).then(async ({stdout}) => {
         const [state, message] = JSON.parse(stdout.trim());
         if (typeof message !== 'string') throw Error('无法读取 GPU 检测结果');
-        if (!canInstallGpu() && ['available', 'prepared'].includes(state)) {
-          return process.env.WORM_STUDIO_ONLINE === '1'
-            ? {state:'online', message:'当前使用 CPU。可按需下载 GPU 加速组件，安装期间仍可使用工作台，完成后重启生效。'}
-            : {state:'cpu', message:'检测到 NVIDIA 显卡。当前 Python 环境使用 CPU，启用加速需要在此环境中配置 CUDA 版 PyTorch。'};
+        const mode = onlineGpu ? 'online' : sourceGpu ? 'workspace' : null;
+        const result = await gpuPlatform.gpuOffer(state, message, mode);
+        if (!mode && !canInstallGpu() && ['available','prepared'].includes(result.state)) {
+          return {state:'cpu',message:'当前运行环境使用 CPU。Windows 在线版支持在设置中安装 GPU 组件。'};
         }
-        return {state, message};
+        offered = result.state;
+        return result;
       }).finally(() => { gpuCheck = null; });
     }
     return gpuCheck;
   });
   handle('settings:gpu-open', fromSettings, () => {
-    if (process.env.WORM_STUDIO_ONLINE === '1') {
+    if (sourceInstall) return sourceInstall;
+    if (gpuPrepared) return restart;
+    if (offered === 'workspace') {
+      publishGpuStatus('installing','正在准备 GPU 加速组件，完成后将验证显卡。可继续使用工作台。');
+      const progress = (message,transfer) => publishGpuStatus('installing',message,transfer);
+      const {withWorkspaceWheels} = require('./component-download.cjs');
+      const options = {directory:path.join(app.getPath('userData'),'workspace-gpu-downloads'),
+        shared:path.join(app.getPath('appData'),'WormStudio','components','downloads'),
+        fetch:(url,options) => net.fetch(url,{...options,credentials:'omit'}),signal:gpuAbort.signal,progress};
+      sourceInstall = sourceGpu.install(gpuAbort.signal, progress,
+        (assets,install) => withWorkspaceWheels(assets,options,install)).then(() => {
+        gpuPrepared = true;
+        publishGpuStatus(restart.state, restart.message);
+        return restart;
+      }).catch(error => {
+        publishGpuStatus('workspace',error.message);
+        return installStatus;
+      }).finally(() => { sourceInstall = null; });
+      return sourceInstall;
+    }
+    if (offered === 'online') {
       if (!gpuInstallation) {
         const {showSetup} = require('./setup-window.cjs');
         gpuInstallation = showSetup({electron:require('electron'), gpu:true,
-          platform:require('../../src/platforms/online.cjs'),
+          platform:gpuPlatform,
           manifest:require(path.join(process.resourcesPath, 'analysis/online-manifest.json')),
           directory:path.join(app.getPath('userData'), 'components'),
+          onProgress:state => {
+            const transfer = state.total && ['downloading','paused','error'].includes(state.phase)
+              ? {received:state.received,total:state.total} : undefined;
+            publishGpuStatus('online-active',state.error || state.title,transfer);
+          },
           onReady:async (result, window) => {
             gpuPrepared = result.backend === 'cuda';
             if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('settings:gpu-ready', result.backend);
             window.close();
           }}).then(controller => {
             controller.window.once('closed', () => {
+              if (!gpuPrepared) publishGpuStatus('online','可继续安装 GPU 加速组件，已下载的进度会保留。');
               void controller.setup.stop().finally(() => { gpuInstallation = null; });
             });
             return controller;
@@ -131,7 +172,7 @@ function initUpdates() {
       }
       return gpuInstallation.then(({window}) => { if (!window.isDestroyed()) window.focus(); return {online:true}; });
     }
-    if (!canInstallGpu()) throw Error('离线加速包需要 Windows 桌面版');
+    if (!canInstallGpu() || !['available','prepared'].includes(offered)) throw Error('请重新检测当前环境的 GPU 加速组件。');
     return new Promise((resolve, reject) => {
       const child = spawn(python, ['-I', '-B', gpuHelper], {cwd:workspace, detached:true, windowsHide:true, stdio:'ignore'});
       child.once('error', reject);

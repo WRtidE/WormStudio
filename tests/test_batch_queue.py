@@ -262,6 +262,9 @@ class BatchTests(unittest.TestCase):
         self.check_chamber_sequence(ordinary_last=True)
 
     def check_chamber_sequence(self, ordinary_last=False):
+        from sam2_models import WORM21
+        (self.root/'config').mkdir()
+        (self.root/'config/single_worm_model.local.json').write_text(json.dumps({'sam2_model':WORM21}))
         progress = PipelineProgress()
         progress.batch = self.queue
         progress.data['status'] = 'ready'
@@ -309,6 +312,7 @@ class BatchTests(unittest.TestCase):
                     token = progress.server.annotation.token
                     body = dict(worms=[slot(1, 0)], measurement_mode='physical', scale_um_per_px=1.5)
                 result = post('/save', body, token)
+                self.assertTrue(all(item['config']['sam2_model'] == WORM21 for item in self.queue.items))
                 self.assertTrue(result.get('next_annotation') if i == 0 else result.get('progress_url'))
                 self.assertEqual(self.queue.running, i == 1)
             self.assertEqual(len(self.queue.snapshot()['result_items']), 3 if ordinary_last else 4)

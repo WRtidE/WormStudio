@@ -16,7 +16,10 @@ main { padding:25px 27px; overflow:auto; } .group { border:1px solid #d8e2dc; bo
 .row { padding:15px 17px; display:flex; justify-content:space-between; gap:12px; align-items:center; min-height:58px; }
 .row+.row { border-top:1px solid #e4eae6; } #current { margin-left:6px; font-weight:600; }
 #gpu-row { border-top:1px solid #e4eae6; }
-#gpu-status { margin:0 17px 15px; color:#425b4f; }
+#gpu-status { margin:0 17px 15px; color:#425b4f; overflow-wrap:anywhere; }
+#gpu-transfer { display:grid; gap:4px; margin:0 17px 15px; }
+#gpu-progress { width:100%; height:12px; accent-color:#326d53; }
+#gpu-bytes { font-size:14px; color:#425b4f; font-variant-numeric:tabular-nums; }
 #gpu-install { margin:0 17px 15px; }
 #auto { appearance:none; width:37px; height:22px; border-radius:15px; background:#88968e; position:relative; margin:0; }
 #auto:checked { background:#39795c; } #auto::before { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:white; } #auto:checked::before { left:18px; }

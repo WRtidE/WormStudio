@@ -12,8 +12,9 @@ def main():
     missing=[name for name in ('numpy','scipy','cv2','skimage','matplotlib','yaml','imageio_ffmpeg','torch','torchvision') if importlib.util.find_spec(name) is None]
     for name in missing:print('Missing dependency:',name)
     if args.code_only:return int(bool(missing))
-    from resource_paths import sam2_checkpoint
-    sam=sam2_checkpoint('sam2_hiera_large.pt')
+    from sam2_models import availability, checkpoint_path, model_spec, single_worm_default
+    model=single_worm_default()
+    sam=checkpoint_path(model_spec(model))
     if not sam.is_file():missing.append('SAM2 checkpoint');print('Missing SAM2 checkpoint:',sam)
     if importlib.util.find_spec('sam2') is None:missing.append('SAM2 source');print('SAM2 source is not installed; see docs/INSTALL.md')
     try:
@@ -22,8 +23,7 @@ def main():
         print('Device:',device_label(selected_device()))
     except ImportError:pass
     except RuntimeError as exc:missing.append('device');print(str(exc))
-    from body_sequence_solver import availability
-    status=availability();print('SAM2 + 多帧身体连续跟踪:',status['detail'])
+    status=availability(model);print(model_spec(model)['label'],status['detail'])
     if not status['available']:missing.append('当前单虫分析组件')
     return int(bool(missing))
 

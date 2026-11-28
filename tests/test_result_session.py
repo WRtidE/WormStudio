@@ -1,10 +1,12 @@
 """Results streaming, next-video session transitions, and immutable reruns."""
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import io
 import http.client
 import json
 from pathlib import Path
 import tempfile
+import threading
 import socket
 import time
 import unittest
@@ -231,11 +233,55 @@ class ResultSessionTests(unittest.TestCase):
             self.assertTrue(json.load(response)['closed'])
         self.assertTrue(self.progress.closed.is_set())
 
+    def test_slow_resume_cannot_replace_a_newly_finished_run(self):
+        self.progress.fail('first run ended')
+        old = dict(sample='old', video=str(self.video), centerline_method='body_sequence')
+        entered, release = threading.Event(), threading.Event()
+
+        def read_config(root, sample):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError('pending resume did not finish')
+            return root/'outputs'/sample, old
+
+        with ThreadPoolExecutor(1) as client, patch('workspace_sessions.load_config', side_effect=read_config):
+            request = client.submit(self.post, '/api/resume-run', {'sample': 'old'})
+            try:
+                self.assertTrue(entered.wait(3))
+                self.progress.configure(dict(old, sample='new'), dict(frames=6, ids=[1]), [], self.root/'new')
+                self.progress.fail('new run ended')
+            finally:
+                release.set()
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                request.result(timeout=3)
+        self.assertEqual(error.exception.code, 400)
+        self.assertEqual(self.progress.snapshot()['sample'], 'new')
+        self.assertFalse(self.progress.next_ready.is_set())
+
+    def test_cancel_before_dispatch_leaves_only_the_replacement_for_worker(self):
+        self.progress.data['status'] = 'ready'
+        with self.post('/api/new-video', {'video_path': str(self.video)}):
+            pass
+        with self.post('/api/cancel', {}):
+            pass
+        old = self.progress.server.annotation
+        self.assertTrue(old.done.is_set())
+        self.assertFalse(self.progress.next_ready.is_set())
+        with self.post('/api/new-video', {'video_path': str(self.video)}):
+            pass
+        new = self.progress.server.annotation
+        self.assertIsNot(new, old)
+        settings = self.progress.wait()
+        self.assertEqual(settings, new.settings)
+        self.assertIsNot(settings, new.settings)
+        self.assertFalse(self.progress.next_ready.is_set())
+        self.assertIsNone(self.progress.next_settings)
+
     def test_cancel_preparation_keeps_draft_and_releases_annotation(self):
         from workspace_sessions import save_draft,get_draft
         self.progress.data.update(status='ready')
         with self.post('/api/new-video',{'video_path':str(self.video)}): pass
-        self.progress.wait()
+        settings = self.progress.wait()
         annotation=self.progress.server.annotation
         save_draft(annotation,{'note':'synthetic draft'})
         with self.post('/api/cancel',{}): pass
@@ -243,6 +289,24 @@ class ResultSessionTests(unittest.TestCase):
         self.assertIsNone(annotation.result)
         self.assertEqual(self.progress.snapshot()['status'],'cancelled')
         self.assertEqual(get_draft(annotation)['body']['note'],'synthetic draft')
+        with patch.object(manual, 'Annotation', side_effect=AssertionError('cancelled editor reopened')):
+            self.assertIsNone(manual.collect_annotation(settings, reuse=False, progress=self.progress))
+
+    def test_resumed_session_publishes_config_and_anchors_before_dispatch(self):
+        config = dict(sample='older', video=str(self.video), centerline_method='body_sequence',
+                      head_annotations={'1': dict(frame=2, point=[12, 15])})
+        self.progress.configure(dict(config, sample='previous'), dict(frames=6, ids=[1]), [], self.root/'previous')
+        self.progress.fail('previous run ended')
+        with patch('workspace_sessions.load_config', return_value=(self.root/'older', config)):
+            with self.post('/api/resume-run', {'sample':'older'}):
+                pass
+        with self.assertRaises(urllib.error.HTTPError) as stale:
+            urllib.request.urlopen(self.url+'/api/head-anchors?run=previous')
+        self.assertEqual(stale.exception.code, 409)
+        with urllib.request.urlopen(self.url+'/api/head-anchors?run=older') as response:
+            self.assertEqual(json.load(response)['anchors']['1'][0]['point'], [12, 15])
+        self.assertEqual(self.progress.snapshot()['status'], 'preparing')
+        self.assertEqual(self.progress.wait(), dict(config, _resume_saved=True))
 
     def test_file_upload_stays_in_import_directory(self):
         self.progress.fail('example failure')
